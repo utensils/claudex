@@ -103,8 +103,6 @@ enum Commands {
         #[arg(long)]
         no_index: bool,
     },
-    /// Rebuild the session index
-    Index,
     /// Export session transcripts to markdown or JSON
     Export {
         /// Session ID prefix or project name to export
@@ -129,28 +127,6 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    // Transparently ensure the index is fresh for commands that use it.
-    // Watch and Export use file-based access; Index forces a rebuild.
-    let uses_index = !matches!(cli.command, Commands::Watch { .. } | Commands::Export { .. } | Commands::Index);
-    let idx = if uses_index {
-        match index::IndexStore::open() {
-            Ok(mut store) => {
-                if let Err(e) = store.ensure_fresh() {
-                    eprintln!("warning: index sync failed ({e:#}), falling back to file scan");
-                    None
-                } else {
-                    Some(store)
-                }
-            }
-            Err(e) => {
-                eprintln!("warning: could not open index ({e:#}), falling back to file scan");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let result = match cli.command {
         Commands::Sessions {
             project,
