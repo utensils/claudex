@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 
 mod commands;
+pub mod index;
 mod parser;
-mod store;
+pub mod store;
 mod types;
 
 #[derive(Parser)]
@@ -87,6 +88,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Rebuild the session index
+    Index,
     /// Export session transcripts to markdown or JSON
     Export {
         /// Session ID prefix or project name to export
@@ -105,32 +108,93 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
+    // Transparently ensure the index is fresh for commands that use it.
+    // Watch and Export use file-based access; Index forces a rebuild.
+    let uses_index = !matches!(cli.command, Commands::Watch { .. } | Commands::Export { .. } | Commands::Index);
+    let idx = if uses_index {
+        match index::IndexStore::open() {
+            Ok(mut store) => {
+                if let Err(e) = store.ensure_fresh() {
+                    eprintln!("warning: index sync failed ({e:#}), falling back to file scan");
+                    None
+                } else {
+                    Some(store)
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: could not open index ({e:#}), falling back to file scan");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let result = match cli.command {
         Commands::Sessions {
             project,
             limit,
             json,
-        } => commands::sessions::run(project.as_deref(), limit, json),
+        } => {
+            if let Some(ref store) = idx {
+                commands::sessions::run_indexed(store, project.as_deref(), limit, json)
+            } else {
+                commands::sessions::run(project.as_deref(), limit, json)
+            }
+        }
         Commands::Cost {
             project,
             per_session,
             limit,
             json,
-        } => commands::cost::run(project.as_deref(), per_session, limit, json),
+        } => {
+            if let Some(ref store) = idx {
+                commands::cost::run_indexed(store, project.as_deref(), limit, json)
+            } else {
+                commands::cost::run(project.as_deref(), per_session, limit, json)
+            }
+        }
         Commands::Search {
             query,
             project,
             limit,
             case_sensitive,
-        } => commands::search::run(&query, project.as_deref(), limit, case_sensitive),
+        } => {
+            if let Some(ref store) = idx {
+                commands::search::run_indexed(store, &query, project.as_deref(), limit)
+            } else {
+                commands::search::run(&query, project.as_deref(), limit, case_sensitive)
+            }
+        }
         Commands::Tools {
             project,
             per_session,
             limit,
             json,
-        } => commands::tools::run(project.as_deref(), per_session, limit, json),
+        } => {
+            if let Some(ref store) = idx {
+                commands::tools::run_indexed(store, project.as_deref(), limit, json)
+            } else {
+                commands::tools::run(project.as_deref(), per_session, limit, json)
+            }
+        }
         Commands::Watch { raw } => commands::watch::run(raw),
-        Commands::Summary { json } => commands::summary::run(json),
+        Commands::Summary { json } => {
+            if let Some(ref store) = idx {
+                commands::summary::run_indexed(store, json)
+            } else {
+                commands::summary::run(json)
+            }
+        }
+        Commands::Index => {
+            (|| -> anyhow::Result<()> {
+                let mut store = index::IndexStore::open()?;
+                eprintln!("Rebuilding index...");
+                store.force_rebuild()?;
+                eprintln!("Done.");
+                Ok(())
+            })()
+        }
         Commands::Export {
             selector,
             format,

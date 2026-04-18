@@ -2,8 +2,30 @@ use anyhow::Result;
 use chrono::DateTime;
 use owo_colors::OwoColorize;
 
+use crate::index::IndexStore;
 use crate::parser::stream_records;
 use crate::store::{SessionStore, decode_project_name, short_name};
+
+pub fn run_indexed(store: &IndexStore, query: &str, project: Option<&str>, limit: usize) -> Result<()> {
+    let rows = store.search_fts(query, project, limit)?;
+    if rows.is_empty() {
+        println!("No matches found for {:?}", query);
+        return Ok(());
+    }
+    for r in &rows {
+        let date = r.timestamp.as_deref().unwrap_or("-");
+        let snippet = r.snippet.replace("<<", &"\x1b[1;91m").replace(">>", &"\x1b[0m");
+        println!(
+            "{} [{}] {}",
+            r.project.bright_blue().bold(),
+            date.dimmed(),
+            r.message_type.bright_yellow(),
+        );
+        println!("  {snippet}");
+        println!();
+    }
+    Ok(())
+}
 
 pub fn run(query: &str, project: Option<&str>, limit: usize, case_sensitive: bool) -> Result<()> {
     let store = SessionStore::new()?;

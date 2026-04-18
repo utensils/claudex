@@ -4,9 +4,39 @@ use std::path::PathBuf;
 use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
+use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::{ModelPricing, TokenUsage};
+
+pub fn run_indexed(store: &IndexStore, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+    let rows = store.query_cost_by_project(project, limit)?;
+    if json {
+        let output: Vec<_> = rows.iter().map(|r| serde_json::json!({
+            "project": r.project, "sessions": r.sessions, "models": r.models,
+            "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
+            "cache_read_tokens": r.cache_read, "cost_usd": r.cost_usd,
+        })).collect();
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL_CONDENSED);
+    table.set_header(["Project", "Sessions", "Input", "Output", "Cache Read", "Model(s)", "Cost (USD)"]);
+    let mut tc = 0.0f64;
+    for r in &rows {
+        table.add_row([
+            short_name(&r.project), r.sessions.to_string(),
+            fmt_tokens(r.input_tokens as u64), fmt_tokens(r.output_tokens as u64),
+            fmt_tokens(r.cache_read as u64), r.models.as_deref().unwrap_or("-").to_string(),
+            format!("${:.4}", r.cost_usd),
+        ]);
+        tc += r.cost_usd;
+    }
+    table.add_row(["TOTAL".into(), String::new(), String::new(), String::new(), String::new(), String::new(), format!("${tc:.4}")]);
+    println!("{table}");
+    Ok(())
+}
 
 pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;

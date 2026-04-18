@@ -4,9 +4,52 @@ use anyhow::Result;
 use chrono::{Datelike, Duration, Utc};
 use owo_colors::OwoColorize;
 
+use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::TokenUsage;
+
+pub fn run_indexed(store: &IndexStore, json: bool) -> Result<()> {
+    let data = store.query_summary()?;
+    if json {
+        let out = serde_json::json!({
+            "total_sessions": data.total_sessions, "sessions_today": data.today,
+            "sessions_this_week": data.this_week, "total_cost_usd": data.total_cost,
+            "cost_this_week_usd": data.week_cost,
+            "top_projects": data.top_projects.iter().map(|(p,c)| serde_json::json!({"project":p,"sessions":c})).collect::<Vec<_>>(),
+            "top_tools": data.top_tools.iter().map(|(t,c)| serde_json::json!({"tool":t,"calls":c})).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    section("Sessions");
+    println!("  Total:      {}", data.total_sessions.to_string().bold());
+    println!("  Today:      {}", data.today);
+    println!("  This week:  {}", data.this_week);
+    section("Cost (estimated)");
+    println!("  All time:   ${:.4}", data.total_cost);
+    println!("  This week:  ${:.4}", data.week_cost);
+    section("Top Projects");
+    for (i, (proj, count)) in data.top_projects.iter().enumerate() {
+        println!("  {}. {}  {} sessions", i + 1, proj.bright_blue(), count);
+    }
+    section("Top Tools");
+    for (i, (tool, count)) in data.top_tools.iter().enumerate() {
+        println!("  {}. {}  {} calls", i + 1, tool.cyan(), fmt_num(*count as u64));
+    }
+    if let Some(r) = &data.recent {
+        section("Most Recent Session");
+        println!("  Project:   {}", r.project.bright_blue());
+        println!("  Date:      {}", r.timestamp.as_deref().unwrap_or("-"));
+        let sid: String = r.session_id.as_deref().unwrap_or("-").chars().take(8).collect();
+        println!("  Session:   {}", sid.dimmed());
+        let model = r.model.as_deref().map(|m| m.trim_start_matches("claude-").to_string()).unwrap_or_else(|| "-".into());
+        println!("  Model:     {}", model);
+        println!("  Messages:  {}", r.message_count);
+    }
+    println!();
+    Ok(())
+}
 
 pub fn run(json: bool) -> Result<()> {
     let store = SessionStore::new()?;

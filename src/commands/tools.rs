@@ -4,8 +4,26 @@ use std::path::PathBuf;
 use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
+use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
+
+pub fn run_indexed(store: &IndexStore, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+    let rows = store.query_tools(project, limit)?;
+    if json {
+        let output: Vec<_> = rows.iter().map(|r| serde_json::json!({"tool": r.tool_name, "count": r.count})).collect();
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL_CONDENSED);
+    table.set_header(["Tool", "Calls"]);
+    for r in &rows {
+        table.add_row([r.tool_name.as_str(), &r.count.to_string()]);
+    }
+    println!("{table}");
+    Ok(())
+}
 
 pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
