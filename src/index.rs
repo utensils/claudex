@@ -1081,7 +1081,9 @@ impl IndexStore {
 
         let pr_count: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM pr_links", [], |row| row.get(0))
+            .query_row("SELECT COUNT(DISTINCT pr_url) FROM pr_links", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
 
         let files_modified_count: i64 = self
