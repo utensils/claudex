@@ -1,6 +1,7 @@
 use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
+use crate::commands::sessions::format_duration;
 use crate::index::IndexStore;
 use crate::store::{SessionStore, short_name};
 
@@ -36,17 +37,15 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
 
     let mut table = Table::new();
     table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header([
-        "Project", "Turns", "Avg (ms)", "P50 (ms)", "P95 (ms)", "Max (ms)",
-    ]);
+    table.set_header(["Project", "Turns", "Avg", "P50", "P95", "Max"]);
     for r in &rows {
         table.add_row([
             short_name(&r.project),
             r.turn_count.to_string(),
-            format!("{:.0}", r.avg_duration_ms),
-            format!("{:.0}", r.p50_duration_ms),
-            format!("{:.0}", r.p95_duration_ms),
-            r.max_duration_ms.to_string(),
+            format_duration(r.avg_duration_ms as u64),
+            format_duration(r.p50_duration_ms as u64),
+            format_duration(r.p95_duration_ms as u64),
+            format_duration(r.max_duration_ms as u64),
         ]);
     }
     println!("{table}");

@@ -7,7 +7,7 @@ use chrono::{DateTime, Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
 use rusqlite::{Connection, params};
 
 use crate::parser::stream_records;
-use crate::store::{SessionStore, decode_project_name, display_project_name};
+use crate::store::{SessionStore, canonical_project_path, decode_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 
 const STALE_SECS: u64 = 300;
@@ -341,7 +341,8 @@ impl IndexStore {
                 return Ok(());
             }
         } else {
-            eprintln!("Building index...");
+            let count = store.all_session_files(None).map(|f| f.len()).unwrap_or(0);
+            eprintln!("Building index ({count} files)...");
         }
 
         self.sync(store)?;
@@ -429,7 +430,8 @@ impl IndexStore {
                 )?;
             }
 
-            let project_display = display_project_name(&decode_project_name(project_raw));
+            let decoded = decode_project_name(project_raw);
+            let project_display = canonical_project_path(&decoded).to_string();
             let mut entry = match parse_session_for_index(file_path) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -1095,22 +1097,35 @@ impl IndexStore {
             r#"SELECT model, COUNT(*) AS sessions, COALESCE(SUM(cost_usd), 0) AS cost
                FROM token_usage
                GROUP BY model
-               ORDER BY cost DESC
-               LIMIT 5"#,
+               ORDER BY cost DESC"#,
         )?;
-        let model_distribution: Vec<(String, i64, f64)> = mdist_stmt
+        let raw_model_rows = mdist_stmt
             .query_map([], |row| {
-                let model: Option<String> = row.get(0)?;
                 Ok((
-                    model
-                        .as_deref()
-                        .map(|m| ModelPricing::name(Some(m)).to_string())
-                        .unwrap_or_else(|| "Unknown".to_string()),
+                    row.get::<_, Option<String>>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, f64>(2)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut family_map: HashMap<String, (i64, f64)> = HashMap::new();
+        for (model, sessions, cost) in raw_model_rows {
+            let family = model
+                .as_deref()
+                .map(|m| ModelPricing::name(Some(m)).to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+            let entry = family_map.entry(family).or_insert((0, 0.0));
+            entry.0 += sessions;
+            entry.1 += cost;
+        }
+        let mut model_distribution: Vec<(String, i64, f64)> = family_map
+            .into_iter()
+            .map(|(family, (sessions, cost))| (family, sessions, cost))
+            .collect();
+        model_distribution
+            .sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        model_distribution.truncate(5);
 
         Ok(SummaryData {
             total_sessions,
@@ -1135,7 +1150,12 @@ impl IndexStore {
 }
 
 fn fts_escape(query: &str) -> String {
-    format!("\"{}\"", query.replace('"', "\"\""))
+    let escaped = query.replace('"', "\"\"");
+    if query.split_whitespace().count() > 1 {
+        format!("\"{}\"", escaped)
+    } else {
+        escaped
+    }
 }
 
 fn model_families_from_concat(raw: Option<&str>) -> Vec<String> {
@@ -1308,7 +1328,7 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
             "pr-link" => {
                 let number = record["prNumber"].as_i64().unwrap_or(0);
                 let url = record["prUrl"].as_str().unwrap_or("").to_string();
-                let repo = record["repository"].as_str().unwrap_or("").to_string();
+                let repo = record["prRepository"].as_str().unwrap_or("").to_string();
                 let ts = timestamp_str.unwrap_or("").to_string();
                 entry.pr_links.push((number, url, repo, ts));
             }

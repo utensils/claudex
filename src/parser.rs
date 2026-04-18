@@ -128,7 +128,7 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
             "pr-link" => {
                 let number = record["prNumber"].as_i64().unwrap_or(0);
                 let url = record["prUrl"].as_str().unwrap_or("").to_string();
-                let repo = record["repository"].as_str().unwrap_or("").to_string();
+                let repo = record["prRepository"].as_str().unwrap_or("").to_string();
                 let ts = timestamp_str.unwrap_or("").to_string();
                 stats.pr_links.push((number, url, repo, ts));
             }
@@ -249,11 +249,12 @@ mod tests {
     #[test]
     fn parse_pr_link() {
         let f = write_jsonl(&[
-            r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/repo/pull/42","repository":"org/repo","timestamp":"2026-04-18T00:00:00Z","sessionId":"s1"}"#,
+            r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/repo/pull/42","prRepository":"org/repo","timestamp":"2026-04-18T00:00:00Z","sessionId":"s1"}"#,
         ]);
         let stats = parse_session(f.path()).unwrap();
         assert_eq!(stats.pr_links.len(), 1);
         assert_eq!(stats.pr_links[0].0, 42);
+        assert_eq!(stats.pr_links[0].2, "org/repo");
     }
 
     #[test]

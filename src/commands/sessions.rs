@@ -144,7 +144,7 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
     Ok(())
 }
 
-fn format_duration(ms: u64) -> String {
+pub fn format_duration(ms: u64) -> String {
     if ms == 0 {
         return "-".to_string();
     }

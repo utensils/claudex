@@ -92,6 +92,19 @@ pub fn decode_project_name(encoded: &str) -> String {
     result
 }
 
+/// Return the canonical project path used as an index key.
+///
+/// Worktree paths (`…/.claude/worktrees/branch`) are resolved to their parent
+/// so worktree sessions aggregate with the parent project automatically.
+pub fn canonical_project_path(decoded_path: &str) -> &str {
+    const MARKER: &str = "/.claude/worktrees/";
+    if let Some(idx) = decoded_path.find(MARKER) {
+        &decoded_path[..idx]
+    } else {
+        decoded_path
+    }
+}
+
 /// Convert a decoded project path to a human-readable display name.
 ///
 /// Paths containing `/.claude/worktrees/` are shown as "projectname (worktree)"
