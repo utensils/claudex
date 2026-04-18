@@ -1,10 +1,6 @@
 use clap::{Parser, Subcommand};
 
-mod commands;
-mod index;
-mod parser;
-pub mod store;
-mod types;
+use claudex::commands;
 
 #[derive(Parser)]
 #[command(
