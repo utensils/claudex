@@ -397,3 +397,26 @@ fn fmt_tokens(n: u64) -> String {
         n.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::fmt_tokens;
+
+    #[test]
+    fn fmt_tokens_small() {
+        assert_eq!(fmt_tokens(0), "0");
+        assert_eq!(fmt_tokens(999), "999");
+    }
+
+    #[test]
+    fn fmt_tokens_thousands() {
+        assert_eq!(fmt_tokens(1_000), "1.0K");
+        assert_eq!(fmt_tokens(1_500), "1.5K");
+    }
+
+    #[test]
+    fn fmt_tokens_millions() {
+        assert_eq!(fmt_tokens(1_000_000), "1.0M");
+        assert_eq!(fmt_tokens(2_500_000), "2.5M");
+    }
+}

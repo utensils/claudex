@@ -51,3 +51,17 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     println!("{table}");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::sessions::format_duration;
+
+    #[test]
+    fn format_duration_values_used_in_turns_table() {
+        assert_eq!(format_duration(0), "-");
+        assert_eq!(format_duration(1_000), "1s");
+        assert_eq!(format_duration(60_000), "1m0s");
+        assert_eq!(format_duration(90_000), "1m30s");
+        assert_eq!(format_duration(3_600_000), "1h0m");
+    }
+}

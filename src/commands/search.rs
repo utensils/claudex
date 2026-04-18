@@ -232,3 +232,39 @@ fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {
     result.push_str(&display[last..]);
     println!("  {}", result);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::print_highlighted;
+
+    #[test]
+    fn print_highlighted_ascii() {
+        print_highlighted("the quick brown fox", "quick", false);
+    }
+
+    #[test]
+    fn print_highlighted_unicode() {
+        print_highlighted("こんにちは世界 hello world", "hello", false);
+    }
+
+    #[test]
+    fn print_highlighted_long_line_truncated() {
+        let long = "a ".repeat(200); // > 300 chars
+        print_highlighted(&long, "a", false);
+    }
+
+    #[test]
+    fn print_highlighted_no_match() {
+        print_highlighted("hello world", "xyz", false);
+    }
+
+    #[test]
+    fn print_highlighted_case_sensitive() {
+        print_highlighted("Hello World", "Hello", true);
+    }
+
+    #[test]
+    fn print_highlighted_case_insensitive() {
+        print_highlighted("Hello World", "hello", false);
+    }
+}

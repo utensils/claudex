@@ -1177,6 +1177,495 @@ fn percentile_sorted(sorted: &[i64], p: usize) -> f64 {
     sorted[idx.min(sorted.len() - 1)] as f64
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
+    fn open_index(path: &std::path::Path) -> IndexStore {
+        let conn = Connection::open(path).expect("open sqlite");
+        conn.execute_batch("PRAGMA foreign_keys=ON;").expect("pragmas");
+        let store = IndexStore { conn };
+        store.create_schema().expect("create schema");
+        store
+    }
+
+    fn make_store(base: &std::path::Path) -> crate::store::SessionStore {
+        crate::store::SessionStore { base_dir: base.to_path_buf() }
+    }
+
+    fn write_jsonl(path: &std::path::Path, lines: &[&str]) {
+        let mut f = std::fs::File::create(path).expect("create jsonl");
+        for line in lines {
+            writeln!(f, "{}", line).expect("write line");
+        }
+    }
+
+    /// Standard 8-line sample covering all record types.
+    const SAMPLE_LINES: &[&str] = &[
+        r#"{"type":"user","sessionId":"sess-abc","timestamp":"2026-04-18T10:00:00Z","message":{"content":"help me build something interesting"}}"#,
+        r#"{"type":"assistant","timestamp":"2026-04-18T10:00:01Z","message":{"model":"claude-sonnet-4-6","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":20,"cache_read_input_tokens":10},"content":[{"type":"text","text":"Sure, I can help with that."},{"type":"tool_use","name":"Bash","id":"t1","input":{}},{"type":"thinking","thinking":"..."}]}}"#,
+        r#"{"type":"system","subtype":"turn_duration","durationMs":1000,"timestamp":"2026-04-18T10:00:02Z"}"#,
+        r#"{"type":"system","subtype":"turn_duration","durationMs":2000,"timestamp":"2026-04-18T10:00:03Z"}"#,
+        r#"{"type":"system","subtype":"turn_duration","durationMs":3000,"timestamp":"2026-04-18T10:00:04Z"}"#,
+        r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/repo/pull/42","prRepository":"org/repo","timestamp":"2026-04-18T10:00:05Z"}"#,
+        r#"{"type":"file-history-snapshot","snapshot":{"messageId":"abc","trackedFileBackups":{"src/main.rs":{"backupFileName":"x"},"src/lib.rs":{"backupFileName":"y"}}}}"#,
+        r#"{"type":"permission-mode","mode":"bypassPermissions","timestamp":"2026-04-18T10:00:06Z"}"#,
+    ];
+
+    /// Write SAMPLE_LINES into `base/myproject/sess-abc.jsonl` and return
+    /// the path to the jsonl file.
+    fn setup_sample(base: &std::path::Path) -> std::path::PathBuf {
+        let proj_dir = base.join("myproject");
+        std::fs::create_dir_all(&proj_dir).expect("create project dir");
+        let file = proj_dir.join("sess-abc.jsonl");
+        write_jsonl(&file, SAMPLE_LINES);
+        file
+    }
+
+    // ---------------------------------------------------------------------------
+    // Schema tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn schema_creates_tables() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let idx = open_index(&db_path);
+
+        for table in &[
+            "sessions",
+            "token_usage",
+            "tool_calls",
+            "turn_durations",
+            "pr_links",
+            "file_modifications",
+        ] {
+            let count: i64 = idx
+                .conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap_or_else(|e| panic!("table {table} missing or broken: {e}"));
+            assert_eq!(count, 0, "table {table} should be empty");
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Indexing tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn index_file_creates_rows() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        let n = idx.sync_now(&store).expect("sync");
+        assert_eq!(n, 1, "expected 1 file indexed");
+
+        // sessions row
+        let (project, session_id, msg_count): (String, Option<String>, i64) = idx
+            .conn
+            .query_row(
+                "SELECT project_name, session_id, message_count FROM sessions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("sessions row");
+        assert_eq!(project, "myproject", "project_name mismatch");
+        assert_eq!(session_id.as_deref(), Some("sess-abc"), "session_id mismatch");
+        assert_eq!(msg_count, 2, "message_count: user + assistant = 2");
+
+        // token_usage
+        let (inp, out): (i64, i64) = idx
+            .conn
+            .query_row(
+                "SELECT input_tokens, output_tokens FROM token_usage",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("token_usage row");
+        assert_eq!(inp, 100);
+        assert_eq!(out, 50);
+
+        // tool_calls
+        let (tool_name, count): (String, i64) = idx
+            .conn
+            .query_row("SELECT tool_name, count FROM tool_calls", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .expect("tool_calls row");
+        assert_eq!(tool_name, "Bash");
+        assert_eq!(count, 1);
+
+        // turn_durations — 3 rows
+        let td_count: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM turn_durations", [], |r| r.get(0))
+            .expect("turn_durations count");
+        assert_eq!(td_count, 3, "3 turn_duration rows");
+
+        let mut stmt = idx
+            .conn
+            .prepare("SELECT duration_ms FROM turn_durations ORDER BY turn_number")
+            .expect("prepare");
+        let durations: Vec<i64> = stmt
+            .query_map([], |r| r.get(0))
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        assert_eq!(durations, vec![1000, 2000, 3000]);
+
+        // pr_links
+        let pr_num: i64 = idx
+            .conn
+            .query_row("SELECT pr_number FROM pr_links", [], |r| r.get(0))
+            .expect("pr_links row");
+        assert_eq!(pr_num, 42);
+
+        // file_modifications — 2 rows
+        let fm_count: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM file_modifications", [], |r| r.get(0))
+            .expect("file_modifications count");
+        assert_eq!(fm_count, 2);
+    }
+
+    #[test]
+    fn sync_skips_unchanged_files() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+
+        let n1 = idx.sync_now(&store).expect("first sync");
+        assert_eq!(n1, 1);
+
+        let n2 = idx.sync_now(&store).expect("second sync");
+        assert_eq!(n2, 0, "unchanged file should be skipped");
+    }
+
+    #[test]
+    fn incremental_sync_detects_modified_file() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        let file = setup_sample(&base);
+        let store = make_store(&base);
+
+        let n1 = idx.sync_now(&store).expect("first sync");
+        assert_eq!(n1, 1);
+
+        // Overwrite with more messages so size changes, triggering re-index
+        let mut more_lines: Vec<&str> = SAMPLE_LINES.to_vec();
+        let extra = r#"{"type":"user","sessionId":"sess-abc","timestamp":"2026-04-18T11:00:00Z","message":{"content":"follow up question"}}"#;
+        let extra2 = r#"{"type":"assistant","timestamp":"2026-04-18T11:00:01Z","message":{"model":"claude-sonnet-4-6","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"Sure!"}]}}"#;
+        more_lines.push(extra);
+        more_lines.push(extra2);
+        write_jsonl(&file, &more_lines);
+
+        let n2 = idx.sync_now(&store).expect("second sync");
+        assert_eq!(n2, 1, "modified file should be re-indexed");
+
+        let msg_count: i64 = idx
+            .conn
+            .query_row("SELECT message_count FROM sessions", [], |r| r.get(0))
+            .expect("sessions row");
+        assert_eq!(msg_count, 4, "4 messages after re-index");
+    }
+
+    #[test]
+    fn incremental_sync_removes_deleted_file() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        let file = setup_sample(&base);
+        let store = make_store(&base);
+
+        idx.sync_now(&store).expect("first sync");
+
+        std::fs::remove_file(&file).expect("remove file");
+        idx.sync_now(&store).expect("second sync");
+
+        let count: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(count, 0, "session row removed after file deletion");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Query tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn query_sessions_returns_data() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_sessions(None, 10).expect("query_sessions");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].project_name, "myproject");
+        assert_eq!(rows[0].session_id.as_deref(), Some("sess-abc"));
+    }
+
+    #[test]
+    fn query_cost_by_project_aggregates() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_cost_by_project(None, 10).expect("query");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].project, "myproject");
+        assert_eq!(rows[0].session_count, 1);
+        assert_eq!(rows[0].input_tokens, 100);
+        assert!(rows[0].cost_usd > 0.0, "cost should be > 0");
+    }
+
+    #[test]
+    fn query_tools_counts_correctly() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_tools_aggregate(None, 10).expect("query");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tool_name, "Bash");
+        assert_eq!(rows[0].count, 1);
+    }
+
+    #[test]
+    fn search_fts_finds_single_word() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        let proj_dir = base.join("myproject");
+        std::fs::create_dir_all(&proj_dir).expect("create dir");
+        write_jsonl(
+            &proj_dir.join("sess-fts1.jsonl"),
+            &[r#"{"type":"user","sessionId":"sess-fts1","timestamp":"2026-04-18T10:00:00Z","message":{"content":"zxqfoo is my unique test word"}}"#],
+        );
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let hits = idx.search_fts("zxqfoo", None, 10).expect("search");
+        assert_eq!(hits.len(), 1, "should find 1 hit for unique word");
+    }
+
+    #[test]
+    fn search_fts_finds_phrase() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        let proj_dir = base.join("myproject");
+        std::fs::create_dir_all(&proj_dir).expect("create dir");
+        write_jsonl(
+            &proj_dir.join("sess-fts2.jsonl"),
+            &[r#"{"type":"user","sessionId":"sess-fts2","timestamp":"2026-04-18T10:00:00Z","message":{"content":"alpha bravo charlie delta"}}"#],
+        );
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        // Adjacent phrase — should match
+        let hits_adj = idx.search_fts("alpha bravo", None, 10).expect("search adj");
+        assert_eq!(hits_adj.len(), 1, "adjacent phrase should match");
+
+        // Non-adjacent phrase — should not match
+        let hits_nonadj = idx
+            .search_fts("alpha charlie", None, 10)
+            .expect("search non-adj");
+        assert_eq!(hits_nonadj.len(), 0, "non-adjacent phrase should not match");
+    }
+
+    #[test]
+    fn query_summary_sane_values() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let summary = idx.query_summary().expect("summary");
+        assert_eq!(summary.total_sessions, 1);
+        assert!(summary.total_input_tokens >= 0);
+        assert!(summary.pr_count >= 1, "pr_count should be >= 1");
+        assert!(
+            summary.files_modified_count >= 1,
+            "files_modified_count should be >= 1"
+        );
+    }
+
+    #[test]
+    fn query_turn_stats_percentiles() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_turn_stats(None, 10).expect("turn_stats");
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.turn_count, 3);
+        assert!((r.avg_duration_ms - 2000.0).abs() < 1.0, "avg ~= 2000");
+        assert_eq!(r.p50_duration_ms, 2000.0);
+        assert_eq!(r.max_duration_ms, 3000);
+    }
+
+    #[test]
+    fn query_pr_links_returns_data() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_pr_links(None, 10).expect("pr_links");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pr_number, 42);
+        assert!(rows[0].pr_url.contains("github.com"));
+        assert_eq!(rows[0].pr_repository, "org/repo");
+    }
+
+    #[test]
+    fn query_file_mods_returns_paths() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_file_mods(None, 10).expect("file_mods");
+        assert_eq!(rows.len(), 2);
+        let paths: Vec<&str> = rows.iter().map(|r| r.file_path.as_str()).collect();
+        assert!(
+            paths.contains(&"src/main.rs") || paths.contains(&"src/lib.rs"),
+            "should contain src/main.rs or src/lib.rs, got: {paths:?}"
+        );
+        // Both should be present
+        assert!(paths.contains(&"src/main.rs"), "missing src/main.rs");
+        assert!(paths.contains(&"src/lib.rs"), "missing src/lib.rs");
+    }
+
+    #[test]
+    fn query_model_usage_groups_by_model() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+        idx.sync_now(&store).expect("sync");
+
+        let rows = idx.query_model_usage(None).expect("model_usage");
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].model.contains("sonnet"),
+            "model should contain 'sonnet', got: {}",
+            rows[0].model
+        );
+        assert_eq!(rows[0].session_count, 1);
+        assert_eq!(rows[0].input_tokens, 100);
+    }
+
+    #[test]
+    fn force_rebuild_clears_and_repopulates() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut idx = open_index(&db_path);
+        let base = tmp.path().join("sessions");
+        setup_sample(&base);
+        let store = make_store(&base);
+
+        idx.sync_now(&store).expect("first sync");
+        let count_before: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .expect("count before");
+        assert_eq!(count_before, 1);
+
+        idx.force_rebuild(&store).expect("force_rebuild");
+        let count_after: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .expect("count after");
+        assert_eq!(count_after, 1, "sessions count should still be 1 after rebuild");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Unit tests for pure functions
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn fts_escape_single_word() {
+        assert_eq!(fts_escape("hello"), "hello");
+    }
+
+    #[test]
+    fn fts_escape_phrase() {
+        assert_eq!(fts_escape("hello world"), "\"hello world\"");
+    }
+
+    #[test]
+    fn percentile_sorted_empty() {
+        let empty: &[i64] = &[];
+        assert_eq!(percentile_sorted(empty, 50), 0.0);
+    }
+
+    #[test]
+    fn percentile_sorted_single() {
+        let single = &[42i64];
+        assert_eq!(percentile_sorted(single, 0), 42.0);
+        assert_eq!(percentile_sorted(single, 50), 42.0);
+        assert_eq!(percentile_sorted(single, 100), 42.0);
+    }
+
+    #[test]
+    fn percentile_sorted_multiple() {
+        let data = &[1i64, 2, 3, 4, 5];
+        // p50: idx = (50*5 - 1) / 100 = 249/100 = 2 → data[2] = 3
+        assert_eq!(percentile_sorted(data, 50), 3.0);
+        // p0: idx = (0*5 - 1).saturating_sub(0) / 100 = 0 → data[0] = 1
+        assert_eq!(percentile_sorted(data, 0), 1.0);
+        // p100: idx = (100*5 - 1) / 100 = 499/100 = 4 → data[4] = 5
+        assert_eq!(percentile_sorted(data, 100), 5.0);
+    }
+}
+
 /// Parse a session file once, extracting both stats and FTS content.
 fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
     let mut entry = ParseEntry {
