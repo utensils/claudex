@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod commands;
-pub mod index;
+mod index;
 mod parser;
 pub mod store;
 mod types;
@@ -31,6 +31,9 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
     },
     /// Token usage and approximate cost report
     Cost {
@@ -46,6 +49,9 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
     },
     /// Full-text search across session messages
     Search {
@@ -60,6 +66,9 @@ enum Commands {
         /// Case-sensitive matching
         #[arg(long)]
         case_sensitive: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
     },
     /// Tool usage frequency report
     Tools {
@@ -75,6 +84,9 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
     },
     /// Tail ~/.claude/debug/latest in real-time with formatted output
     Watch {
@@ -87,6 +99,9 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
     },
     /// Rebuild the session index
     Index,
@@ -103,6 +118,12 @@ enum Commands {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
         project: Option<String>,
+    },
+    /// Manage the session index (normally updated automatically)
+    Index {
+        /// Force a full rebuild instead of an incremental update
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -135,72 +156,38 @@ fn main() {
             project,
             limit,
             json,
-        } => {
-            if let Some(ref store) = idx {
-                commands::sessions::run_indexed(store, project.as_deref(), limit, json)
-            } else {
-                commands::sessions::run(project.as_deref(), limit, json)
-            }
-        }
+            no_index,
+        } => commands::sessions::run(project.as_deref(), limit, json, no_index),
         Commands::Cost {
             project,
             per_session,
             limit,
             json,
-        } => {
-            if let Some(ref store) = idx {
-                commands::cost::run_indexed(store, project.as_deref(), limit, json)
-            } else {
-                commands::cost::run(project.as_deref(), per_session, limit, json)
-            }
-        }
+            no_index,
+        } => commands::cost::run(project.as_deref(), per_session, limit, json, no_index),
         Commands::Search {
             query,
             project,
             limit,
             case_sensitive,
-        } => {
-            if let Some(ref store) = idx {
-                commands::search::run_indexed(store, &query, project.as_deref(), limit)
-            } else {
-                commands::search::run(&query, project.as_deref(), limit, case_sensitive)
-            }
-        }
+            no_index,
+        } => commands::search::run(&query, project.as_deref(), limit, case_sensitive, no_index),
         Commands::Tools {
             project,
             per_session,
             limit,
             json,
-        } => {
-            if let Some(ref store) = idx {
-                commands::tools::run_indexed(store, project.as_deref(), limit, json)
-            } else {
-                commands::tools::run(project.as_deref(), per_session, limit, json)
-            }
-        }
+            no_index,
+        } => commands::tools::run(project.as_deref(), per_session, limit, json, no_index),
         Commands::Watch { raw } => commands::watch::run(raw),
-        Commands::Summary { json } => {
-            if let Some(ref store) = idx {
-                commands::summary::run_indexed(store, json)
-            } else {
-                commands::summary::run(json)
-            }
-        }
-        Commands::Index => {
-            (|| -> anyhow::Result<()> {
-                let mut store = index::IndexStore::open()?;
-                eprintln!("Rebuilding index...");
-                store.force_rebuild()?;
-                eprintln!("Done.");
-                Ok(())
-            })()
-        }
+        Commands::Summary { json, no_index } => commands::summary::run(json, no_index),
         Commands::Export {
             selector,
             format,
             output,
             project,
         } => commands::export::run(&selector, &format, output.as_deref(), project.as_deref()),
+        Commands::Index { force } => commands::index::run(force),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");

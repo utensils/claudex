@@ -2,19 +2,98 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use chrono::DateTime;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 
-pub fn run_indexed(store: &IndexStore, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
-    let rows = store.query_tools(project, limit)?;
+pub fn run(
+    project: Option<&str>,
+    per_session: bool,
+    limit: usize,
+    json: bool,
+    no_index: bool,
+) -> Result<()> {
+    if !no_index {
+        if let Ok(()) = run_indexed(project, per_session, limit, json) {
+            return Ok(());
+        }
+    }
+    run_from_files(project, per_session, limit, json)
+}
+
+fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
+    let store = SessionStore::new()?;
+    let mut idx = IndexStore::open()?;
+    idx.ensure_fresh(&store)?;
+
+    if per_session {
+        let rows = idx.query_tools_per_session(project, limit)?;
+
+        if json {
+            let output: Vec<_> = rows
+                .iter()
+                .map(|r| {
+                    let date = r
+                        .first_timestamp_ms
+                        .and_then(DateTime::from_timestamp_millis)
+                        .map(|d| d.to_rfc3339());
+                    serde_json::json!({
+                        "project": r.project,
+                        "session_id": r.session_id,
+                        "date": date,
+                        "tools": r.tools,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
+
+        let mut table = Table::new();
+        table.load_preset(UTF8_FULL_CONDENSED);
+        table.set_header(["Project", "Session", "Top Tools", "Total Calls"]);
+
+        for r in &rows {
+            let sid: String = r
+                .session_id
+                .as_deref()
+                .unwrap_or("-")
+                .chars()
+                .take(8)
+                .collect();
+            let total: i64 = r.tools.values().sum();
+            let mut sorted: Vec<_> = r.tools.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+            let top: Vec<_> = sorted
+                .iter()
+                .take(3)
+                .map(|(k, v)| format!("{}({})", k, v))
+                .collect();
+            table.add_row([
+                short_name(&r.project),
+                sid,
+                top.join(", "),
+                total.to_string(),
+            ]);
+        }
+        println!("{table}");
+        return Ok(());
+    }
+
+    let rows = idx.query_tools_aggregate(project, limit)?;
+
     if json {
-        let output: Vec<_> = rows.iter().map(|r| serde_json::json!({"tool": r.tool_name, "count": r.count})).collect();
+        let output: Vec<_> = rows
+            .iter()
+            .map(|r| serde_json::json!({"tool": r.tool_name, "count": r.count}))
+            .collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
+
     let mut table = Table::new();
     table.load_preset(UTF8_FULL_CONDENSED);
     table.set_header(["Tool", "Calls"]);
@@ -25,7 +104,12 @@ pub fn run_indexed(store: &IndexStore, project: Option<&str>, limit: usize, json
     Ok(())
 }
 
-pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
+fn run_from_files(
+    project: Option<&str>,
+    per_session: bool,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
     if per_session {

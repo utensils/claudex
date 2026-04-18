@@ -6,28 +6,72 @@ use crate::index::IndexStore;
 use crate::parser::stream_records;
 use crate::store::{SessionStore, decode_project_name, short_name};
 
-pub fn run_indexed(store: &IndexStore, query: &str, project: Option<&str>, limit: usize) -> Result<()> {
-    let rows = store.search_fts(query, project, limit)?;
-    if rows.is_empty() {
-        println!("No matches found for {:?}", query);
+pub fn run(
+    query: &str,
+    project: Option<&str>,
+    limit: usize,
+    case_sensitive: bool,
+    no_index: bool,
+) -> Result<()> {
+    // FTS5 is case-insensitive; fall back to file scan for case-sensitive queries
+    if !no_index && !case_sensitive {
+        if let Ok(()) = run_indexed(query, project, limit) {
+            return Ok(());
+        }
+    }
+    run_from_files(query, project, limit, case_sensitive)
+}
+
+fn run_indexed(query: &str, project: Option<&str>, limit: usize) -> Result<()> {
+    let store = SessionStore::new()?;
+    let mut idx = IndexStore::open()?;
+    idx.ensure_fresh(&store)?;
+
+    let hits = idx.search_fts(query, project, limit)?;
+
+    if hits.is_empty() {
+        println!("No matches found for {query:?}");
         return Ok(());
     }
-    for r in &rows {
-        let date = r.timestamp.as_deref().unwrap_or("-");
-        let snippet = r.snippet.replace("<<", &"\x1b[1;91m").replace(">>", &"\x1b[0m");
+
+    for hit in &hits {
+        let date_str = hit
+            .first_timestamp_ms
+            .and_then(DateTime::from_timestamp_millis)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let sid: String = hit
+            .session_id
+            .as_deref()
+            .unwrap_or("-")
+            .chars()
+            .take(8)
+            .collect();
+        let project_display = short_name(&hit.project_name);
+
         println!(
-            "{} [{}] {}",
-            r.project.bright_blue().bold(),
-            date.dimmed(),
-            r.message_type.bright_yellow(),
+            "{} {} [{}] {}",
+            project_display.bright_blue().bold(),
+            sid.dimmed(),
+            date_str.dimmed(),
+            hit.message_type.bright_yellow(),
         );
-        println!("  {snippet}");
+        for line in hit.content.lines() {
+            if line.to_lowercase().contains(&query.to_lowercase()) {
+                print_highlighted(line, query, false);
+            }
+        }
         println!();
     }
     Ok(())
 }
 
-pub fn run(query: &str, project: Option<&str>, limit: usize, case_sensitive: bool) -> Result<()> {
+fn run_from_files(
+    query: &str,
+    project: Option<&str>,
+    limit: usize,
+    case_sensitive: bool,
+) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
 
@@ -138,7 +182,7 @@ pub fn run(query: &str, project: Option<&str>, limit: usize, case_sensitive: boo
     }
 
     if found == 0 {
-        println!("No matches found for {:?}", query);
+        println!("No matches found for {query:?}");
     }
     Ok(())
 }
@@ -146,7 +190,6 @@ pub fn run(query: &str, project: Option<&str>, limit: usize, case_sensitive: boo
 fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {
     const MAX_LINE: usize = 300;
     let display = if line.len() > MAX_LINE {
-        // Back up to a valid char boundary
         let mut end = MAX_LINE;
         while !line.is_char_boundary(end) {
             end -= 1;
@@ -175,7 +218,6 @@ fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {
         let pos = search_from + rel;
         let end = pos + needle.len();
 
-        // Guard against invalid char boundaries (defensive; rare with ASCII queries)
         if !display.is_char_boundary(pos) || !display.is_char_boundary(end) {
             search_from = pos + 1;
             continue;

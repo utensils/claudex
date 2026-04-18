@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::DateTime;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
@@ -6,32 +7,72 @@ use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::SessionInfo;
 
-pub fn run_indexed(store: &IndexStore, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
-    let rows = store.query_sessions(project, limit)?;
+pub fn run(project: Option<&str>, limit: usize, json: bool, no_index: bool) -> Result<()> {
+    if !no_index {
+        if let Ok(()) = run_indexed(project, limit, json) {
+            return Ok(());
+        }
+    }
+    run_from_files(project, limit, json)
+}
+
+fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+    let store = SessionStore::new()?;
+    let mut idx = IndexStore::open()?;
+    idx.ensure_fresh(&store)?;
+    let rows = idx.query_sessions(project, limit)?;
+
     if json {
-        let output: Vec<_> = rows.iter().map(|r| serde_json::json!({
-            "project": r.project, "session_id": r.session_id, "date": r.timestamp,
-            "message_count": r.message_count, "duration_ms": r.duration_ms, "model": r.model,
-        })).collect();
+        let output: Vec<_> = rows
+            .iter()
+            .map(|s| {
+                let date = s
+                    .first_timestamp_ms
+                    .and_then(DateTime::from_timestamp_millis)
+                    .map(|d| d.to_rfc3339());
+                serde_json::json!({
+                    "project": s.project_name,
+                    "session_id": s.session_id,
+                    "date": date,
+                    "message_count": s.message_count,
+                    "duration_ms": s.duration_ms,
+                    "model": s.model,
+                })
+            })
+            .collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
+
     let mut table = Table::new();
     table.load_preset(UTF8_FULL_CONDENSED);
     table.set_header(["Project", "Date", "Messages", "Duration", "Model"]);
-    for r in &rows {
-        let date = r.timestamp.as_deref()
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+
+    for s in &rows {
+        let date = s
+            .first_timestamp_ms
+            .and_then(DateTime::from_timestamp_millis)
             .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "-".into());
-        let model = r.model.as_deref().map(|m| m.trim_start_matches("claude-")).unwrap_or("-").to_string();
-        table.add_row([short_name(&r.project), date, r.message_count.to_string(), format_duration(r.duration_ms as u64), model]);
+            .unwrap_or_else(|| "-".to_string());
+        let model = s
+            .model
+            .as_deref()
+            .map(|m| m.trim_start_matches("claude-"))
+            .unwrap_or("-")
+            .to_string();
+        table.add_row([
+            short_name(&s.project_name),
+            date,
+            s.message_count.to_string(),
+            format_duration(s.duration_ms as u64),
+            model,
+        ]);
     }
     println!("{table}");
     Ok(())
 }
 
-pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let mut sessions: Vec<SessionInfo> = Vec::new();
 
