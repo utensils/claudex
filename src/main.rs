@@ -123,6 +123,51 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Per-turn timing analysis (avg, p50, p95, max duration)
+    Turns {
+        /// Filter by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Maximum number of projects to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// PR linkage report — sessions linked to pull requests
+    Prs {
+        /// Filter by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Maximum number of results to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Most frequently modified files across sessions
+    Files {
+        /// Filter by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Maximum number of files to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Model usage breakdown — call counts, token usage, cost per model
+    Models {
+        /// Filter by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -164,6 +209,22 @@ fn main() {
             project,
         } => commands::export::run(&selector, &format, output.as_deref(), project.as_deref()),
         Commands::Index { force } => commands::index::run(force),
+        Commands::Turns {
+            project,
+            limit,
+            json,
+        } => commands::turns::run(project.as_deref(), limit, json),
+        Commands::Prs {
+            project,
+            limit,
+            json,
+        } => commands::prs::run(project.as_deref(), limit, json),
+        Commands::Files {
+            project,
+            limit,
+            json,
+        } => commands::files::run(project.as_deref(), limit, json),
+        Commands::Models { project, json } => commands::models::run(project.as_deref(), json),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");

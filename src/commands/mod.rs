@@ -1,8 +1,12 @@
 pub mod cost;
 pub mod export;
+pub mod files;
 pub mod index;
+pub mod models;
+pub mod prs;
 pub mod search;
 pub mod sessions;
 pub mod summary;
 pub mod tools;
+pub mod turns;
 pub mod watch;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -19,6 +20,18 @@ pub struct SessionStats {
     pub model: Option<String>,
     pub usage: TokenUsage,
     pub tool_names: Vec<String>,
+    // Extended metric fields
+    pub turn_durations: Vec<(u64, String)>,              // (duration_ms, timestamp)
+    pub pr_links: Vec<(i64, String, String, String)>,    // (pr_number, url, repo, timestamp)
+    pub file_paths_modified: Vec<String>,
+    pub thinking_block_count: u64,
+    pub stop_reason_counts: HashMap<String, u64>,
+    pub attachments: Vec<(String, String)>,              // (filename, mime_type)
+    pub permission_modes: Vec<(String, String)>,          // (mode, timestamp)
+    pub inference_geo: Option<String>,
+    pub speed: Option<f64>,
+    pub service_tier: Option<String>,
+    pub iterations: u64,
 }
 
 /// Parse a JSONL session file line-by-line, accumulating stats without loading
@@ -33,7 +46,9 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
             }
         }
 
-        if let Some(ts) = record["timestamp"].as_str() {
+        let timestamp_str = record["timestamp"].as_str();
+
+        if let Some(ts) = timestamp_str {
             if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
                 let dt = dt.with_timezone(&Utc);
                 if stats.first_timestamp.is_none_or(|prev| dt < prev) {
@@ -64,12 +79,33 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 stats.usage.cache_read_tokens +=
                     usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
 
+                if stats.inference_geo.is_none() {
+                    stats.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
+                }
+                if stats.speed.is_none() {
+                    stats.speed = usage["speed"].as_f64();
+                }
+                if stats.service_tier.is_none() {
+                    stats.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
+                }
+                stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
+
+                if let Some(stop) = msg["stop_reason"].as_str() {
+                    *stats.stop_reason_counts.entry(stop.to_string()).or_insert(0) += 1;
+                }
+
                 if let Some(content) = msg["content"].as_array() {
                     for block in content {
-                        if block["type"].as_str() == Some("tool_use") {
-                            if let Some(name) = block["name"].as_str() {
-                                stats.tool_names.push(name.to_string());
+                        match block["type"].as_str() {
+                            Some("tool_use") => {
+                                if let Some(name) = block["name"].as_str() {
+                                    stats.tool_names.push(name.to_string());
+                                }
                             }
+                            Some("thinking") => {
+                                stats.thinking_block_count += 1;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -80,6 +116,40 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
             "system" => {
                 if let Some(dur) = record["durationMs"].as_u64() {
                     stats.total_duration_ms += dur;
+                    if record["subtype"].as_str() == Some("turn_duration") {
+                        let ts = timestamp_str.unwrap_or("").to_string();
+                        stats.turn_durations.push((dur, ts));
+                    }
+                }
+            }
+            "pr-link" => {
+                let number = record["prNumber"].as_i64().unwrap_or(0);
+                let url = record["prUrl"].as_str().unwrap_or("").to_string();
+                let repo = record["repository"].as_str().unwrap_or("").to_string();
+                let ts = timestamp_str.unwrap_or("").to_string();
+                stats.pr_links.push((number, url, repo, ts));
+            }
+            "file-history-snapshot" => {
+                if let Some(snapshot) = record["snapshot"].as_object() {
+                    for key in snapshot.keys() {
+                        if !stats.file_paths_modified.contains(key) {
+                            stats.file_paths_modified.push(key.clone());
+                        }
+                    }
+                }
+            }
+            "attachment" => {
+                let filename = record["filename"].as_str().unwrap_or("").to_string();
+                let mime = record["mimeType"].as_str().unwrap_or("").to_string();
+                if !filename.is_empty() {
+                    stats.attachments.push((filename, mime));
+                }
+            }
+            "permission-mode" => {
+                let mode = record["mode"].as_str().unwrap_or("").to_string();
+                let ts = timestamp_str.unwrap_or("").to_string();
+                if !mode.is_empty() {
+                    stats.permission_modes.push((mode, ts));
                 }
             }
             _ => {}

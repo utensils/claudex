@@ -33,11 +33,18 @@ fn run_indexed(json: bool) -> Result<()> {
             "cost_this_week_usd": data.week_cost,
             "total_tokens": data.total_input_tokens + data.total_output_tokens
                             + data.total_cache_creation + data.total_cache_read,
+            "thinking_block_count": data.thinking_block_count,
+            "avg_turn_duration_ms": data.avg_turn_duration_ms,
+            "pr_count": data.pr_count,
+            "files_modified_count": data.files_modified_count,
             "top_projects": data.top_projects.iter()
                 .map(|(p, c)| serde_json::json!({"project": p, "sessions": c}))
                 .collect::<Vec<_>>(),
             "top_tools": data.top_tools.iter()
                 .map(|(t, c)| serde_json::json!({"tool": t, "calls": c}))
+                .collect::<Vec<_>>(),
+            "model_distribution": data.model_distribution.iter()
+                .map(|(m, s, c)| serde_json::json!({"model": m, "sessions": s, "cost_usd": c}))
                 .collect::<Vec<_>>(),
             "most_recent": data.most_recent.as_ref().map(|r| {
                 let date = DateTime::from_timestamp_millis(r.first_timestamp_ms)
@@ -85,6 +92,29 @@ fn run_indexed(json: bool) -> Result<()> {
                 fmt_num(*count as u64)
             );
         }
+    }
+
+    section("Model Distribution");
+    if data.model_distribution.is_empty() {
+        println!("  (none)");
+    } else {
+        for (model, sessions, cost) in &data.model_distribution {
+            println!("  {}  {} sessions  ${:.4}", model.yellow(), sessions, cost);
+        }
+    }
+
+    section("Metrics");
+    if data.thinking_block_count > 0 {
+        println!("  Thinking blocks:    {}", fmt_num(data.thinking_block_count as u64));
+    }
+    if let Some(avg) = data.avg_turn_duration_ms {
+        println!("  Avg turn duration:  {:.0}ms", avg);
+    }
+    if data.pr_count > 0 {
+        println!("  PRs linked:         {}", data.pr_count);
+    }
+    if data.files_modified_count > 0 {
+        println!("  Files modified:     {}", fmt_num(data.files_modified_count as u64));
     }
 
     if let Some(r) = &data.most_recent {
