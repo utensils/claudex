@@ -1,0 +1,14 @@
+*~
+.agents/
+.cache/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.direnv/
+.DS_Store
+.env
+*.swo
+*.swp
+/target
+**/target
+/result
+tmp/

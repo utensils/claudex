@@ -1,0 +1,16 @@
+[package]
+name = "claudex"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["James Brink <brink.james@gmail.com>"]
+description = "Query, search, and analyze Claude Code sessions"
+homepage = "https://github.com/utensils/claudex"
+repository = "https://github.com/utensils/claudex"
+readme = "README.md"
+keywords = ["claude", "claude-code", "cli", "sessions"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
