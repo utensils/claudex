@@ -130,7 +130,9 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        assert!(u.cost_for_model(Some("claude-opus-4")) > u.cost_for_model(Some("claude-sonnet-4")));
+        assert!(
+            u.cost_for_model(Some("claude-opus-4")) > u.cost_for_model(Some("claude-sonnet-4"))
+        );
     }
 
     #[test]
@@ -139,7 +141,9 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        assert!(u.cost_for_model(Some("claude-haiku-4")) < u.cost_for_model(Some("claude-sonnet-4")));
+        assert!(
+            u.cost_for_model(Some("claude-haiku-4")) < u.cost_for_model(Some("claude-sonnet-4"))
+        );
     }
 
     #[test]

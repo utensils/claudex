@@ -145,10 +145,7 @@ fn format_json_line(v: &Value, raw_line: &str) -> String {
         .unwrap_or(raw_line);
 
     let (level_s, msg_s) = match level.to_lowercase().as_str() {
-        "error" | "fatal" | "critical" => (
-            level.red().bold().to_string(),
-            msg.red().to_string(),
-        ),
+        "error" | "fatal" | "critical" => (level.red().bold().to_string(), msg.red().to_string()),
         "warn" | "warning" => (level.yellow().to_string(), msg.yellow().to_string()),
         "debug" | "trace" => (level.dimmed().to_string(), msg.dimmed().to_string()),
         _ => (level.to_string(), msg.to_string()),

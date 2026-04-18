@@ -28,8 +28,7 @@ pub fn run(
 
     let mut out: Box<dyn Write> = match output {
         Some(path) => Box::new(
-            fs::File::create(path)
-                .with_context(|| format!("creating output file {path}"))?,
+            fs::File::create(path).with_context(|| format!("creating output file {path}"))?,
         ),
         None => Box::new(io::stdout()),
     };
@@ -48,10 +47,7 @@ pub fn run(
 }
 
 /// Return sessions that match `selector` as a session-ID prefix OR project-name substring.
-fn find_matching<'a>(
-    files: &'a [(String, PathBuf)],
-    selector: &str,
-) -> Vec<&'a (String, PathBuf)> {
+fn find_matching<'a>(files: &'a [(String, PathBuf)], selector: &str) -> Vec<&'a (String, PathBuf)> {
     let sel = selector.to_lowercase();
 
     // First try: session ID match via filename stem (most common — Claude Code names
@@ -100,16 +96,10 @@ fn build_markdown(project: &str, path: &Path) -> Result<String> {
     buf.push_str(&format!("# Session: {}\n\n", sid));
     buf.push_str(&format!("**Project:** {}\n", project));
     if let Some(dt) = stats.first_timestamp {
-        buf.push_str(&format!(
-            "**Date:** {}\n",
-            dt.format("%Y-%m-%d %H:%M UTC")
-        ));
+        buf.push_str(&format!("**Date:** {}\n", dt.format("%Y-%m-%d %H:%M UTC")));
     }
     if let Some(m) = &stats.model {
-        buf.push_str(&format!(
-            "**Model:** {}\n",
-            m.trim_start_matches("claude-")
-        ));
+        buf.push_str(&format!("**Model:** {}\n", m.trim_start_matches("claude-")));
     }
     buf.push('\n');
     buf.push_str("---\n\n");

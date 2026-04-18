@@ -1,14 +1,114 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use chrono::{Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use owo_colors::OwoColorize;
 
+use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::TokenUsage;
 
-pub fn run(json: bool) -> Result<()> {
+pub fn run(json: bool, no_index: bool) -> Result<()> {
+    if !no_index {
+        if let Ok(()) = run_indexed(json) {
+            return Ok(());
+        }
+    }
+    run_from_files(json)
+}
+
+fn run_indexed(json: bool) -> Result<()> {
+    let store = SessionStore::new()?;
+    let mut idx = IndexStore::open()?;
+    idx.ensure_fresh(&store)?;
+    let data = idx.query_summary()?;
+
+    if json {
+        let out = serde_json::json!({
+            "total_sessions": data.total_sessions,
+            "sessions_today": data.sessions_today,
+            "sessions_this_week": data.sessions_this_week,
+            "total_cost_usd": data.total_cost,
+            "cost_this_week_usd": data.week_cost,
+            "total_tokens": data.total_input_tokens + data.total_output_tokens
+                            + data.total_cache_creation + data.total_cache_read,
+            "top_projects": data.top_projects.iter()
+                .map(|(p, c)| serde_json::json!({"project": p, "sessions": c}))
+                .collect::<Vec<_>>(),
+            "top_tools": data.top_tools.iter()
+                .map(|(t, c)| serde_json::json!({"tool": t, "calls": c}))
+                .collect::<Vec<_>>(),
+            "most_recent": data.most_recent.as_ref().map(|r| {
+                let date = DateTime::from_timestamp_millis(r.first_timestamp_ms)
+                    .map(|d| d.to_rfc3339());
+                serde_json::json!({
+                    "project": r.project,
+                    "session_id": r.session_id,
+                    "date": date,
+                    "model": r.model,
+                    "message_count": r.message_count,
+                })
+            }),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    section("Sessions");
+    println!("  Total:      {}", data.total_sessions.to_string().bold());
+    println!("  Today:      {}", data.sessions_today);
+    println!("  This week:  {}", data.sessions_this_week);
+
+    section("Cost (estimated)");
+    println!("  All time:   ${:.4}", data.total_cost);
+    println!("  This week:  ${:.4}", data.week_cost);
+
+    section("Top Projects");
+    if data.top_projects.is_empty() {
+        println!("  (none)");
+    } else {
+        for (i, (proj, count)) in data.top_projects.iter().enumerate() {
+            println!("  {}. {}  {} sessions", i + 1, proj.bright_blue(), count);
+        }
+    }
+
+    section("Top Tools");
+    if data.top_tools.is_empty() {
+        println!("  (none)");
+    } else {
+        for (i, (tool, count)) in data.top_tools.iter().enumerate() {
+            println!(
+                "  {}. {}  {} calls",
+                i + 1,
+                tool.cyan(),
+                fmt_num(*count as u64)
+            );
+        }
+    }
+
+    if let Some(r) = &data.most_recent {
+        section("Most Recent Session");
+        println!("  Project:   {}", r.project.bright_blue());
+        if let Some(dt) = DateTime::from_timestamp_millis(r.first_timestamp_ms) {
+            println!("  Date:      {}", dt.format("%Y-%m-%d %H:%M UTC"));
+        }
+        let sid: String = r.session_id.chars().take(8).collect();
+        println!("  Session:   {}", sid.dimmed());
+        let model = r
+            .model
+            .as_deref()
+            .map(|m| m.trim_start_matches("claude-").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!("  Model:     {}", model);
+        println!("  Messages:  {}", r.message_count);
+    }
+
+    println!();
+    Ok(())
+}
+
+fn run_from_files(json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(None)?;
 
@@ -27,7 +127,7 @@ pub fn run(json: bool) -> Result<()> {
     let mut tool_counts: HashMap<String, u64> = HashMap::new();
 
     struct RecentSession {
-        date: chrono::DateTime<Utc>,
+        date: DateTime<Utc>,
         project: String,
         session_id: String,
         model: Option<String>,
@@ -120,12 +220,7 @@ pub fn run(json: bool) -> Result<()> {
         println!("  (none)");
     } else {
         for (i, (proj, count)) in top_projects.iter().enumerate() {
-            println!(
-                "  {}. {}  {} sessions",
-                i + 1,
-                proj.bright_blue(),
-                count
-            );
+            println!("  {}. {}  {} sessions", i + 1, proj.bright_blue(), count);
         }
     }
 
