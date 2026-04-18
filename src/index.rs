@@ -1313,8 +1313,8 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                 entry.pr_links.push((number, url, repo, ts));
             }
             "file-history-snapshot" => {
-                if let Some(snapshot) = record["snapshot"].as_object() {
-                    for key in snapshot.keys() {
+                if let Some(backups) = record["snapshot"]["trackedFileBackups"].as_object() {
+                    for key in backups.keys() {
                         if !entry.file_paths_modified.contains(key) {
                             entry.file_paths_modified.push(key.clone());
                         }

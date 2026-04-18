@@ -133,8 +133,9 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 stats.pr_links.push((number, url, repo, ts));
             }
             "file-history-snapshot" => {
-                if let Some(snapshot) = record["snapshot"].as_object() {
-                    for key in snapshot.keys() {
+                // File paths live in snapshot.trackedFileBackups keys
+                if let Some(backups) = record["snapshot"]["trackedFileBackups"].as_object() {
+                    for key in backups.keys() {
                         if !stats.file_paths_modified.contains(key) {
                             stats.file_paths_modified.push(key.clone());
                         }
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn parse_file_history_snapshot() {
         let f = write_jsonl(&[
-            r#"{"type":"file-history-snapshot","snapshot":{"src/main.rs":{},"src/lib.rs":{}}}"#,
+            r#"{"type":"file-history-snapshot","snapshot":{"messageId":"abc","trackedFileBackups":{"src/main.rs":{"backupFileName":"x"},"src/lib.rs":{"backupFileName":"y"}},"timestamp":"t"}}"#,
         ]);
         let stats = parse_session(f.path()).unwrap();
         assert_eq!(stats.file_paths_modified.len(), 2);

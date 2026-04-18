@@ -111,7 +111,12 @@ fn run_indexed(json: bool) -> Result<()> {
         );
     }
     if let Some(avg) = data.avg_turn_duration_ms {
-        println!("  Avg turn duration:  {:.0}ms", avg);
+        let secs = avg / 1000.0;
+        if secs < 60.0 {
+            println!("  Avg turn duration:  {secs:.1}s");
+        } else {
+            println!("  Avg turn duration:  {:.1}m", secs / 60.0);
+        }
     }
     if data.pr_count > 0 {
         println!("  PRs linked:         {}", data.pr_count);
