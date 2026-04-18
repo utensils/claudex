@@ -1,0 +1,7 @@
+# Use Xcode's clang on macOS so the linker can find SDK-bundled libraries
+# (e.g. libiconv) that GCC from Nix would not find automatically.
+[target.aarch64-apple-darwin]
+linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+
+[target.x86_64-apple-darwin]
+linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
