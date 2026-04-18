@@ -5,7 +5,7 @@ use chrono::{Datelike, Duration, Utc};
 use owo_colors::OwoColorize;
 
 use crate::parser::parse_session;
-use crate::store::{SessionStore, display_project_name};
+use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::TokenUsage;
 
 pub fn run(json: bool) -> Result<()> {
@@ -14,18 +14,26 @@ pub fn run(json: bool) -> Result<()> {
 
     let now = Utc::now();
     let today = now.date_naive();
-    let week_start = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    let days_since_monday = today.weekday().num_days_from_monday() as i64;
+    let week_start = today - Duration::days(days_since_monday);
 
     let mut total_sessions = 0usize;
     let mut sessions_today = 0usize;
-    let mut sessions_week = 0usize;
+    let mut sessions_this_week = 0usize;
+    let mut total_cost = 0.0f64;
+    let mut week_cost = 0.0f64;
     let mut total_usage = TokenUsage::default();
-    let mut week_usage = TokenUsage::default();
-    let mut total_cost = 0f64;
-    let mut week_cost = 0f64;
     let mut project_counts: HashMap<String, usize> = HashMap::new();
     let mut tool_counts: HashMap<String, u64> = HashMap::new();
-    let mut most_recent: Option<MostRecent> = None;
+
+    struct RecentSession {
+        date: chrono::DateTime<Utc>,
+        project: String,
+        session_id: String,
+        model: Option<String>,
+        message_count: usize,
+    }
+    let mut most_recent: Option<RecentSession> = None;
 
     for (project_raw, path) in &files {
         let stats = match parse_session(path) {
@@ -35,137 +43,131 @@ pub fn run(json: bool) -> Result<()> {
 
         total_sessions += 1;
         let session_cost = stats.usage.cost_for_model(stats.model.as_deref());
-        total_usage.add(&stats.usage);
         total_cost += session_cost;
+        total_usage.add(&stats.usage);
 
-        let project_display = display_project_name(project_raw);
-        *project_counts.entry(project_display.clone()).or_insert(0) += 1;
-
-        for name in &stats.tool_names {
-            *tool_counts.entry(name.clone()).or_insert(0) += 1;
-        }
-
-        if let Some(ts) = stats.first_timestamp {
-            let date = ts.date_naive();
+        if let Some(dt) = stats.first_timestamp {
+            let date = dt.date_naive();
             if date == today {
                 sessions_today += 1;
             }
             if date >= week_start {
-                sessions_week += 1;
-                week_usage.add(&stats.usage);
+                sessions_this_week += 1;
                 week_cost += session_cost;
             }
 
-            let update = most_recent
-                .as_ref()
-                .is_none_or(|r: &MostRecent| ts > r.date);
-            if update {
-                most_recent = Some(MostRecent {
-                    project: project_display,
+            let is_newer = most_recent.as_ref().map(|r| dt > r.date).unwrap_or(true);
+            if is_newer {
+                most_recent = Some(RecentSession {
+                    date: dt,
+                    project: display_project_name(&decode_project_name(project_raw)),
                     session_id: stats.session_id.unwrap_or_default(),
-                    date: ts,
-                    model: stats.model,
+                    model: stats.model.clone(),
+                    message_count: stats.message_count,
                 });
             }
         }
+
+        let proj = display_project_name(&decode_project_name(project_raw));
+        *project_counts.entry(proj).or_insert(0) += 1;
+
+        for name in &stats.tool_names {
+            *tool_counts.entry(name.clone()).or_insert(0) += 1;
+        }
     }
 
-    if json {
-        let mut top_projects: Vec<_> = project_counts.iter().collect();
-        top_projects.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
-        let mut top_tools: Vec<_> = tool_counts.iter().collect();
-        top_tools.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+    let mut top_projects: Vec<(String, usize)> = project_counts.into_iter().collect();
+    top_projects.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    top_projects.truncate(5);
 
-        let output = serde_json::json!({
-            "sessions": {
-                "total": total_sessions,
-                "today": sessions_today,
-                "this_week": sessions_week,
-            },
-            "cost_usd": {
-                "total": total_cost,
-                "this_week": week_cost,
-            },
-            "top_projects": top_projects.iter().take(5).map(|(p, c)| {
-                serde_json::json!({"project": p, "sessions": c})
-            }).collect::<Vec<_>>(),
-            "top_tools": top_tools.iter().take(5).map(|(t, c)| {
-                serde_json::json!({"tool": t, "calls": c})
-            }).collect::<Vec<_>>(),
-            "most_recent": most_recent.as_ref().map(|r| {
-                serde_json::json!({
-                    "project": r.project,
-                    "session_id": r.session_id,
-                    "date": r.date.to_rfc3339(),
-                    "model": r.model,
-                })
-            }),
+    let mut top_tools: Vec<(String, u64)> = tool_counts.into_iter().collect();
+    top_tools.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    top_tools.truncate(5);
+
+    if json {
+        let out = serde_json::json!({
+            "total_sessions": total_sessions,
+            "sessions_today": sessions_today,
+            "sessions_this_week": sessions_this_week,
+            "total_cost_usd": total_cost,
+            "cost_this_week_usd": week_cost,
+            "total_tokens": total_usage.total_tokens(),
+            "top_projects": top_projects.iter().map(|(p, c)| serde_json::json!({"project": p, "sessions": c})).collect::<Vec<_>>(),
+            "top_tools": top_tools.iter().map(|(t, c)| serde_json::json!({"tool": t, "calls": c})).collect::<Vec<_>>(),
+            "most_recent": most_recent.as_ref().map(|r| serde_json::json!({
+                "project": r.project,
+                "session_id": r.session_id,
+                "date": r.date.to_rfc3339(),
+                "model": r.model,
+                "message_count": r.message_count,
+            })),
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
 
-    println!("{}", "claudex summary".bold());
-    println!();
+    section("Sessions");
+    println!("  Total:      {}", total_sessions.to_string().bold());
+    println!("  Today:      {}", sessions_today);
+    println!("  This week:  {}", sessions_this_week);
 
-    println!("{}", "Sessions".bright_cyan().bold());
-    println!(
-        "  {} total  |  {} today  |  {} this week",
-        total_sessions, sessions_today, sessions_week
-    );
-    println!();
+    section("Cost (estimated)");
+    println!("  All time:   ${:.4}", total_cost);
+    println!("  This week:  ${:.4}", week_cost);
 
-    println!("{}", "Cost (USD)".bright_cyan().bold());
-    println!(
-        "  ${:.4} all time  |  ${:.4} this week",
-        total_cost, week_cost
-    );
-    println!();
-
-    let mut top_projects: Vec<_> = project_counts.iter().collect();
-    top_projects.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
-    println!("{}", "Top Projects".bright_cyan().bold());
-    for (i, (project, count)) in top_projects.iter().take(5).enumerate() {
-        println!(
-            "  {}. {:<50} {}",
-            i + 1,
-            project,
-            count.to_string().dimmed()
-        );
+    section("Top Projects");
+    if top_projects.is_empty() {
+        println!("  (none)");
+    } else {
+        for (i, (proj, count)) in top_projects.iter().enumerate() {
+            println!(
+                "  {}. {}  {} sessions",
+                i + 1,
+                proj.bright_blue(),
+                count
+            );
+        }
     }
-    println!();
 
-    let mut top_tools: Vec<_> = tool_counts.iter().collect();
-    top_tools.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
-    println!("{}", "Top Tools".bright_cyan().bold());
-    for (i, (tool, count)) in top_tools.iter().take(5).enumerate() {
-        println!("  {}. {:<30} {}", i + 1, tool, count.to_string().dimmed());
+    section("Top Tools");
+    if top_tools.is_empty() {
+        println!("  (none)");
+    } else {
+        for (i, (tool, count)) in top_tools.iter().enumerate() {
+            println!("  {}. {}  {} calls", i + 1, tool.cyan(), fmt_num(*count));
+        }
     }
-    println!();
 
     if let Some(r) = &most_recent {
-        println!("{}", "Most Recent Session".bright_cyan().bold());
-        println!("  Project:  {}", r.project);
-        println!(
-            "  Session:  {}",
-            r.session_id.chars().take(8).collect::<String>()
-        );
-        println!("  Date:     {}", r.date.format("%Y-%m-%d %H:%M UTC"));
-        println!(
-            "  Model:    {}",
-            r.model
-                .as_deref()
-                .unwrap_or("-")
-                .trim_start_matches("claude-")
-        );
+        section("Most Recent Session");
+        println!("  Project:   {}", r.project.bright_blue());
+        println!("  Date:      {}", r.date.format("%Y-%m-%d %H:%M UTC"));
+        let sid: String = r.session_id.chars().take(8).collect();
+        println!("  Session:   {}", sid.dimmed());
+        let model = r
+            .model
+            .as_deref()
+            .map(|m| m.trim_start_matches("claude-").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!("  Model:     {}", model);
+        println!("  Messages:  {}", r.message_count);
     }
 
+    println!();
     Ok(())
 }
 
-struct MostRecent {
-    project: String,
-    session_id: String,
-    date: chrono::DateTime<Utc>,
-    model: Option<String>,
+fn section(title: &str) {
+    println!("\n{}", title.bold());
+    println!("{}", "─".repeat(title.len()));
+}
+
+fn fmt_num(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }

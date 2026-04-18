@@ -8,6 +8,53 @@ pub struct TokenUsage {
     pub cache_read_tokens: u64,
 }
 
+pub struct ModelPricing {
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
+    pub cache_write_per_mtok: f64,
+    pub cache_read_per_mtok: f64,
+}
+
+impl ModelPricing {
+    pub fn for_model(model: Option<&str>) -> Self {
+        let m = model.unwrap_or("").to_lowercase();
+        if m.contains("opus") {
+            Self {
+                input_per_mtok: 15.0,
+                output_per_mtok: 75.0,
+                cache_write_per_mtok: 18.75,
+                cache_read_per_mtok: 1.50,
+            }
+        } else if m.contains("haiku") {
+            Self {
+                input_per_mtok: 0.80,
+                output_per_mtok: 4.0,
+                cache_write_per_mtok: 1.00,
+                cache_read_per_mtok: 0.08,
+            }
+        } else {
+            // Sonnet (default)
+            Self {
+                input_per_mtok: 3.0,
+                output_per_mtok: 15.0,
+                cache_write_per_mtok: 3.75,
+                cache_read_per_mtok: 0.30,
+            }
+        }
+    }
+
+    pub fn name(model: Option<&str>) -> &'static str {
+        let m = model.unwrap_or("").to_lowercase();
+        if m.contains("opus") {
+            "Opus"
+        } else if m.contains("haiku") {
+            "Haiku"
+        } else {
+            "Sonnet"
+        }
+    }
+}
+
 impl TokenUsage {
     pub fn add(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
@@ -16,40 +63,18 @@ impl TokenUsage {
         self.cache_read_tokens += other.cache_read_tokens;
     }
 
-    /// Cost in USD with model-aware pricing.
-    /// Sonnet: $3/$15/$0.30 per MTok (input/output/cache-read)
-    /// Opus:   $15/$75/$1.50 per MTok
-    /// Haiku:  $0.80/$4/$0.08 per MTok
+    /// Model-aware cost in USD.
     pub fn cost_for_model(&self, model: Option<&str>) -> f64 {
-        let (input, output, cache_write, cache_read) = pricing_rates(model);
-        (self.input_tokens as f64 * input
-            + self.cache_creation_tokens as f64 * cache_write
-            + self.output_tokens as f64 * output
-            + self.cache_read_tokens as f64 * cache_read)
+        let p = ModelPricing::for_model(model);
+        (self.input_tokens as f64 * p.input_per_mtok
+            + self.cache_creation_tokens as f64 * p.cache_write_per_mtok
+            + self.output_tokens as f64 * p.output_per_mtok
+            + self.cache_read_tokens as f64 * p.cache_read_per_mtok)
             / 1_000_000.0
     }
 
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens + self.cache_creation_tokens + self.cache_read_tokens
-    }
-}
-
-/// Returns (input, output, cache_write, cache_read) rates per MTok.
-pub fn pricing_rates(model: Option<&str>) -> (f64, f64, f64, f64) {
-    match model.unwrap_or("") {
-        m if m.contains("opus") => (15.0, 75.0, 18.75, 1.50),
-        m if m.contains("haiku") => (0.80, 4.0, 1.0, 0.08),
-        _ => (3.0, 15.0, 3.75, 0.30),
-    }
-}
-
-/// Human-readable model family label.
-pub fn model_label(model: Option<&str>) -> &'static str {
-    match model.unwrap_or("") {
-        m if m.contains("opus") => "opus",
-        m if m.contains("haiku") => "haiku",
-        m if m.contains("sonnet") => "sonnet",
-        _ => "unknown",
     }
 }
 
@@ -97,5 +122,31 @@ mod tests {
         a.add(&b);
         assert_eq!(a.input_tokens, 300);
         assert_eq!(a.output_tokens, 50);
+    }
+
+    #[test]
+    fn cost_opus_higher_than_sonnet() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        assert!(u.cost_for_model(Some("claude-opus-4")) > u.cost_for_model(Some("claude-sonnet-4")));
+    }
+
+    #[test]
+    fn cost_haiku_lower_than_sonnet() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        assert!(u.cost_for_model(Some("claude-haiku-4")) < u.cost_for_model(Some("claude-sonnet-4")));
+    }
+
+    #[test]
+    fn model_pricing_name() {
+        assert_eq!(ModelPricing::name(Some("claude-opus-4-7")), "Opus");
+        assert_eq!(ModelPricing::name(Some("claude-haiku-4-5")), "Haiku");
+        assert_eq!(ModelPricing::name(Some("claude-sonnet-4-6")), "Sonnet");
+        assert_eq!(ModelPricing::name(None), "Sonnet");
     }
 }

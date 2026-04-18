@@ -1,6 +1,6 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -10,133 +10,179 @@ use serde_json::Value;
 
 pub fn run(raw: bool) -> Result<()> {
     let home = dirs::home_dir().context("could not find home directory")?;
-    let latest = home.join(".claude").join("debug").join("latest");
+    let link = home.join(".claude").join("debug").join("latest");
 
-    if !latest.exists() {
-        anyhow::bail!("~/.claude/debug/latest does not exist — is debug logging enabled?");
+    if !link.exists() {
+        anyhow::bail!(
+            "~/.claude/debug/latest not found\n\
+             Enable debug logging in Claude Code settings (or set CLAUDE_DEBUG=1)"
+        );
     }
 
-    let mut current_target = resolve_target(&latest)?;
-    let mut file = fs::File::open(&current_target)
-        .with_context(|| format!("opening {}", current_target.display()))?;
-    file.seek(SeekFrom::End(0))?;
-    let mut reader = BufReader::new(file);
+    let mut resolved = resolve_link(&link)?;
+    // Start from the current end of file so we only show new output
+    let mut pos: u64 = file_len(&resolved);
+    let mut leftover = String::new();
 
     eprintln!(
-        "{}",
-        format!("watching {}", current_target.display()).dimmed()
+        "Watching {} (Ctrl-C to exit)",
+        link.display().to_string().dimmed()
     );
 
     loop {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
-                if let Ok(new_target) = resolve_target(&latest) {
-                    if new_target != current_target {
-                        eprintln!(
-                            "{}",
-                            format!("\n--- session switched: {} ---\n", new_target.display())
-                                .dimmed()
-                        );
-                        current_target = new_target;
-                        let new_file = fs::File::open(&current_target)
-                            .with_context(|| format!("opening {}", current_target.display()))?;
-                        reader = BufReader::new(new_file);
-                        continue;
+        // Detect symlink target changes (new session started)
+        if let Ok(new_resolved) = resolve_link(&link) {
+            if new_resolved != resolved {
+                eprintln!(
+                    "\n{}  {}",
+                    "─── new session".bright_yellow(),
+                    new_resolved.display().to_string().dimmed()
+                );
+                resolved = new_resolved;
+                pos = 0;
+                leftover.clear();
+            }
+        }
+
+        let len = file_len(&resolved);
+        if len > pos {
+            if let Ok(mut f) = fs::File::open(&resolved) {
+                if f.seek(SeekFrom::Start(pos)).is_ok() {
+                    let mut buf = Vec::new();
+                    if f.read_to_end(&mut buf).is_ok() {
+                        pos += buf.len() as u64;
+                        let chunk = String::from_utf8_lossy(&buf).to_string();
+                        let combined = format!("{}{}", leftover, chunk);
+                        let ends_with_newline = combined.ends_with('\n');
+                        let mut parts: Vec<&str> = combined.split('\n').collect();
+
+                        if !ends_with_newline {
+                            leftover = parts.pop().unwrap_or("").to_string();
+                        } else {
+                            leftover.clear();
+                            if parts.last() == Some(&"") {
+                                parts.pop();
+                            }
+                        }
+
+                        for line in parts {
+                            if !line.trim().is_empty() {
+                                if raw {
+                                    println!("{line}");
+                                } else {
+                                    println!("{}", format_line(line));
+                                }
+                            }
+                        }
                     }
                 }
-                thread::sleep(Duration::from_millis(500));
             }
-            Ok(_) => {
-                let trimmed = line.trim_end_matches(['\n', '\r']);
-                if raw {
-                    println!("{trimmed}");
+        } else if len < pos {
+            // File was truncated; restart from beginning
+            pos = 0;
+            leftover.clear();
+        }
+
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn resolve_link(link: &std::path::Path) -> Result<PathBuf> {
+    fs::canonicalize(link).context("could not resolve ~/.claude/debug/latest")
+}
+
+fn file_len(path: &std::path::Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn format_line(line: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<Value>(line) {
+        format_json_line(&v, line)
+    } else {
+        format_text_line(line)
+    }
+}
+
+fn format_json_line(v: &Value, raw_line: &str) -> String {
+    let ts = v["timestamp"]
+        .as_str()
+        .or_else(|| v["ts"].as_str())
+        .unwrap_or("");
+    let ts_short = shorten_ts(ts);
+
+    // Session JSONL record style (has a "type" field)
+    if let Some(record_type) = v["type"].as_str() {
+        let type_colored = match record_type {
+            "user" => record_type.bright_green().bold().to_string(),
+            "assistant" => record_type.bright_blue().bold().to_string(),
+            "system" => {
+                let dur = v["durationMs"].as_u64().unwrap_or(0);
+                let suffix = if dur > 0 {
+                    format!(" {}ms", dur)
                 } else {
-                    print_formatted(trimmed);
-                }
+                    String::new()
+                };
+                return format!(
+                    "{} [{}]{}",
+                    ts_short.dimmed(),
+                    "system".dimmed(),
+                    suffix.dimmed()
+                );
             }
-            Err(e) => {
-                eprintln!("{}", format!("read error: {e}").red());
-                thread::sleep(Duration::from_millis(500));
-            }
-        }
+            _ => record_type.bright_yellow().to_string(),
+        };
+        return format!("{} [{}]", ts_short.dimmed(), type_colored);
     }
-}
 
-fn resolve_target(path: &Path) -> Result<PathBuf> {
-    match fs::read_link(path) {
-        Ok(target) => {
-            if target.is_relative() {
-                let parent = path.parent().unwrap_or(Path::new("."));
-                Ok(parent.join(target))
-            } else {
-                Ok(target)
-            }
-        }
-        Err(_) => Ok(path.to_path_buf()),
-    }
-}
+    // Structured log style (level + message)
+    let level = v["level"]
+        .as_str()
+        .or_else(|| v["severity"].as_str())
+        .unwrap_or("info");
+    let msg = v["message"]
+        .as_str()
+        .or_else(|| v["msg"].as_str())
+        .unwrap_or(raw_line);
 
-fn print_formatted(line: &str) {
-    if line.trim().is_empty() {
-        return;
-    }
-    match serde_json::from_str::<Value>(line) {
-        Ok(v) => format_json_record(&v),
-        Err(_) => println!("{line}"),
-    }
-}
+    let (level_s, msg_s) = match level.to_lowercase().as_str() {
+        "error" | "fatal" | "critical" => (
+            level.red().bold().to_string(),
+            msg.red().to_string(),
+        ),
+        "warn" | "warning" => (level.yellow().to_string(), msg.yellow().to_string()),
+        "debug" | "trace" => (level.dimmed().to_string(), msg.dimmed().to_string()),
+        _ => (level.to_string(), msg.to_string()),
+    };
 
-fn format_json_record(v: &Value) {
-    let ts = v["timestamp"].as_str().or(v["ts"].as_str()).unwrap_or("");
-    let level = v["level"].as_str().unwrap_or("");
-    let msg = v["message"].as_str().or(v["msg"].as_str()).unwrap_or("");
-    let record_type = v["type"].as_str().unwrap_or("");
-
-    let ts_prefix = if ts.is_empty() {
-        String::new()
+    if ts_short.is_empty() {
+        format!("[{}] {}", level_s, msg_s)
     } else {
-        format!("{} ", ts.dimmed())
-    };
-
-    let tag = match record_type {
-        "assistant" => format!("[{}] ", "assistant".bright_green().bold()),
-        "user" => format!("[{}] ", "user".bright_blue().bold()),
-        "tool_use" => format!("[{}] ", "tool_use".bright_yellow().bold()),
-        "tool_result" => format!("[{}] ", "tool_result".bright_yellow().bold()),
-        _ => {
-            let level_str = match level {
-                "error" | "ERROR" => level.bright_red().bold().to_string(),
-                "warn" | "WARN" | "warning" | "WARNING" => level.bright_yellow().to_string(),
-                "info" | "INFO" => level.bright_cyan().to_string(),
-                "debug" | "DEBUG" => level.dimmed().to_string(),
-                other if !other.is_empty() => other.to_string(),
-                _ => String::new(),
-            };
-            if level_str.is_empty() {
-                String::new()
-            } else {
-                format!("[{level_str}] ")
-            }
-        }
-    };
-
-    if msg.is_empty() && tag.is_empty() {
-        println!(
-            "{ts_prefix}{}",
-            serde_json::to_string(v).unwrap_or_default().dimmed()
-        );
-        return;
+        format!("{} [{}] {}", ts_short.dimmed(), level_s, msg_s)
     }
+}
 
-    let msg_colored = if level.eq_ignore_ascii_case("error")
-        || record_type == "error"
-        || msg.to_lowercase().contains("error")
-    {
-        msg.bright_red().to_string()
+fn format_text_line(line: &str) -> String {
+    let lower = line.to_lowercase();
+    if lower.contains("error") || lower.contains("fatal") {
+        line.red().to_string()
+    } else if lower.contains("warn") {
+        line.yellow().to_string()
+    } else if lower.contains("tool_call") || lower.contains("tool_use") {
+        line.cyan().to_string()
+    } else if lower.contains("debug") || lower.contains("trace") {
+        line.dimmed().to_string()
     } else {
-        msg.to_string()
-    };
+        line.to_string()
+    }
+}
 
-    println!("{ts_prefix}{tag}{msg_colored}");
+fn shorten_ts(ts: &str) -> &str {
+    // Extract HH:MM:SS from "YYYY-MM-DDTHH:MM:SS..." or "YYYY-MM-DD HH:MM:SS..."
+    if ts.len() >= 19 {
+        &ts[11..19]
+    } else if ts.len() >= 8 {
+        &ts[..8]
+    } else {
+        ts
+    }
 }

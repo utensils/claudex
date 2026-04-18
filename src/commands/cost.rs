@@ -5,8 +5,8 @@ use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::parser::parse_session;
-use crate::store::{SessionStore, display_project_name, short_name};
-use crate::types::{TokenUsage, model_label};
+use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
+use crate::types::{ModelPricing, TokenUsage};
 
 pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -22,19 +22,10 @@ struct ProjectCost {
     project: String,
     usage: TokenUsage,
     session_count: usize,
-    /// Accumulated model-aware cost (each session contributes with its detected model).
-    total_cost_usd: f64,
-    /// Dominant model (most sessions).
-    models: HashMap<String, usize>,
-}
-
-impl ProjectCost {
-    fn dominant_model(&self) -> Option<&str> {
-        self.models
-            .iter()
-            .max_by_key(|(_, c)| *c)
-            .map(|(m, _)| m.as_str())
-    }
+    /// Accumulated model-accurate cost (sum of per-session costs).
+    total_cost: f64,
+    /// Distinct model families used in this project's sessions.
+    models: Vec<String>,
 }
 
 fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
@@ -45,28 +36,31 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
             Ok(s) => s,
             Err(_) => continue,
         };
-        let session_cost = stats.usage.cost_for_model(stats.model.as_deref());
+        let display = display_project_name(&decode_project_name(project_raw));
         let entry = projects
             .entry(project_raw.clone())
             .or_insert_with(|| ProjectCost {
-                project: display_project_name(project_raw),
+                project: display,
                 usage: TokenUsage::default(),
                 session_count: 0,
-                total_cost_usd: 0.0,
-                models: HashMap::new(),
+                total_cost: 0.0,
+                models: Vec::new(),
             });
+        entry.total_cost += stats.usage.cost_for_model(stats.model.as_deref());
         entry.usage.add(&stats.usage);
         entry.session_count += 1;
-        entry.total_cost_usd += session_cost;
-        if let Some(m) = stats.model {
-            *entry.models.entry(m).or_insert(0) += 1;
+        if let Some(m) = &stats.model {
+            let family = ModelPricing::name(Some(m)).to_string();
+            if !entry.models.contains(&family) {
+                entry.models.push(family);
+            }
         }
     }
 
     let mut rows: Vec<ProjectCost> = projects.into_values().collect();
     rows.sort_by(|a, b| {
-        b.total_cost_usd
-            .partial_cmp(&a.total_cost_usd)
+        b.total_cost
+            .partial_cmp(&a.total_cost)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     rows.truncate(limit);
@@ -82,8 +76,8 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
                     "output_tokens": r.usage.output_tokens,
                     "cache_creation_tokens": r.usage.cache_creation_tokens,
                     "cache_read_tokens": r.usage.cache_read_tokens,
-                    "cost_usd": r.total_cost_usd,
-                    "model": r.dominant_model(),
+                    "cost_usd": r.total_cost,
+                    "models": r.models,
                 })
             })
             .collect();
@@ -99,28 +93,32 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         "Input",
         "Output",
         "Cache Read",
-        "Model",
+        "Model(s)",
         "Cost (USD)",
     ]);
 
-    let mut total_cost = 0f64;
-    let mut total_sessions = 0usize;
+    let mut total_cost = 0.0f64;
     let mut total_usage = TokenUsage::default();
+    let mut total_sessions = 0usize;
 
     for r in &rows {
-        let model_str = model_label(r.dominant_model());
+        let model_str = if r.models.is_empty() {
+            "-".to_string()
+        } else {
+            r.models.join("/")
+        };
         table.add_row([
             short_name(&r.project),
             r.session_count.to_string(),
             fmt_tokens(r.usage.input_tokens),
             fmt_tokens(r.usage.output_tokens),
             fmt_tokens(r.usage.cache_read_tokens),
-            model_str.to_string(),
-            format!("${:.4}", r.total_cost_usd),
+            model_str,
+            format!("${:.4}", r.total_cost),
         ]);
+        total_cost += r.total_cost;
         total_usage.add(&r.usage);
         total_sessions += r.session_count;
-        total_cost += r.total_cost_usd;
     }
     table.add_row([
         "TOTAL".to_string(),
@@ -146,31 +144,28 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         if stats.usage.total_tokens() == 0 {
             continue;
         }
-        rows.push((display_project_name(project_raw), stats));
+        let cost = stats.usage.cost_for_model(stats.model.as_deref());
+        rows.push((display_project_name(&decode_project_name(project_raw)), stats, cost));
     }
     rows.sort_by(|a, b| {
-        let cost_a = a.1.usage.cost_for_model(a.1.model.as_deref());
-        let cost_b = b.1.usage.cost_for_model(b.1.model.as_deref());
-        cost_b
-            .partial_cmp(&cost_a)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
     });
     rows.truncate(limit);
 
     if json {
         let output: Vec<_> = rows
             .iter()
-            .map(|(project, stats)| {
+            .map(|(project, stats, cost)| {
                 serde_json::json!({
                     "project": project,
                     "session_id": stats.session_id,
                     "date": stats.first_timestamp.map(|d| d.to_rfc3339()),
+                    "model": stats.model,
                     "input_tokens": stats.usage.input_tokens,
                     "output_tokens": stats.usage.output_tokens,
                     "cache_creation_tokens": stats.usage.cache_creation_tokens,
                     "cache_read_tokens": stats.usage.cache_read_tokens,
-                    "model": stats.model,
-                    "cost_usd": stats.usage.cost_for_model(stats.model.as_deref()),
+                    "cost_usd": cost,
                 })
             })
             .collect();
@@ -184,13 +179,13 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         "Project",
         "Session",
         "Date",
+        "Model",
         "Input",
         "Output",
-        "Model",
         "Cost (USD)",
     ]);
 
-    for (project, stats) in &rows {
+    for (project, stats, cost) in &rows {
         let sid: String = stats
             .session_id
             .as_deref()
@@ -202,15 +197,18 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             .first_timestamp
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "-".to_string());
-        let cost = stats.usage.cost_for_model(stats.model.as_deref());
-        let model_str = model_label(stats.model.as_deref());
+        let model = stats
+            .model
+            .as_deref()
+            .map(|m| ModelPricing::name(Some(m)).to_string())
+            .unwrap_or_else(|| "-".to_string());
         table.add_row([
             short_name(project),
             sid,
             date,
+            model,
             fmt_tokens(stats.usage.input_tokens),
             fmt_tokens(stats.usage.output_tokens),
-            model_str.to_string(),
             format!("${:.4}", cost),
         ]);
     }

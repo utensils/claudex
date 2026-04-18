@@ -2,7 +2,7 @@ use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::parser::parse_session;
-use crate::store::{SessionStore, display_project_name, short_name};
+use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::SessionInfo;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
@@ -19,7 +19,7 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
             .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
             .unwrap_or_default();
         sessions.push(SessionInfo {
-            project: display_project_name(&project_raw),
+            project: display_project_name(&decode_project_name(&project_raw)),
             session_id,
             date: stats.first_timestamp,
             message_count: stats.message_count,

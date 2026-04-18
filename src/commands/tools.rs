@@ -5,7 +5,7 @@ use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::parser::parse_session;
-use crate::store::{SessionStore, decode_project_name, short_name};
+use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 
 pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -68,7 +68,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             *counts.entry(name.clone()).or_insert(0) += 1;
         }
         rows.push((
-            decode_project_name(project_raw),
+            display_project_name(&decode_project_name(project_raw)),
             stats.session_id,
             stats.first_timestamp,
             counts,

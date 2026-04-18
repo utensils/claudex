@@ -92,18 +92,18 @@ pub fn decode_project_name(encoded: &str) -> String {
     result
 }
 
-/// Decode and produce a human-friendly display name.
-/// Worktree paths (containing `/.claude/worktrees/`) are shown as
-/// `<project-name> (worktree)` instead of the full path.
-pub fn display_project_name(encoded: &str) -> String {
-    let decoded = decode_project_name(encoded);
-    if let Some(idx) = decoded.find("/.claude/worktrees/") {
-        let project_path = &decoded[..idx];
-        let name = project_path.rsplit('/').next().unwrap_or(project_path);
-        format!("{name} (worktree)")
-    } else {
-        decoded
+/// Convert a decoded project path to a human-readable display name.
+///
+/// Paths containing `/.claude/worktrees/` are shown as "projectname (worktree)"
+/// to avoid long branch-hash suffixes obscuring the actual project name.
+pub fn display_project_name(decoded_path: &str) -> String {
+    const MARKER: &str = "/.claude/worktrees/";
+    if let Some(idx) = decoded_path.find(MARKER) {
+        let base = &decoded_path[..idx];
+        let proj = base.rsplit('/').next().unwrap_or(base);
+        return format!("{} (worktree)", proj);
     }
+    decoded_path.to_string()
 }
 
 /// Shorten a decoded project path to at most 55 bytes for display.
@@ -143,17 +143,20 @@ mod tests {
     }
 
     #[test]
-    fn display_worktree() {
-        let encoded =
-            "-Users-jamesbrink-Projects-utensils-claudex--claude-worktrees-sharp-jackson-cc5c68";
-        assert_eq!(display_project_name(encoded), "claudex (worktree)");
+    fn display_name_worktree() {
+        assert_eq!(
+            display_project_name(
+                "/Users/jamesbrink/Projects/claudex/.claude/worktrees/strange-borg-c09522"
+            ),
+            "claudex (worktree)"
+        );
     }
 
     #[test]
-    fn display_normal() {
+    fn display_name_normal() {
         assert_eq!(
-            display_project_name("-Users-jamesbrink-Projects-claudex"),
-            "/Users/jamesbrink/Projects/claudex"
+            display_project_name("/Users/jamesbrink/Projects/foo"),
+            "/Users/jamesbrink/Projects/foo"
         );
     }
 

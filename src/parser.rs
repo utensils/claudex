@@ -17,7 +17,6 @@ pub struct SessionStats {
     pub message_count: usize,
     pub total_duration_ms: u64,
     pub model: Option<String>,
-    pub cwd: Option<String>,
     pub usage: TokenUsage,
     pub tool_names: Vec<String>,
 }
@@ -82,18 +81,13 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 if let Some(dur) = record["durationMs"].as_u64() {
                     stats.total_duration_ms += dur;
                 }
-                if stats.cwd.is_none() {
-                    if let Some(cwd) = record["cwd"].as_str() {
-                        stats.cwd = Some(cwd.to_string());
-                    }
-                }
             }
             _ => {}
         }
         true
     })?;
 
-    // Fall back to timestamp span when no durationMs system records exist.
+    // Fallback: derive duration from timestamp range when system records are absent
     if stats.total_duration_ms == 0 {
         if let (Some(first), Some(last)) = (stats.first_timestamp, stats.last_timestamp) {
             let diff = last.signed_duration_since(first);
