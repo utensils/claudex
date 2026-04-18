@@ -92,6 +92,20 @@ pub fn decode_project_name(encoded: &str) -> String {
     result
 }
 
+/// Decode and produce a human-friendly display name.
+/// Worktree paths (containing `/.claude/worktrees/`) are shown as
+/// `<project-name> (worktree)` instead of the full path.
+pub fn display_project_name(encoded: &str) -> String {
+    let decoded = decode_project_name(encoded);
+    if let Some(idx) = decoded.find("/.claude/worktrees/") {
+        let project_path = &decoded[..idx];
+        let name = project_path.rsplit('/').next().unwrap_or(project_path);
+        format!("{name} (worktree)")
+    } else {
+        decoded
+    }
+}
+
 /// Shorten a decoded project path to at most 55 bytes for display.
 pub fn short_name(path: &str) -> String {
     const MAX: usize = 55;
@@ -125,6 +139,21 @@ mod tests {
         assert_eq!(
             decode_project_name("-Users-jamesbrink-Projects-claudex--claude-worktrees"),
             "/Users/jamesbrink/Projects/claudex/.claude/worktrees"
+        );
+    }
+
+    #[test]
+    fn display_worktree() {
+        let encoded =
+            "-Users-jamesbrink-Projects-utensils-claudex--claude-worktrees-sharp-jackson-cc5c68";
+        assert_eq!(display_project_name(encoded), "claudex (worktree)");
+    }
+
+    #[test]
+    fn display_normal() {
+        assert_eq!(
+            display_project_name("-Users-jamesbrink-Projects-claudex"),
+            "/Users/jamesbrink/Projects/claudex"
         );
     }
 

@@ -75,6 +75,32 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Tail ~/.claude/debug/latest in real-time with formatted output
+    Watch {
+        /// Disable output formatting (raw lines)
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Dashboard overview of all sessions
+    Summary {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export session transcripts as markdown or JSON
+    Export {
+        /// Session ID prefix or project name substring to match
+        target: String,
+        /// Output format
+        #[arg(long, default_value = "markdown", value_parser = ["markdown", "json"])]
+        format: String,
+        /// Write output to file instead of stdout
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Filter by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
+    },
 }
 
 fn main() {
@@ -103,6 +129,14 @@ fn main() {
             limit,
             json,
         } => commands::tools::run(project.as_deref(), per_session, limit, json),
+        Commands::Watch { raw } => commands::watch::run(raw),
+        Commands::Summary { json } => commands::summary::run(json),
+        Commands::Export {
+            target,
+            format,
+            output,
+            project,
+        } => commands::export::run(&target, &format, output.as_deref(), project.as_deref()),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");

@@ -16,18 +16,40 @@ impl TokenUsage {
         self.cache_read_tokens += other.cache_read_tokens;
     }
 
-    /// Approximate cost in USD using Sonnet pricing:
-    /// $3/MTok input, $3.75/MTok cache-write, $15/MTok output, $0.30/MTok cache-read
-    pub fn approx_cost_usd(&self) -> f64 {
-        (self.input_tokens as f64 * 3.0
-            + self.cache_creation_tokens as f64 * 3.75
-            + self.output_tokens as f64 * 15.0
-            + self.cache_read_tokens as f64 * 0.30)
+    /// Cost in USD with model-aware pricing.
+    /// Sonnet: $3/$15/$0.30 per MTok (input/output/cache-read)
+    /// Opus:   $15/$75/$1.50 per MTok
+    /// Haiku:  $0.80/$4/$0.08 per MTok
+    pub fn cost_for_model(&self, model: Option<&str>) -> f64 {
+        let (input, output, cache_write, cache_read) = pricing_rates(model);
+        (self.input_tokens as f64 * input
+            + self.cache_creation_tokens as f64 * cache_write
+            + self.output_tokens as f64 * output
+            + self.cache_read_tokens as f64 * cache_read)
             / 1_000_000.0
     }
 
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens + self.cache_creation_tokens + self.cache_read_tokens
+    }
+}
+
+/// Returns (input, output, cache_write, cache_read) rates per MTok.
+pub fn pricing_rates(model: Option<&str>) -> (f64, f64, f64, f64) {
+    match model.unwrap_or("") {
+        m if m.contains("opus") => (15.0, 75.0, 18.75, 1.50),
+        m if m.contains("haiku") => (0.80, 4.0, 1.0, 0.08),
+        _ => (3.0, 15.0, 3.75, 0.30),
+    }
+}
+
+/// Human-readable model family label.
+pub fn model_label(model: Option<&str>) -> &'static str {
+    match model.unwrap_or("") {
+        m if m.contains("opus") => "opus",
+        m if m.contains("haiku") => "haiku",
+        m if m.contains("sonnet") => "sonnet",
+        _ => "unknown",
     }
 }
 
@@ -48,7 +70,7 @@ mod tests {
     #[test]
     fn cost_zero_usage() {
         let u = TokenUsage::default();
-        assert_eq!(u.approx_cost_usd(), 0.0);
+        assert_eq!(u.cost_for_model(None), 0.0);
         assert_eq!(u.total_tokens(), 0);
     }
 
@@ -58,7 +80,7 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        assert!((u.approx_cost_usd() - 15.0).abs() < 0.001);
+        assert!((u.cost_for_model(None) - 15.0).abs() < 0.001);
     }
 
     #[test]

@@ -5,8 +5,8 @@ use anyhow::Result;
 use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::parser::parse_session;
-use crate::store::{SessionStore, decode_project_name, short_name};
-use crate::types::TokenUsage;
+use crate::store::{SessionStore, display_project_name, short_name};
+use crate::types::{TokenUsage, model_label};
 
 pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -22,6 +22,19 @@ struct ProjectCost {
     project: String,
     usage: TokenUsage,
     session_count: usize,
+    /// Accumulated model-aware cost (each session contributes with its detected model).
+    total_cost_usd: f64,
+    /// Dominant model (most sessions).
+    models: HashMap<String, usize>,
+}
+
+impl ProjectCost {
+    fn dominant_model(&self) -> Option<&str> {
+        self.models
+            .iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(m, _)| m.as_str())
+    }
 }
 
 fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
@@ -32,22 +45,28 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
             Ok(s) => s,
             Err(_) => continue,
         };
+        let session_cost = stats.usage.cost_for_model(stats.model.as_deref());
         let entry = projects
             .entry(project_raw.clone())
             .or_insert_with(|| ProjectCost {
-                project: decode_project_name(project_raw),
+                project: display_project_name(project_raw),
                 usage: TokenUsage::default(),
                 session_count: 0,
+                total_cost_usd: 0.0,
+                models: HashMap::new(),
             });
         entry.usage.add(&stats.usage);
         entry.session_count += 1;
+        entry.total_cost_usd += session_cost;
+        if let Some(m) = stats.model {
+            *entry.models.entry(m).or_insert(0) += 1;
+        }
     }
 
     let mut rows: Vec<ProjectCost> = projects.into_values().collect();
     rows.sort_by(|a, b| {
-        b.usage
-            .approx_cost_usd()
-            .partial_cmp(&a.usage.approx_cost_usd())
+        b.total_cost_usd
+            .partial_cmp(&a.total_cost_usd)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     rows.truncate(limit);
@@ -63,7 +82,8 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
                     "output_tokens": r.usage.output_tokens,
                     "cache_creation_tokens": r.usage.cache_creation_tokens,
                     "cache_read_tokens": r.usage.cache_read_tokens,
-                    "cost_usd": r.usage.approx_cost_usd(),
+                    "cost_usd": r.total_cost_usd,
+                    "model": r.dominant_model(),
                 })
             })
             .collect();
@@ -79,31 +99,37 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         "Input",
         "Output",
         "Cache Read",
+        "Model",
         "Cost (USD)",
     ]);
 
-    let mut total = TokenUsage::default();
+    let mut total_cost = 0f64;
     let mut total_sessions = 0usize;
+    let mut total_usage = TokenUsage::default();
 
     for r in &rows {
+        let model_str = model_label(r.dominant_model());
         table.add_row([
             short_name(&r.project),
             r.session_count.to_string(),
             fmt_tokens(r.usage.input_tokens),
             fmt_tokens(r.usage.output_tokens),
             fmt_tokens(r.usage.cache_read_tokens),
-            format!("${:.4}", r.usage.approx_cost_usd()),
+            model_str.to_string(),
+            format!("${:.4}", r.total_cost_usd),
         ]);
-        total.add(&r.usage);
+        total_usage.add(&r.usage);
         total_sessions += r.session_count;
+        total_cost += r.total_cost_usd;
     }
     table.add_row([
         "TOTAL".to_string(),
         total_sessions.to_string(),
-        fmt_tokens(total.input_tokens),
-        fmt_tokens(total.output_tokens),
-        fmt_tokens(total.cache_read_tokens),
-        format!("${:.4}", total.approx_cost_usd()),
+        fmt_tokens(total_usage.input_tokens),
+        fmt_tokens(total_usage.output_tokens),
+        fmt_tokens(total_usage.cache_read_tokens),
+        String::new(),
+        format!("${:.4}", total_cost),
     ]);
 
     println!("{table}");
@@ -120,12 +146,13 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         if stats.usage.total_tokens() == 0 {
             continue;
         }
-        rows.push((decode_project_name(project_raw), stats));
+        rows.push((display_project_name(project_raw), stats));
     }
     rows.sort_by(|a, b| {
-        b.1.usage
-            .approx_cost_usd()
-            .partial_cmp(&a.1.usage.approx_cost_usd())
+        let cost_a = a.1.usage.cost_for_model(a.1.model.as_deref());
+        let cost_b = b.1.usage.cost_for_model(b.1.model.as_deref());
+        cost_b
+            .partial_cmp(&cost_a)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     rows.truncate(limit);
@@ -142,7 +169,8 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
                     "output_tokens": stats.usage.output_tokens,
                     "cache_creation_tokens": stats.usage.cache_creation_tokens,
                     "cache_read_tokens": stats.usage.cache_read_tokens,
-                    "cost_usd": stats.usage.approx_cost_usd(),
+                    "model": stats.model,
+                    "cost_usd": stats.usage.cost_for_model(stats.model.as_deref()),
                 })
             })
             .collect();
@@ -158,6 +186,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         "Date",
         "Input",
         "Output",
+        "Model",
         "Cost (USD)",
     ]);
 
@@ -173,13 +202,16 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             .first_timestamp
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "-".to_string());
+        let cost = stats.usage.cost_for_model(stats.model.as_deref());
+        let model_str = model_label(stats.model.as_deref());
         table.add_row([
             short_name(project),
             sid,
             date,
             fmt_tokens(stats.usage.input_tokens),
             fmt_tokens(stats.usage.output_tokens),
-            format!("${:.4}", stats.usage.approx_cost_usd()),
+            model_str.to_string(),
+            format!("${:.4}", cost),
         ]);
     }
     println!("{table}");
