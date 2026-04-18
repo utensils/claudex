@@ -13,4 +13,11 @@ keywords = ["claude", "claude-code", "cli", "sessions"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+anyhow = "1"
+chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
+dirs = "5"
+owo-colors = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

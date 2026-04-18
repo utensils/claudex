@@ -56,11 +56,16 @@
 
           src = craneLib.path ./.;
 
+          darwinInputs = lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+          ];
+
           commonArgs = {
             inherit src;
             pname = "claudex";
             version = "0.1.0";
             strictDeps = true;
+            buildInputs = darwinInputs;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -97,12 +102,17 @@
               pkgs.git
               pkgs.gh
               pkgs.jq
-            ];
+            ] ++ darwinInputs;
 
             env = [
               {
                 name = "RUST_BACKTRACE";
                 value = "1";
+              }
+            ] ++ lib.optionals pkgs.stdenv.isDarwin [
+              {
+                name = "LIBRARY_PATH";
+                value = "${pkgs.libiconv}/lib";
               }
             ];
 
