@@ -7,17 +7,17 @@ use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, short_name};
 
-pub fn run(project: Option<&str>, per_session: bool, json: bool) -> Result<()> {
+pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
     if per_session {
-        run_per_session(files, json)
+        run_per_session(files, limit, json)
     } else {
-        run_aggregate(files, json)
+        run_aggregate(files, limit, json)
     }
 }
 
-fn run_aggregate(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
+fn run_aggregate(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
     let mut counts: HashMap<String, u64> = HashMap::new();
 
     for (_, path) in &files {
@@ -32,6 +32,7 @@ fn run_aggregate(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
 
     let mut rows: Vec<(String, u64)> = counts.into_iter().collect();
     rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    rows.truncate(limit);
 
     if json {
         let output: Vec<_> = rows
@@ -52,7 +53,7 @@ fn run_aggregate(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_per_session(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
+fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
     let mut rows = Vec::new();
     for (project_raw, path) in &files {
         let stats = match parse_session(path) {
@@ -73,6 +74,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
             counts,
         ));
     }
+    rows.truncate(limit);
 
     if json {
         let output: Vec<_> = rows

@@ -8,13 +8,13 @@ use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, short_name};
 use crate::types::TokenUsage;
 
-pub fn run(project: Option<&str>, per_session: bool, json: bool) -> Result<()> {
+pub fn run(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
     if per_session {
-        run_per_session(files, json)
+        run_per_session(files, limit, json)
     } else {
-        run_by_project(files, json)
+        run_by_project(files, limit, json)
     }
 }
 
@@ -24,7 +24,7 @@ struct ProjectCost {
     session_count: usize,
 }
 
-fn run_by_project(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
+fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
     let mut projects: HashMap<String, ProjectCost> = HashMap::new();
 
     for (project_raw, path) in &files {
@@ -50,6 +50,7 @@ fn run_by_project(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
             .partial_cmp(&a.usage.approx_cost_usd())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    rows.truncate(limit);
 
     if json {
         let output: Vec<_> = rows
@@ -109,7 +110,7 @@ fn run_by_project(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_per_session(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
+fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
     let mut rows = Vec::new();
     for (project_raw, path) in &files {
         let stats = match parse_session(path) {
@@ -127,6 +128,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, json: bool) -> Result<()> {
             .partial_cmp(&a.1.usage.approx_cost_usd())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    rows.truncate(limit);
 
     if json {
         let output: Vec<_> = rows

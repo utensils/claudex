@@ -39,6 +39,9 @@ enum Commands {
         /// Break down by session instead of aggregating by project
         #[arg(long)]
         per_session: bool,
+        /// Maximum number of results to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -65,6 +68,9 @@ enum Commands {
         /// Break down by session instead of aggregating
         #[arg(long)]
         per_session: bool,
+        /// Maximum number of results to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -82,8 +88,9 @@ fn main() {
         Commands::Cost {
             project,
             per_session,
+            limit,
             json,
-        } => commands::cost::run(project.as_deref(), per_session, json),
+        } => commands::cost::run(project.as_deref(), per_session, limit, json),
         Commands::Search {
             query,
             project,
@@ -93,8 +100,9 @@ fn main() {
         Commands::Tools {
             project,
             per_session,
+            limit,
             json,
-        } => commands::tools::run(project.as_deref(), per_session, json),
+        } => commands::tools::run(project.as_deref(), per_session, limit, json),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
