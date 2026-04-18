@@ -92,65 +92,344 @@ pub struct SessionInfo {
 mod tests {
     use super::*;
 
+    // --- Zero / default ---
+
     #[test]
     fn cost_zero_usage() {
         let u = TokenUsage::default();
         assert_eq!(u.cost_for_model(None), 0.0);
+        assert_eq!(u.cost_for_model(Some("claude-opus-4-6")), 0.0);
+        assert_eq!(u.cost_for_model(Some("claude-haiku-4-5")), 0.0);
         assert_eq!(u.total_tokens(), 0);
     }
 
+    // --- Sonnet pricing (default fallback) ---
+
     #[test]
-    fn cost_one_million_output() {
+    fn sonnet_input_1m() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $3/MTok
+        assert!((u.cost_for_model(None) - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn sonnet_output_1m() {
         let u = TokenUsage {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        assert!((u.cost_for_model(None) - 15.0).abs() < 0.001);
+        // $15/MTok
+        assert!((u.cost_for_model(None) - 15.0).abs() < 0.0001);
     }
 
     #[test]
-    fn cost_add() {
+    fn sonnet_cache_write_1m() {
+        let u = TokenUsage {
+            cache_creation_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $3.75/MTok
+        assert!((u.cost_for_model(None) - 3.75).abs() < 0.0001);
+    }
+
+    #[test]
+    fn sonnet_cache_read_1m() {
+        let u = TokenUsage {
+            cache_read_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $0.30/MTok
+        assert!((u.cost_for_model(None) - 0.30).abs() < 0.0001);
+    }
+
+    #[test]
+    fn sonnet_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $3 + $15 + $3.75 + $0.30 = $22.05
+        assert!((u.cost_for_model(Some("claude-sonnet-4-6")) - 22.05).abs() < 0.0001);
+    }
+
+    // --- Opus pricing ---
+
+    #[test]
+    fn opus_input_1m() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $15/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 15.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn opus_output_1m() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $75/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 75.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn opus_cache_write_1m() {
+        let u = TokenUsage {
+            cache_creation_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $18.75/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 18.75).abs() < 0.0001);
+    }
+
+    #[test]
+    fn opus_cache_read_1m() {
+        let u = TokenUsage {
+            cache_read_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $1.50/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 1.50).abs() < 0.0001);
+    }
+
+    #[test]
+    fn opus_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $15 + $75 + $18.75 + $1.50 = $110.25
+        assert!((u.cost_for_model(Some("claude-opus-4-7")) - 110.25).abs() < 0.0001);
+    }
+
+    // --- Haiku pricing ---
+
+    #[test]
+    fn haiku_input_1m() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $0.80/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 0.80).abs() < 0.0001);
+    }
+
+    #[test]
+    fn haiku_output_1m() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $4/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 4.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn haiku_cache_write_1m() {
+        let u = TokenUsage {
+            cache_creation_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $1.00/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 1.00).abs() < 0.0001);
+    }
+
+    #[test]
+    fn haiku_cache_read_1m() {
+        let u = TokenUsage {
+            cache_read_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $0.08/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 0.08).abs() < 0.0001);
+    }
+
+    #[test]
+    fn haiku_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $0.80 + $4.00 + $1.00 + $0.08 = $5.88
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 5.88).abs() < 0.0001);
+    }
+
+    // --- Cross-model ordering ---
+
+    #[test]
+    fn cost_ordering_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 500_000,
+            output_tokens: 500_000,
+            cache_creation_tokens: 500_000,
+            cache_read_tokens: 500_000,
+        };
+        let opus = u.cost_for_model(Some("claude-opus-4-6"));
+        let sonnet = u.cost_for_model(Some("claude-sonnet-4-6"));
+        let haiku = u.cost_for_model(Some("claude-haiku-4-5"));
+        assert!(opus > sonnet, "opus ({opus}) should > sonnet ({sonnet})");
+        assert!(sonnet > haiku, "sonnet ({sonnet}) should > haiku ({haiku})");
+    }
+
+    // --- Realistic scenario: cache-heavy Opus session ---
+
+    #[test]
+    fn realistic_opus_session_cost() {
+        let u = TokenUsage {
+            input_tokens: 5_000,
+            output_tokens: 100_000,
+            cache_creation_tokens: 50_000,
+            cache_read_tokens: 500_000_000, // 500M cache reads
+        };
+        let cost = u.cost_for_model(Some("claude-opus-4-6"));
+        // input:  5K * 15 / 1M = $0.075
+        // output: 100K * 75 / 1M = $7.50
+        // cache_w: 50K * 18.75 / 1M = $0.9375
+        // cache_r: 500M * 1.50 / 1M = $750.00
+        // total: $758.5125
+        assert!((cost - 758.5125).abs() < 0.001, "got {cost}");
+    }
+
+    // --- add() ---
+
+    #[test]
+    fn add_all_fields() {
         let mut a = TokenUsage {
             input_tokens: 100,
+            output_tokens: 200,
+            cache_creation_tokens: 300,
+            cache_read_tokens: 400,
+        };
+        let b = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_creation_tokens: 30,
+            cache_read_tokens: 40,
+        };
+        a.add(&b);
+        assert_eq!(a.input_tokens, 110);
+        assert_eq!(a.output_tokens, 220);
+        assert_eq!(a.cache_creation_tokens, 330);
+        assert_eq!(a.cache_read_tokens, 440);
+    }
+
+    #[test]
+    fn add_preserves_cost_linearity() {
+        let a = TokenUsage {
+            output_tokens: 500_000,
             ..Default::default()
         };
         let b = TokenUsage {
-            input_tokens: 200,
-            output_tokens: 50,
+            output_tokens: 500_000,
             ..Default::default()
         };
-        a.add(&b);
-        assert_eq!(a.input_tokens, 300);
-        assert_eq!(a.output_tokens, 50);
+        let mut combined = a.clone();
+        combined.add(&b);
+        let separate = a.cost_for_model(None) + b.cost_for_model(None);
+        assert!((combined.cost_for_model(None) - separate).abs() < 0.0001);
     }
 
-    #[test]
-    fn cost_opus_higher_than_sonnet() {
-        let u = TokenUsage {
-            output_tokens: 1_000_000,
-            ..Default::default()
-        };
-        assert!(
-            u.cost_for_model(Some("claude-opus-4")) > u.cost_for_model(Some("claude-sonnet-4"))
-        );
-    }
+    // --- total_tokens() ---
 
     #[test]
-    fn cost_haiku_lower_than_sonnet() {
+    fn total_tokens_sums_all() {
         let u = TokenUsage {
-            output_tokens: 1_000_000,
-            ..Default::default()
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_creation_tokens: 3,
+            cache_read_tokens: 4,
         };
-        assert!(
-            u.cost_for_model(Some("claude-haiku-4")) < u.cost_for_model(Some("claude-sonnet-4"))
-        );
+        assert_eq!(u.total_tokens(), 10);
     }
+
+    // --- Model name detection ---
 
     #[test]
     fn model_pricing_name() {
         assert_eq!(ModelPricing::name(Some("claude-opus-4-7")), "Opus");
+        assert_eq!(ModelPricing::name(Some("claude-opus-4-6")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-haiku-4-5")), "Haiku");
+        assert_eq!(
+            ModelPricing::name(Some("claude-haiku-4-5-20251001")),
+            "Haiku"
+        );
         assert_eq!(ModelPricing::name(Some("claude-sonnet-4-6")), "Sonnet");
         assert_eq!(ModelPricing::name(None), "Sonnet");
+        assert_eq!(ModelPricing::name(Some("")), "Sonnet");
+        assert_eq!(ModelPricing::name(Some("<synthetic>")), "Sonnet");
+        assert_eq!(ModelPricing::name(Some("unknown-model")), "Sonnet");
+    }
+
+    // --- Pricing constants verification ---
+
+    #[test]
+    fn pricing_constants_opus() {
+        let p = ModelPricing::for_model(Some("claude-opus-4-6"));
+        assert_eq!(p.input_per_mtok, 15.0);
+        assert_eq!(p.output_per_mtok, 75.0);
+        assert_eq!(p.cache_write_per_mtok, 18.75);
+        assert_eq!(p.cache_read_per_mtok, 1.50);
+    }
+
+    #[test]
+    fn pricing_constants_sonnet() {
+        let p = ModelPricing::for_model(Some("claude-sonnet-4-6"));
+        assert_eq!(p.input_per_mtok, 3.0);
+        assert_eq!(p.output_per_mtok, 15.0);
+        assert_eq!(p.cache_write_per_mtok, 3.75);
+        assert_eq!(p.cache_read_per_mtok, 0.30);
+    }
+
+    #[test]
+    fn pricing_constants_haiku() {
+        let p = ModelPricing::for_model(Some("claude-haiku-4-5"));
+        assert_eq!(p.input_per_mtok, 0.80);
+        assert_eq!(p.output_per_mtok, 4.0);
+        assert_eq!(p.cache_write_per_mtok, 1.00);
+        assert_eq!(p.cache_read_per_mtok, 0.08);
+    }
+
+    #[test]
+    fn pricing_fallback_is_sonnet() {
+        let default = ModelPricing::for_model(None);
+        let sonnet = ModelPricing::for_model(Some("claude-sonnet-4-6"));
+        assert_eq!(default.input_per_mtok, sonnet.input_per_mtok);
+        assert_eq!(default.output_per_mtok, sonnet.output_per_mtok);
+        assert_eq!(default.cache_write_per_mtok, sonnet.cache_write_per_mtok);
+        assert_eq!(default.cache_read_per_mtok, sonnet.cache_read_per_mtok);
+    }
+
+    // --- Opus:Sonnet ratio verification ---
+
+    #[test]
+    fn opus_is_5x_sonnet_input() {
+        let p_opus = ModelPricing::for_model(Some("opus"));
+        let p_sonnet = ModelPricing::for_model(Some("sonnet"));
+        assert!((p_opus.input_per_mtok / p_sonnet.input_per_mtok - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn opus_is_5x_sonnet_output() {
+        let p_opus = ModelPricing::for_model(Some("opus"));
+        let p_sonnet = ModelPricing::for_model(Some("sonnet"));
+        assert!((p_opus.output_per_mtok / p_sonnet.output_per_mtok - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn opus_is_5x_sonnet_cache_read() {
+        let p_opus = ModelPricing::for_model(Some("opus"));
+        let p_sonnet = ModelPricing::for_model(Some("sonnet"));
+        assert!((p_opus.cache_read_per_mtok / p_sonnet.cache_read_per_mtok - 5.0).abs() < 0.001);
     }
 }
