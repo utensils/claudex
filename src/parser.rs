@@ -195,3 +195,147 @@ where
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_jsonl(lines: &[&str]) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for line in lines {
+            writeln!(f, "{}", line).unwrap();
+        }
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn parse_empty_file() {
+        let f = write_jsonl(&[]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.message_count, 0);
+        assert!(stats.session_id.is_none());
+        assert!(stats.model.is_none());
+    }
+
+    #[test]
+    fn parse_user_and_assistant_messages() {
+        let f = write_jsonl(&[
+            r#"{"type":"user","sessionId":"abc-123","timestamp":"2026-04-18T00:00:00Z","message":{"content":"hello"}}"#,
+            r#"{"type":"assistant","sessionId":"abc-123","timestamp":"2026-04-18T00:01:00Z","message":{"model":"claude-sonnet-4-6","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":200},"content":[{"type":"text","text":"hi"}]}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.message_count, 2);
+        assert_eq!(stats.session_id.as_deref(), Some("abc-123"));
+        assert_eq!(stats.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(stats.usage.input_tokens, 100);
+        assert_eq!(stats.usage.output_tokens, 50);
+        assert_eq!(stats.usage.cache_read_tokens, 200);
+        assert_eq!(*stats.stop_reason_counts.get("end_turn").unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn parse_tool_use_and_thinking() {
+        let f = write_jsonl(&[
+            r#"{"type":"assistant","timestamp":"2026-04-18T00:00:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"thinking","text":"..."},{"type":"tool_use","name":"Bash","id":"t1","input":{}}]}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.thinking_block_count, 1);
+        assert_eq!(stats.tool_names, vec!["Bash"]);
+    }
+
+    #[test]
+    fn parse_pr_link() {
+        let f = write_jsonl(&[
+            r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/repo/pull/42","repository":"org/repo","timestamp":"2026-04-18T00:00:00Z","sessionId":"s1"}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.pr_links.len(), 1);
+        assert_eq!(stats.pr_links[0].0, 42);
+    }
+
+    #[test]
+    fn parse_file_history_snapshot() {
+        let f = write_jsonl(&[
+            r#"{"type":"file-history-snapshot","snapshot":{"src/main.rs":{},"src/lib.rs":{}}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.file_paths_modified.len(), 2);
+        assert!(
+            stats
+                .file_paths_modified
+                .contains(&"src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_system_turn_duration() {
+        let f = write_jsonl(&[
+            r#"{"type":"system","subtype":"turn_duration","durationMs":1500,"timestamp":"2026-04-18T00:00:00Z"}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":2500,"timestamp":"2026-04-18T00:01:00Z"}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.turn_durations.len(), 2);
+        assert_eq!(stats.total_duration_ms, 4000);
+    }
+
+    #[test]
+    fn parse_permission_mode() {
+        let f = write_jsonl(&[
+            r#"{"type":"permission-mode","mode":"bypassPermissions","timestamp":"2026-04-18T00:00:00Z","sessionId":"s1"}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.permission_modes.len(), 1);
+        assert_eq!(stats.permission_modes[0].0, "bypassPermissions");
+    }
+
+    #[test]
+    fn parse_usage_extended_fields() {
+        let f = write_jsonl(&[
+            r#"{"type":"assistant","timestamp":"2026-04-18T00:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"inference_geo":"us-east-1","speed":42.5,"service_tier":"default","iterations":3},"content":[]}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.inference_geo.as_deref(), Some("us-east-1"));
+        assert_eq!(stats.speed, Some(42.5));
+        assert_eq!(stats.service_tier.as_deref(), Some("default"));
+        assert_eq!(stats.iterations, 3);
+    }
+
+    #[test]
+    fn parse_duration_fallback_from_timestamps() {
+        let f = write_jsonl(&[
+            r#"{"type":"user","timestamp":"2026-04-18T00:00:00Z","message":{"content":"start"}}"#,
+            r#"{"type":"user","timestamp":"2026-04-18T00:05:00Z","message":{"content":"end"}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.total_duration_ms, 300_000); // 5 minutes
+    }
+
+    #[test]
+    fn stream_records_early_exit() {
+        let f = write_jsonl(&[
+            r#"{"type":"user","n":1}"#,
+            r#"{"type":"user","n":2}"#,
+            r#"{"type":"user","n":3}"#,
+        ]);
+        let mut count = 0;
+        stream_records(f.path(), |_| {
+            count += 1;
+            count < 2 // stop after 2
+        })
+        .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn parse_skips_malformed_lines() {
+        let f = write_jsonl(&[
+            r#"{"type":"user","timestamp":"2026-04-18T00:00:00Z","message":{"content":"ok"}}"#,
+            "not json at all",
+            r#"{"type":"user","timestamp":"2026-04-18T00:01:00Z","message":{"content":"also ok"}}"#,
+        ]);
+        let stats = parse_session(f.path()).unwrap();
+        assert_eq!(stats.message_count, 2);
+    }
+}
