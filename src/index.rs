@@ -157,13 +157,13 @@ struct ParseEntry {
     tool_names: Vec<String>,
     messages: Vec<MessageForFts>,
     // Extended metric fields
-    turn_durations: Vec<(u64, String)>,              // (duration_ms, timestamp)
-    pr_links: Vec<(i64, String, String, String)>,    // (pr_number, url, repo, timestamp)
+    turn_durations: Vec<(u64, String)>, // (duration_ms, timestamp)
+    pr_links: Vec<(i64, String, String, String)>, // (pr_number, url, repo, timestamp)
     file_paths_modified: Vec<String>,
     thinking_block_count: u64,
     stop_reason_counts: HashMap<String, u64>,
-    attachments: Vec<(String, String)>,              // (filename, mime_type)
-    permission_modes: Vec<(String, String)>,          // (mode, timestamp)
+    attachments: Vec<(String, String)>, // (filename, mime_type)
+    permission_modes: Vec<(String, String)>, // (mode, timestamp)
     inference_geo: Option<String>,
     speed: Option<f64>,
     service_tier: Option<String>,
@@ -925,10 +925,7 @@ impl IndexStore {
             .map_err(Into::into)
     }
 
-    pub fn query_model_usage(
-        &self,
-        project_filter: Option<&str>,
-    ) -> Result<Vec<ModelUsageRow>> {
+    pub fn query_model_usage(&self, project_filter: Option<&str>) -> Result<Vec<ModelUsageRow>> {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
@@ -1229,20 +1226,21 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                     usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
 
                 if entry.inference_geo.is_none() {
-                    entry.inference_geo =
-                        usage["inference_geo"].as_str().map(|s| s.to_string());
+                    entry.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
                 }
                 if entry.speed.is_none() {
                     entry.speed = usage["speed"].as_f64();
                 }
                 if entry.service_tier.is_none() {
-                    entry.service_tier =
-                        usage["service_tier"].as_str().map(|s| s.to_string());
+                    entry.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
                 }
                 entry.iterations += usage["iterations"].as_u64().unwrap_or(0);
 
                 if let Some(stop) = msg["stop_reason"].as_str() {
-                    *entry.stop_reason_counts.entry(stop.to_string()).or_insert(0) += 1;
+                    *entry
+                        .stop_reason_counts
+                        .entry(stop.to_string())
+                        .or_insert(0) += 1;
                 }
 
                 let mut text_parts: Vec<String> = Vec::new();
@@ -1345,8 +1343,7 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
     // Fallback duration from timestamp range
     if entry.duration_ms == 0 {
         if let (Some(first), Some(last)) = (entry.first_timestamp, entry.last_timestamp) {
-            entry.duration_ms =
-                last.signed_duration_since(first).num_milliseconds().max(0) as u64;
+            entry.duration_ms = last.signed_duration_since(first).num_milliseconds().max(0) as u64;
         }
     }
 

@@ -21,13 +21,13 @@ pub struct SessionStats {
     pub usage: TokenUsage,
     pub tool_names: Vec<String>,
     // Extended metric fields
-    pub turn_durations: Vec<(u64, String)>,              // (duration_ms, timestamp)
-    pub pr_links: Vec<(i64, String, String, String)>,    // (pr_number, url, repo, timestamp)
+    pub turn_durations: Vec<(u64, String)>, // (duration_ms, timestamp)
+    pub pr_links: Vec<(i64, String, String, String)>, // (pr_number, url, repo, timestamp)
     pub file_paths_modified: Vec<String>,
     pub thinking_block_count: u64,
     pub stop_reason_counts: HashMap<String, u64>,
-    pub attachments: Vec<(String, String)>,              // (filename, mime_type)
-    pub permission_modes: Vec<(String, String)>,          // (mode, timestamp)
+    pub attachments: Vec<(String, String)>, // (filename, mime_type)
+    pub permission_modes: Vec<(String, String)>, // (mode, timestamp)
     pub inference_geo: Option<String>,
     pub speed: Option<f64>,
     pub service_tier: Option<String>,
@@ -91,7 +91,10 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
 
                 if let Some(stop) = msg["stop_reason"].as_str() {
-                    *stats.stop_reason_counts.entry(stop.to_string()).or_insert(0) += 1;
+                    *stats
+                        .stop_reason_counts
+                        .entry(stop.to_string())
+                        .or_insert(0) += 1;
                 }
 
                 if let Some(content) = msg["content"].as_array() {

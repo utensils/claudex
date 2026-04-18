@@ -105,7 +105,10 @@ fn run_indexed(json: bool) -> Result<()> {
 
     section("Metrics");
     if data.thinking_block_count > 0 {
-        println!("  Thinking blocks:    {}", fmt_num(data.thinking_block_count as u64));
+        println!(
+            "  Thinking blocks:    {}",
+            fmt_num(data.thinking_block_count as u64)
+        );
     }
     if let Some(avg) = data.avg_turn_duration_ms {
         println!("  Avg turn duration:  {:.0}ms", avg);
@@ -114,7 +117,10 @@ fn run_indexed(json: bool) -> Result<()> {
         println!("  PRs linked:         {}", data.pr_count);
     }
     if data.files_modified_count > 0 {
-        println!("  Files modified:     {}", fmt_num(data.files_modified_count as u64));
+        println!(
+            "  Files modified:     {}",
+            fmt_num(data.files_modified_count as u64)
+        );
     }
 
     if let Some(r) = &data.most_recent {

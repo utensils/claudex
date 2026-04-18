@@ -36,7 +36,9 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
 
     let mut table = Table::new();
     table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "Turns", "Avg (ms)", "P50 (ms)", "P95 (ms)", "Max (ms)"]);
+    table.set_header([
+        "Project", "Turns", "Avg (ms)", "P50 (ms)", "P95 (ms)", "Max (ms)",
+    ]);
     for r in &rows {
         table.add_row([
             short_name(&r.project),
