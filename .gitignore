@@ -1,14 +1,23 @@
 *~
 .agents/
 .cache/
+.claire/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .direnv/
 .DS_Store
 .env
+.idea/
+.vscode/
 *.swo
 *.swp
 /target
 **/target
 /result
 tmp/
+
+# Coverage artifacts (cargo-llvm-cov)
+*.profraw
+*.profdata
+lcov.info
+target/coverage/
