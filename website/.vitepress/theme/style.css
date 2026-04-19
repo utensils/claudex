@@ -1,0 +1,262 @@
+@import 'tailwindcss';
+
+/*
+ * claudex — Anthropic / Claude palette
+ *
+ * Brand: warm coral on cream by day, warm coral on near-black by night.
+ *   coral-500  #D97757   (Claude signature)
+ *   coral-600  #C15F3C
+ *   coral-700  #A64824
+ *   cream      #F0EEE6   (Anthropic paper)
+ *   ink        #1E1A17   (warm near-black)
+ *   char       #141110   (deeper ink)
+ */
+
+:root {
+  --claudex-coral: #d97757;
+  --claudex-coral-soft: #e8a388;
+  --claudex-coral-deep: #c15f3c;
+  --claudex-coral-ink: #a64824;
+  --claudex-cream: #f0eee6;
+  --claudex-cream-soft: #f7f5ee;
+  --claudex-ink: #1e1a17;
+  --claudex-char: #141110;
+  --claudex-stone: #52524c;
+
+  /* VitePress brand tokens */
+  --vp-c-brand-1: #c15f3c;
+  --vp-c-brand-2: #d97757;
+  --vp-c-brand-3: #a64824;
+  --vp-c-brand-soft: rgba(217, 119, 87, 0.14);
+
+  /* Warm surfaces */
+  --vp-c-bg: #fbf9f4;
+  --vp-c-bg-alt: var(--claudex-cream);
+  --vp-c-bg-soft: #f5f2e9;
+  --vp-c-bg-elv: #ffffff;
+
+  /* Hero gradient — coral to deeper coral, cream highlight */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(
+    120deg,
+    #a64824 0%,
+    #d97757 55%,
+    #e8a388 100%
+  );
+  --vp-home-hero-image-background-image: radial-gradient(
+      circle at 30% 30%,
+      rgba(217, 119, 87, 0.28) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 70% 70%,
+      rgba(193, 95, 60, 0.22) 0%,
+      transparent 60%
+    );
+  --vp-home-hero-image-filter: blur(52px);
+
+  /* Buttons */
+  --vp-button-brand-border: var(--claudex-coral-deep);
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: var(--claudex-coral-deep);
+  --vp-button-brand-hover-border: var(--claudex-coral-ink);
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-hover-bg: var(--claudex-coral-ink);
+  --vp-button-brand-active-border: var(--claudex-coral-ink);
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-active-bg: var(--claudex-coral-ink);
+
+  /* Code */
+  --vp-code-block-bg: #faf7ef;
+  --vp-code-line-highlight-color: rgba(217, 119, 87, 0.1);
+}
+
+.dark {
+  --vp-c-brand-1: #e8a388;
+  --vp-c-brand-2: #d97757;
+  --vp-c-brand-3: #c15f3c;
+  --vp-c-brand-soft: rgba(232, 163, 136, 0.14);
+
+  --vp-c-bg: var(--claudex-char);
+  --vp-c-bg-alt: var(--claudex-ink);
+  --vp-c-bg-soft: #1f1a16;
+  --vp-c-bg-elv: #231d18;
+
+  --vp-button-brand-text: #1a120e;
+  --vp-button-brand-bg: #e8a388;
+  --vp-button-brand-border: #e8a388;
+  --vp-button-brand-hover-text: #1a120e;
+  --vp-button-brand-hover-bg: #d97757;
+  --vp-button-brand-hover-border: #d97757;
+
+  --vp-code-block-bg: #1a1411;
+}
+
+/* Inline code — warm tint against cream background */
+:root {
+  --vp-c-text-code: var(--claudex-coral-ink);
+}
+.dark {
+  --vp-c-text-code: var(--claudex-coral-soft);
+}
+
+/* Left-bar accent on code blocks — a signature mark */
+.vp-doc div[class*='language-'] {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vp-c-brand-2) 16%, transparent);
+}
+
+.vp-doc div[class*='language-']::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    var(--claudex-coral) 0%,
+    var(--claudex-coral-ink) 100%
+  );
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Code group tabs */
+.vp-code-group .tabs {
+  border-radius: 10px 10px 0 0;
+  border: 1px solid color-mix(in srgb, var(--vp-c-brand-2) 16%, transparent);
+  background: color-mix(in srgb, var(--vp-c-brand-2) 5%, var(--vp-c-bg-soft));
+}
+
+.vp-code-group .tabs input:checked + label {
+  color: #ffffff;
+  background: var(--claudex-coral-deep);
+}
+
+.dark .vp-code-group .tabs input:checked + label {
+  color: #1a120e;
+  background: var(--claudex-coral);
+}
+
+/* Feature cards */
+.VPFeature {
+  border-radius: 14px;
+  border-color: color-mix(in srgb, var(--vp-c-brand-2) 18%, transparent);
+  background: color-mix(in srgb, var(--claudex-coral) 3%, var(--vp-c-bg-soft));
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.VPFeature:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--vp-c-brand-2) 45%, transparent);
+  box-shadow: 0 14px 28px rgba(30, 26, 23, 0.08);
+}
+
+.dark .VPFeature:hover {
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.5);
+}
+
+.VPFeature .icon {
+  background: color-mix(in srgb, var(--claudex-coral) 14%, transparent);
+  border-radius: 10px;
+}
+
+/* Nav / sidebar — slightly warmer text on hover */
+.VPSidebarItem.is-active > .item .link .text,
+.VPNavBarMenuLink.active,
+.VPNavBarMenuLink:hover {
+  color: var(--vp-c-brand-1);
+}
+
+/* Links — dotted underline on hover, Anthropic-ish */
+.vp-doc a {
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--vp-c-brand-2) 55%,
+    transparent
+  );
+  text-underline-offset: 2px;
+}
+
+.vp-doc a:hover {
+  text-decoration-color: var(--vp-c-brand-2);
+}
+
+/* Tables */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+}
+
+.vp-doc table th {
+  background: color-mix(in srgb, var(--claudex-coral) 10%, var(--vp-c-bg-soft));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vp-doc table tr:nth-child(2n) {
+  background: color-mix(in srgb, var(--claudex-coral) 4%, transparent);
+}
+
+/* Custom blocks — retint info/tip/warning to warm palette */
+.vp-doc .custom-block.tip {
+  border-color: var(--claudex-coral);
+  background: color-mix(in srgb, var(--claudex-coral) 8%, transparent);
+}
+
+.vp-doc .custom-block.tip .custom-block-title {
+  color: var(--claudex-coral-ink);
+}
+
+.dark .vp-doc .custom-block.tip .custom-block-title {
+  color: var(--claudex-coral-soft);
+}
+
+/* Hero polish — subtle warm glow behind the name */
+.VPHero .name {
+  letter-spacing: -0.02em;
+}
+
+.VPHero .tagline {
+  color: var(--claudex-stone);
+}
+
+.dark .VPHero .tagline {
+  color: #c9bfb0;
+}
+
+/* Footer */
+.VPFooter {
+  border-top-color: color-mix(in srgb, var(--vp-c-brand-2) 22%, transparent);
+}
+
+/* Utility: ASCII-like terminal blocks */
+.terminal {
+  display: block;
+  padding: 1rem 1.2rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-brand-2) 30%, transparent);
+  background: var(--claudex-char);
+  color: #f0eee6;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.9em;
+  line-height: 1.55;
+  overflow-x: auto;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 10px 24px rgba(20, 17, 16, 0.18);
+}
+
+.terminal .prompt {
+  color: var(--claudex-coral);
+}
+
+.terminal .comment {
+  color: #8a8278;
+}
