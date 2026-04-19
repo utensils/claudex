@@ -85,11 +85,26 @@ enum Commands {
         #[arg(long)]
         no_index: bool,
     },
-    /// Tail ~/.claude/debug/latest in real-time with formatted output
+    /// Tail Claude Code's debug log in real time with formatted output
+    #[command(after_long_help = "\
+By default watches ~/.claudex/debug/latest.log. Claude Code does not
+write to that path on its own — point it there per invocation:
+
+  claude --debug-file ~/.claudex/debug/latest.log
+
+Each new `claude` invocation truncates the file; watch detects this
+and prints a new-session separator. The directory is created on first
+run, so you can start `claudex watch` before launching claude.
+
+Custom path:
+  claudex watch --follow /tmp/my-claude.log")]
     Watch {
         /// Disable formatting, show raw output
         #[arg(long)]
         raw: bool,
+        /// Tail this file instead of ~/.claudex/debug/latest.log
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        follow: Option<String>,
     },
     /// Dashboard overview of sessions, cost, and tool usage
     Summary {
@@ -221,7 +236,7 @@ fn main() {
             json,
             no_index,
         } => commands::tools::run(project.as_deref(), per_session, limit, json, no_index),
-        Commands::Watch { raw } => commands::watch::run(raw),
+        Commands::Watch { raw, follow } => commands::watch::run(raw, follow.as_deref()),
         Commands::Summary { json, no_index } => commands::summary::run(json, no_index),
         Commands::Export {
             selector,

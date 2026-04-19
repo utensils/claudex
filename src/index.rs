@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
 use rusqlite::{Connection, params};
 
@@ -172,9 +172,7 @@ struct ParseEntry {
 
 impl IndexStore {
     pub fn open() -> Result<Self> {
-        let home = dirs::home_dir().context("could not find home directory")?;
-        let dir = home.join(".claudex");
-        std::fs::create_dir_all(&dir).context("creating ~/.claudex")?;
+        let dir = crate::claudex_dir()?;
         let conn = Connection::open(dir.join("index.db"))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let store = Self { conn };
