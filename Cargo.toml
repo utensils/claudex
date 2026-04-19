@@ -1,16 +1,17 @@
 [package]
 name = "claudex"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
 authors = ["James Brink <brink.james@gmail.com>"]
-description = "Query, search, and analyze Claude Code sessions"
-homepage = "https://github.com/utensils/claudex"
+description = "Query, search, and analyze Claude Code sessions from the command line — a Rust CLI that indexes ~/.claude/projects/ into SQLite and exposes reports as subcommands"
+homepage = "https://utensils.io/claudex/"
+documentation = "https://utensils.io/claudex/"
 repository = "https://github.com/utensils/claudex"
 readme = "README.md"
-keywords = ["claude", "claude-code", "cli", "sessions"]
-categories = ["command-line-utilities"]
+keywords = ["claude", "claude-code", "cli", "sessions", "anthropic"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1"
