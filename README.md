@@ -54,21 +54,21 @@ Requires Rust 1.95+ for source builds. Prebuilt binaries have no runtime depende
 
 ## Subcommands
 
-| Command | What it does | Docs |
-|--------|--------------|------|
-| `summary` | Dashboard — sessions, cost, top projects/tools, model mix | [→](https://utensils.io/claudex/commands/summary) |
-| `sessions` | List sessions grouped by project | [→](https://utensils.io/claudex/commands/sessions) |
-| `cost` | Token usage and approximate cost per project or per session | [→](https://utensils.io/claudex/commands/cost) |
-| `search <query>` | Full-text search across session messages (FTS5) | [→](https://utensils.io/claudex/commands/search) |
-| `tools` | Tool usage frequency | [→](https://utensils.io/claudex/commands/tools) |
-| `models` | Per-model call counts, token usage, and cost | [→](https://utensils.io/claudex/commands/models) |
-| `turns` | Per-turn timing (avg / p50 / p95 / max) | [→](https://utensils.io/claudex/commands/turns) |
-| `prs` | Sessions linked to pull requests | [→](https://utensils.io/claudex/commands/prs) |
-| `files` | Most frequently modified files across sessions | [→](https://utensils.io/claudex/commands/files) |
-| `export <selector>` | Export a session transcript as Markdown or JSON | [→](https://utensils.io/claudex/commands/export) |
-| `watch` | Tail Claude Code's debug log in real time | [→](https://utensils.io/claudex/commands/watch) |
-| `index` | Manage the session index (normally updated automatically) | [→](https://utensils.io/claudex/commands/index-cmd) |
-| `completions <shell>` | Generate shell completions (bash, zsh, fish, elvish, powershell) | [→](https://utensils.io/claudex/commands/completions) |
+| Command | What it does |
+|---------|--------------|
+| [`summary`](https://utensils.io/claudex/commands/summary) | Dashboard — sessions, cost, top projects/tools, model mix |
+| [`sessions`](https://utensils.io/claudex/commands/sessions) | List sessions grouped by project |
+| [`cost`](https://utensils.io/claudex/commands/cost) | Token usage and approximate cost per project or per session |
+| [`search <query>`](https://utensils.io/claudex/commands/search) | Full-text search across session messages (FTS5) |
+| [`tools`](https://utensils.io/claudex/commands/tools) | Tool usage frequency |
+| [`models`](https://utensils.io/claudex/commands/models) | Per-model call counts, token usage, and cost |
+| [`turns`](https://utensils.io/claudex/commands/turns) | Per-turn timing (avg / p50 / p95 / max) |
+| [`prs`](https://utensils.io/claudex/commands/prs) | Sessions linked to pull requests |
+| [`files`](https://utensils.io/claudex/commands/files) | Most frequently modified files across sessions |
+| [`export <selector>`](https://utensils.io/claudex/commands/export) | Export a session transcript as Markdown or JSON |
+| [`watch`](https://utensils.io/claudex/commands/watch) | Tail Claude Code's debug log in real time |
+| [`index`](https://utensils.io/claudex/commands/index-cmd) | Manage the session index (normally updated automatically) |
+| [`completions <shell>`](https://utensils.io/claudex/commands/completions) | Generate shell completions (bash, zsh, fish, elvish, powershell) |
 
 Global flags: `--color auto|always|never` (respects `NO_COLOR`).
 
