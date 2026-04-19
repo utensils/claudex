@@ -17,10 +17,8 @@ pub fn run(
     json: bool,
     no_index: bool,
 ) -> Result<()> {
-    if !no_index {
-        if let Ok(()) = run_indexed(project, per_session, limit, json) {
-            return Ok(());
-        }
+    if !no_index && let Ok(()) = run_indexed(project, per_session, limit, json) {
+        return Ok(());
     }
     run_from_files(project, per_session, limit, json)
 }

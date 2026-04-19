@@ -345,10 +345,10 @@ impl IndexStore {
             .ok()
             .and_then(|s| s.parse().ok());
 
-        if let Some(ls) = last_sync {
-            if now_unix_secs().saturating_sub(ls) < STALE_SECS {
-                return Ok(());
-            }
+        if let Some(ls) = last_sync
+            && now_unix_secs().saturating_sub(ls) < STALE_SECS
+        {
+            return Ok(());
         }
 
         let message = if last_sync.is_none() {
@@ -1216,10 +1216,10 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
     };
 
     stream_records(path, |record| {
-        if entry.session_id.is_none() {
-            if let Some(sid) = record["sessionId"].as_str() {
-                entry.session_id = Some(sid.to_string());
-            }
+        if entry.session_id.is_none()
+            && let Some(sid) = record["sessionId"].as_str()
+        {
+            entry.session_id = Some(sid.to_string());
         }
 
         let timestamp_str = record["timestamp"].as_str();
@@ -1229,15 +1229,15 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                 .map(|dt| dt.timestamp_millis())
         });
 
-        if let Some(ts_str) = timestamp_str {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-                let dt = dt.with_timezone(&Utc);
-                if entry.first_timestamp.is_none_or(|prev| dt < prev) {
-                    entry.first_timestamp = Some(dt);
-                }
-                if entry.last_timestamp.is_none_or(|prev| dt > prev) {
-                    entry.last_timestamp = Some(dt);
-                }
+        if let Some(ts_str) = timestamp_str
+            && let Ok(dt) = DateTime::parse_from_rfc3339(ts_str)
+        {
+            let dt = dt.with_timezone(&Utc);
+            if entry.first_timestamp.is_none_or(|prev| dt < prev) {
+                entry.first_timestamp = Some(dt);
+            }
+            if entry.last_timestamp.is_none_or(|prev| dt > prev) {
+                entry.last_timestamp = Some(dt);
             }
         }
 
@@ -1246,10 +1246,10 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                 entry.message_count += 1;
                 let msg = &record["message"];
 
-                if entry.model.is_none() {
-                    if let Some(m) = msg["model"].as_str() {
-                        entry.model = Some(m.to_string());
-                    }
+                if entry.model.is_none()
+                    && let Some(m) = msg["model"].as_str()
+                {
+                    entry.model = Some(m.to_string());
                 }
 
                 let usage = &msg["usage"];
@@ -1288,10 +1288,10 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                                 }
                             }
                             Some("text") => {
-                                if let Some(t) = block["text"].as_str() {
-                                    if !t.is_empty() {
-                                        text_parts.push(t.to_string());
-                                    }
+                                if let Some(t) = block["text"].as_str()
+                                    && !t.is_empty()
+                                {
+                                    text_parts.push(t.to_string());
                                 }
                             }
                             Some("thinking") => {
@@ -1376,10 +1376,10 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
     })?;
 
     // Fallback duration from timestamp range
-    if entry.duration_ms == 0 {
-        if let (Some(first), Some(last)) = (entry.first_timestamp, entry.last_timestamp) {
-            entry.duration_ms = last.signed_duration_since(first).num_milliseconds().max(0) as u64;
-        }
+    if entry.duration_ms == 0
+        && let (Some(first), Some(last)) = (entry.first_timestamp, entry.last_timestamp)
+    {
+        entry.duration_ms = last.signed_duration_since(first).num_milliseconds().max(0) as u64;
     }
 
     Ok(entry)

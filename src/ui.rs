@@ -171,7 +171,7 @@ fn group_thousands_u64(n: u64) -> String {
     let first = bytes.len() % 3;
     let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
     for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && i >= first && (i - first) % 3 == 0 {
+        if i > 0 && i >= first && (i - first).is_multiple_of(3) {
             out.push(',');
         }
         out.push(b as char);

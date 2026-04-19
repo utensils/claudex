@@ -300,10 +300,10 @@ fn preparse_color_choice() -> ColorChoice {
         if let Some(val) = arg.strip_prefix("--color=") {
             return parse_color(val).unwrap_or(ColorChoice::Auto);
         }
-        if arg == "--color" {
-            if let Some(val) = args.next() {
-                return parse_color(&val).unwrap_or(ColorChoice::Auto);
-            }
+        if arg == "--color"
+            && let Some(val) = args.next()
+        {
+            return parse_color(&val).unwrap_or(ColorChoice::Auto);
         }
     }
     ColorChoice::Auto

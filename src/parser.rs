@@ -40,23 +40,23 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
     let mut stats = SessionStats::default();
 
     stream_records(path, |record| {
-        if stats.session_id.is_none() {
-            if let Some(sid) = record["sessionId"].as_str() {
-                stats.session_id = Some(sid.to_string());
-            }
+        if stats.session_id.is_none()
+            && let Some(sid) = record["sessionId"].as_str()
+        {
+            stats.session_id = Some(sid.to_string());
         }
 
         let timestamp_str = record["timestamp"].as_str();
 
-        if let Some(ts) = timestamp_str {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
-                let dt = dt.with_timezone(&Utc);
-                if stats.first_timestamp.is_none_or(|prev| dt < prev) {
-                    stats.first_timestamp = Some(dt);
-                }
-                if stats.last_timestamp.is_none_or(|prev| dt > prev) {
-                    stats.last_timestamp = Some(dt);
-                }
+        if let Some(ts) = timestamp_str
+            && let Ok(dt) = DateTime::parse_from_rfc3339(ts)
+        {
+            let dt = dt.with_timezone(&Utc);
+            if stats.first_timestamp.is_none_or(|prev| dt < prev) {
+                stats.first_timestamp = Some(dt);
+            }
+            if stats.last_timestamp.is_none_or(|prev| dt > prev) {
+                stats.last_timestamp = Some(dt);
             }
         }
 
@@ -65,10 +65,10 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 stats.message_count += 1;
                 let msg = &record["message"];
 
-                if stats.model.is_none() {
-                    if let Some(m) = msg["model"].as_str() {
-                        stats.model = Some(m.to_string());
-                    }
+                if stats.model.is_none()
+                    && let Some(m) = msg["model"].as_str()
+                {
+                    stats.model = Some(m.to_string());
                 }
 
                 let usage = &msg["usage"];
@@ -162,11 +162,11 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
     })?;
 
     // Fallback: derive duration from timestamp range when system records are absent
-    if stats.total_duration_ms == 0 {
-        if let (Some(first), Some(last)) = (stats.first_timestamp, stats.last_timestamp) {
-            let diff = last.signed_duration_since(first);
-            stats.total_duration_ms = diff.num_milliseconds().max(0) as u64;
-        }
+    if stats.total_duration_ms == 0
+        && let (Some(first), Some(last)) = (stats.first_timestamp, stats.last_timestamp)
+    {
+        let diff = last.signed_duration_since(first);
+        stats.total_duration_ms = diff.num_milliseconds().max(0) as u64;
     }
 
     Ok(stats)

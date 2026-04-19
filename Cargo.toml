@@ -2,7 +2,7 @@
 name = "claudex"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "MIT"
 authors = ["James Brink <brink.james@gmail.com>"]
 description = "Query, search, and analyze Claude Code sessions"

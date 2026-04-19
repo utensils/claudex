@@ -14,10 +14,11 @@ pub fn run(
     no_index: bool,
 ) -> Result<()> {
     // FTS5 is case-insensitive; fall back to file scan for case-sensitive queries
-    if !no_index && !case_sensitive {
-        if let Ok(()) = run_indexed(query, project, limit) {
-            return Ok(());
-        }
+    if !no_index
+        && !case_sensitive
+        && let Ok(()) = run_indexed(query, project, limit)
+    {
+        return Ok(());
     }
     run_from_files(query, project, limit, case_sensitive)
 }
@@ -90,17 +91,17 @@ fn run_from_files(
         let mut stop = false;
 
         stream_records(path, |record| {
-            if session_id.is_none() {
-                if let Some(sid) = record["sessionId"].as_str() {
-                    session_id = Some(sid.to_string());
-                }
+            if session_id.is_none()
+                && let Some(sid) = record["sessionId"].as_str()
+            {
+                session_id = Some(sid.to_string());
             }
-            if session_date.is_none() {
-                if let Some(ts) = record["timestamp"].as_str() {
-                    session_date = DateTime::parse_from_rfc3339(ts)
-                        .ok()
-                        .map(|d| d.with_timezone(&chrono::Utc));
-                }
+            if session_date.is_none()
+                && let Some(ts) = record["timestamp"].as_str()
+            {
+                session_date = DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc));
             }
 
             let (role, text) = match record["type"].as_str().unwrap_or("") {
