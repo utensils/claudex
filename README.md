@@ -5,11 +5,29 @@
 
 Query, search, and analyze Claude Code sessions from the command line.
 
-> **Status**: early skeleton — help menu only, features coming soon.
-
 ## What is claudex?
 
-claudex is a CLI tool for working with Claude Code session data stored locally on your machine. It will let you search conversation history, extract insights, and analyze how you use Claude Code across projects.
+claudex is a Rust CLI that reads the JSONL transcripts Claude Code writes under `~/.claude/projects/`, indexes them into a local SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every read command supports `--json` for machine-readable output and `--no-index` to bypass the index and scan files directly.
+
+## Subcommands
+
+| Command | What it does |
+|--------|--------------|
+| `sessions` | List sessions grouped by project |
+| `cost` | Token usage and approximate cost per project or per session |
+| `search <query>` | Full-text search across session messages (FTS5) |
+| `tools` | Tool usage frequency |
+| `summary` | Dashboard overview — sessions, cost, top projects/tools, model mix |
+| `models` | Per-model call counts, token usage, and cost |
+| `turns` | Per-turn timing (avg / p50 / p95 / max) |
+| `prs` | Sessions linked to pull requests |
+| `files` | Most frequently modified files across sessions |
+| `export <selector>` | Export a session transcript as Markdown or JSON |
+| `watch` | Tail Claude Code's debug log in real time (`claude --debug-file ...`) |
+| `index` | Manage the session index (normally updated automatically) |
+| `completions <shell>` | Generate shell completions (bash, zsh, fish, elvish, powershell) |
+
+Global flags: `--color auto|always|never` (respects `NO_COLOR`).
 
 ## Build
 
@@ -39,7 +57,7 @@ nix run
 
 ## Development
 
-Requires Rust 1.85+. See [CLAUDE.md](CLAUDE.md) for the full development guide.
+Requires Rust 1.95+. See [CLAUDE.md](CLAUDE.md) for the full development guide. `ci-local` in the devshell mirrors CI; `coverage` (pass `--html` for a browsable report) runs `cargo llvm-cov`.
 
 ## License
 
