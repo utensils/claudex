@@ -49,7 +49,16 @@ case "${OS}" in
         ;;
 esac
 
-URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+# Use GitHub's canonical redirect path for "latest" so we don't depend on
+# api.github.com — the download host is github.com and a single endpoint
+# works even when the REST API is blocked or rate-limited.
+if [ "${VERSION}" = "latest" ]; then
+    URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+    SUMS_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
+else
+    URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+    SUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
+fi
 
 echo "Installing claudex (${VERSION}) for ${OS}/${ARCH}..."
 echo "  from: ${URL}"
@@ -59,16 +68,6 @@ echo "  to:   ${INSTALL_DIR}/claudex"
 if ! command -v curl >/dev/null 2>&1; then
     echo "Error: curl is required but not installed." >&2
     exit 1
-fi
-
-# Resolve "latest" to the real tag so the checksum URL lines up
-if [ "${VERSION}" = "latest" ]; then
-    RESOLVED="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-                | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
-    if [ -n "${RESOLVED}" ]; then
-        VERSION="${RESOLVED}"
-        URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
-    fi
 fi
 
 # Create install directory
@@ -85,7 +84,6 @@ if ! curl -fsSL "${URL}" -o "${TMPDIR}/${ASSET}"; then
 fi
 
 # Best-effort checksum verification against SHA256SUMS from the same release
-SUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
 if curl -fsSL "${SUMS_URL}" -o "${TMPDIR}/SHA256SUMS" 2>/dev/null; then
     EXPECTED="$(grep " ${ASSET}\$" "${TMPDIR}/SHA256SUMS" | awk '{print $1}')"
     if [ -n "${EXPECTED}" ]; then
