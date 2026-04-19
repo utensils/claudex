@@ -212,8 +212,24 @@ Setup instructions:
 
 fn main() {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
-    let cli = Cli::parse();
-    ui::apply_color_choice(cli.color);
+    // Peek at argv for `--color` before clap parses: clap prints `--help`,
+    // `--version`, and argument errors during parsing, and it uses its own
+    // styling for those. We feed the same choice into clap so those paths
+    // honor the flag too, and apply it to our palette. (This also picks up
+    // `NO_COLOR` via the `Auto` default.)
+    let choice = preparse_color_choice();
+    ui::apply_color_choice(choice);
+    let cli = Cli::command()
+        .color(clap_color_choice(choice))
+        .try_get_matches()
+        .and_then(|m| <Cli as clap::FromArgMatches>::from_arg_matches(&m));
+    let cli = match cli {
+        Ok(cli) => cli,
+        Err(e) => {
+            // `exit` renders styled help/errors via the configured color choice.
+            e.exit();
+        }
+    };
     let result = match cli.command {
         Commands::Sessions {
             project,
@@ -272,6 +288,41 @@ fn main() {
     if let Err(e) = result {
         eprintln!("error: {e:#}");
         std::process::exit(1);
+    }
+}
+
+/// Walk argv for `--color <value>` or `--color=<value>` so we can configure
+/// both clap's styling and our palette before `Cli::parse()` runs. Falls back
+/// to `Auto` when absent or malformed.
+fn preparse_color_choice() -> ColorChoice {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(val) = arg.strip_prefix("--color=") {
+            return parse_color(val).unwrap_or(ColorChoice::Auto);
+        }
+        if arg == "--color" {
+            if let Some(val) = args.next() {
+                return parse_color(&val).unwrap_or(ColorChoice::Auto);
+            }
+        }
+    }
+    ColorChoice::Auto
+}
+
+fn parse_color(s: &str) -> Option<ColorChoice> {
+    match s {
+        "always" => Some(ColorChoice::Always),
+        "never" => Some(ColorChoice::Never),
+        "auto" => Some(ColorChoice::Auto),
+        _ => None,
+    }
+}
+
+fn clap_color_choice(c: ColorChoice) -> clap::ColorChoice {
+    match c {
+        ColorChoice::Always => clap::ColorChoice::Always,
+        ColorChoice::Never => clap::ColorChoice::Never,
+        ColorChoice::Auto => clap::ColorChoice::Auto,
     }
 }
 

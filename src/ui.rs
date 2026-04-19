@@ -141,13 +141,23 @@ pub fn cell_plain(s: impl Into<String>) -> Cell {
 // --- Number formatting ---
 
 /// Format a cost as `$12,345.67` — two decimals, thousands separator. Negative
-/// values render as `-$5.00`, not `$-5.00`.
+/// values render as `-$5.00`, not `$-5.00`. Amounts smaller than one cent but
+/// non-zero fall back to four decimals (`$0.0040`) so per-session costs don't
+/// silently round to `$0.00`.
 pub fn fmt_cost(usd: f64) -> String {
     let sign = if usd < 0.0 { "-" } else { "" };
-    let total_cents = (usd.abs() * 100.0).round() as u64;
+    let abs = usd.abs();
+    if abs > 0.0 && abs < 0.005 {
+        // Sub-cent — keep four decimals to preserve precision.
+        let sub = (abs * 10_000.0).round() as u64;
+        let whole = sub / 10_000;
+        let frac = sub % 10_000;
+        return format!("{sign}${}.{:04}", group_thousands_u64(whole), frac);
+    }
+    let total_cents = (abs * 100.0).round() as u64;
     let whole = total_cents / 100;
     let cents = total_cents % 100;
-    format!("{}${}.{:02}", sign, group_thousands_u64(whole), cents)
+    format!("{sign}${}.{:02}", group_thousands_u64(whole), cents)
 }
 
 /// Format an integer with comma thousands separators: `12,345`.
@@ -384,8 +394,19 @@ mod tests {
     fn fmt_cost_rounds_to_two_decimals() {
         assert_eq!(fmt_cost(12735.6563), "$12,735.66");
         assert_eq!(fmt_cost(0.0), "$0.00");
-        assert_eq!(fmt_cost(0.125), "$0.13"); // banker's vs half-up — .round() is half-away-from-zero
+        assert_eq!(fmt_cost(0.125), "$0.13"); // half-away-from-zero
         assert_eq!(fmt_cost(1_234_567.89), "$1,234,567.89");
+    }
+
+    #[test]
+    fn fmt_cost_preserves_sub_cent_precision() {
+        // Amounts below $0.005 must not round to $0.00 — show four decimals
+        // so per-session/per-model costs stay meaningful.
+        assert_eq!(fmt_cost(0.0040), "$0.0040");
+        assert_eq!(fmt_cost(0.0001), "$0.0001");
+        assert_eq!(fmt_cost(-0.003), "-$0.0030");
+        // At the rounding boundary: >= $0.005 rounds up to $0.01 with two decimals.
+        assert_eq!(fmt_cost(0.005), "$0.01");
     }
 
     #[test]
