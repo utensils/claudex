@@ -257,6 +257,36 @@ fn search_json_returns_structured_hits() {
     assert!(arr[0].get("snippet").is_some());
 }
 
+#[test]
+fn search_json_snippet_preserves_highlight_markers() {
+    // Both indexed and file-scan JSON paths wrap matches in `[[…]]` so
+    // downstream consumers can reproduce highlighting deterministically.
+    let home = fixture_home();
+
+    let indexed = run(home.path(), &["search", "foo", "--json"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    let arr = json_of(&indexed).as_array().unwrap().clone();
+    assert!(
+        arr.iter()
+            .any(|h| h["snippet"].as_str().unwrap_or_default().contains("[[")),
+        "indexed snippets missing markers: {arr:?}"
+    );
+
+    let scanned = run(
+        home.path(),
+        &["search", "foo", "--json", "--case-sensitive"],
+    );
+    assert!(scanned.status.success(), "stderr: {}", stderr_of(&scanned));
+    let arr = json_of(&scanned).as_array().unwrap().clone();
+    assert!(
+        arr.iter().any(|h| h["snippet"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[[foo]]")),
+        "file-scan snippets missing markers: {arr:?}"
+    );
+}
+
 // --- summary ---
 
 #[test]
@@ -682,6 +712,9 @@ fn session_no_index_matches_indexed_core_fields() {
     assert_eq!(a["session_id"], b["session_id"]);
     assert_eq!(a["message_count"], b["message_count"]);
     assert_eq!(a["files_modified"], b["files_modified"]);
+    // Mixed-model sessions must collapse to `"mixed"` in both paths.
+    assert_eq!(a["model"].as_str(), Some("mixed"));
+    assert_eq!(b["model"].as_str(), Some("mixed"));
 }
 
 #[test]

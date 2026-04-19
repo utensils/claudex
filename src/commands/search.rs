@@ -44,7 +44,7 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> 
                     "session_id": hit.session_id,
                     "message_timestamp": message_timestamp,
                     "message_type": hit.message_type,
-                    "snippet": strip_search_markers(&hit.snippet),
+                    "snippet": hit.snippet,
                     "rank": hit.rank,
                 })
             })
@@ -293,10 +293,6 @@ fn render_indexed_snippet(snippet: &str) -> String {
     out
 }
 
-fn strip_search_markers(snippet: &str) -> String {
-    snippet.replace("[[", "").replace("]]", "")
-}
-
 fn build_file_scan_snippet(line: &str, query: &str, case_sensitive: bool) -> String {
     const CONTEXT: usize = 80;
     let haystack = if case_sensitive {
@@ -309,19 +305,32 @@ fn build_file_scan_snippet(line: &str, query: &str, case_sensitive: bool) -> Str
     } else {
         query.to_lowercase()
     };
-    if let Some(pos) = haystack.find(&needle) {
-        let mut start = pos.saturating_sub(CONTEXT);
-        while start > 0 && !line.is_char_boundary(start) {
-            start -= 1;
-        }
-        let mut end = (pos + needle.len() + CONTEXT).min(line.len());
-        while end < line.len() && !line.is_char_boundary(end) {
-            end += 1;
-        }
-        let prefix = if start > 0 { "..." } else { "" };
-        let suffix = if end < line.len() { "..." } else { "" };
-        format!("{prefix}{}{suffix}", &line[start..end])
+    let Some(pos) = haystack.find(&needle) else {
+        return line.to_string();
+    };
+    let match_end = pos + needle.len();
+
+    let mut window_start = pos.saturating_sub(CONTEXT);
+    while window_start > 0 && !line.is_char_boundary(window_start) {
+        window_start -= 1;
+    }
+    let mut window_end = (match_end + CONTEXT).min(line.len());
+    while window_end < line.len() && !line.is_char_boundary(window_end) {
+        window_end += 1;
+    }
+    let prefix = if window_start > 0 { "..." } else { "" };
+    let suffix = if window_end < line.len() { "..." } else { "" };
+
+    // Non-ASCII folding may shift byte offsets between `line` and the
+    // lowercased haystack; skip marker wrapping when offsets don't line up.
+    if line.is_char_boundary(pos) && line.is_char_boundary(match_end) {
+        format!(
+            "{prefix}{}[[{}]]{}{suffix}",
+            &line[window_start..pos],
+            &line[pos..match_end],
+            &line[match_end..window_end],
+        )
     } else {
-        line.to_string()
+        format!("{prefix}{}{suffix}", &line[window_start..window_end])
     }
 }

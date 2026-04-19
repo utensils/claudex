@@ -80,6 +80,10 @@ keeps output scannable.
 
 ## Notes
 
+- **Highlight markers.** JSON `snippet` values wrap each match in `[[…]]`
+  so consumers can reproduce highlighting. Strip them with a `s/\[\[|\]\]//g`
+  if you want plain text. Both the indexed and `--no-index` paths emit the
+  same markers.
 - **Case sensitivity.** FTS5 always lowercases tokens. `--case-sensitive`
   falls through to a file-scan path that checks the raw text.
 - **Stemming.** `migrat` matches `migration`, `migrated`, `migrates`. The

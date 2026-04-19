@@ -81,6 +81,18 @@ impl SessionStats {
             .cloned()
             .collect()
     }
+
+    /// Session-level model label matching the indexed `sessions.model`
+    /// semantics: sole model tag, `"mixed"` when multiple, or the first-seen
+    /// model when no per-model usage was recorded.
+    pub fn model_label(&self) -> Option<String> {
+        let names = self.model_names();
+        match names.len() {
+            0 => self.model.clone(),
+            1 => Some(names.into_iter().next().unwrap()),
+            _ => Some("mixed".to_string()),
+        }
+    }
 }
 
 /// Parse a JSONL session file line-by-line, accumulating stats without loading

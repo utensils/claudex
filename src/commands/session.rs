@@ -145,17 +145,9 @@ fn render_from_file(project: &str, path: &Path, stats: SessionStats, json: bool)
     println!(
         "  Model:        {}",
         stats
-            .model_names()
-            .as_slice()
-            .first()
-            .map(|m| {
-                if stats.model_names().len() == 1 {
-                    display_session_model(m)
-                } else {
-                    "Mixed".to_string()
-                }
-            })
-            .or_else(|| stats.model.as_ref().map(|m| display_session_model(m)))
+            .model_label()
+            .as_deref()
+            .map(display_session_model)
             .unwrap_or_else(|| "-".to_string())
     );
     println!("  Cost:         {}", ui::cost(stats.cost_usd()));
@@ -269,7 +261,7 @@ fn file_json(project: &str, path: &Path, stats: &SessionStats) -> serde_json::Va
         "last_activity": stats.last_timestamp.map(|d| d.to_rfc3339()),
         "duration_ms": stats.total_duration_ms,
         "message_count": stats.message_count,
-        "model": if stats.model_names().len() == 1 { stats.model_names().first().cloned() } else { stats.model.clone() },
+        "model": stats.model_label(),
         "input_tokens": stats.usage.input_tokens,
         "output_tokens": stats.usage.output_tokens,
         "cache_creation_tokens": stats.usage.cache_creation_tokens,
