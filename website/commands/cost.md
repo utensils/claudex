@@ -34,27 +34,30 @@ claudex cost --json --limit 1000 | jq '[.[].cost_usd] | add'
 
 ## Columns (aggregated)
 
-| Column     | Source                                   |
-| ---------- | ---------------------------------------- |
-| Project    | Decoded project name.                    |
-| Sessions   | Number of sessions counted.              |
-| Input      | Total input tokens.                      |
-| Output     | Total output tokens.                     |
-| Cache Read | Cache-read tokens.                       |
-| Model(s)   | Model families seen (Opus/Sonnet/Haiku). |
-| Cost (USD) | Sum of per-message costs.                |
+| Column      | Source                                   |
+| ----------- | ---------------------------------------- |
+| Project     | Decoded project name.                    |
+| Sessions    | Number of sessions counted.              |
+| Input       | Total input tokens.                      |
+| Output      | Total output tokens.                     |
+| Cache Write | Cache-write tokens.                      |
+| Cache Read  | Cache-read tokens.                       |
+| Model(s)    | Model families seen (Opus/Sonnet/Haiku). |
+| Cost (USD)  | Sum of per-message costs.                |
 
 ## Columns (per-session)
 
-| Column     | Source                          |
-| ---------- | ------------------------------- |
-| Project    | Decoded project name.           |
-| Session    | 8-character session ID prefix.  |
-| Date       | First timestamp.                |
-| Model      | Full model tag for the session. |
-| Input      | Input tokens for the session.   |
-| Output     | Output tokens for the session.  |
-| Cost (USD) | Cost for the session.           |
+| Column      | Source                         |
+| ----------- | ------------------------------ |
+| Project     | Decoded project name.          |
+| Session     | 8-character session ID prefix. |
+| Date        | First timestamp.               |
+| Model(s)    | One model family, or `Mixed`.  |
+| Input       | Input tokens for the session.  |
+| Output      | Output tokens for the session. |
+| Cache Write | Cache-write tokens.            |
+| Cache Read  | Cache-read tokens.             |
+| Cost (USD)  | Cost for the session.          |
 
 ## JSON shape
 
@@ -69,6 +72,7 @@ claudex cost --json --limit 1000 | jq '[.[].cost_usd] | add'
     "output_tokens": 6679149,
     "cache_creation_tokens": 80583078,
     "cache_read_tokens": 7157509259,
+    "avg_cost_per_session_usd": 103.54,
     "models": ["Opus", "Sonnet"],
     "cost_usd": 12735.6563118
   }
@@ -87,7 +91,8 @@ descending.
     "project": "/Users/you/projects/claudex",
     "session_id": "f69d4985-f914-4968-81c0-009ea004fbc5",
     "date": "2026-04-01T16:36:41.451+00:00",
-    "model": "claude-opus-4-6",
+    "model": null,
+    "models": ["claude-opus-4-6", "claude-sonnet-4-6"],
     "input_tokens": 34960,
     "output_tokens": 483151,
     "cache_creation_tokens": 4027298,
@@ -96,6 +101,9 @@ descending.
   }
 ]
 ```
+
+`model` is populated only when the session used exactly one model. Mixed-model
+sessions expose their full set under `models`.
 
 ## Notes
 

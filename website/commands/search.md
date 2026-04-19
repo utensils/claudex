@@ -6,7 +6,7 @@ Full-text search across every user and assistant message in every session.
 
 ```bash
 claudex search <query> [-p/--project <substr>]
-                        [-l/--limit <n>]
+                        [-l/--limit <n>] [--json]
                         [--case-sensitive]
                         [--no-index]
 ```
@@ -18,6 +18,7 @@ claudex search <query> [-p/--project <substr>]
 | `<query>`                  | —       | The text to search for. Positional, required.        |
 | `-p`, `--project <substr>` | —       | Filter by substring match on the project path.       |
 | `-l`, `--limit <n>`        | `20`    | Maximum hits to print.                               |
+| `--json`                   | off     | Emit structured hits instead of highlighted text.    |
 | `--case-sensitive`         | off     | Drop back to a file scan (FTS5 is case-insensitive). |
 | `--no-index`               | off     | Scan JSONL files directly.                           |
 
@@ -62,12 +63,29 @@ Each hit prints:
 Only lines that contain the query are printed — not the entire message. This
 keeps output scannable.
 
+## JSON shape
+
+```json
+[
+  {
+    "project": "/Users/you/projects/claudex",
+    "session_id": "0272bcdb-aea1-4d8c-b80c-809b07154b8a",
+    "message_timestamp": "2026-04-19T02:50:53.545+00:00",
+    "message_type": "assistant",
+    "snippet": "…fixing the [[migration]] query path…",
+    "rank": -7.28401
+  }
+]
+```
+
 ## Notes
 
+- **Highlight markers.** JSON `snippet` values wrap each match in `[[…]]`
+  so consumers can reproduce highlighting. Strip them with a `s/\[\[|\]\]//g`
+  if you want plain text. Both the indexed and `--no-index` paths emit the
+  same markers.
 - **Case sensitivity.** FTS5 always lowercases tokens. `--case-sensitive`
   falls through to a file-scan path that checks the raw text.
-- **No `--json`.** Search is output-oriented, not a data feed. If you need
-  structured hits, query the database directly or open an issue.
 - **Stemming.** `migrat` matches `migration`, `migrated`, `migrates`. The
   porter stemmer is aggressive — you may get hits that look like near-misses.
 - **Freshness.** Search always calls `ensure_fresh` first, so hits reflect

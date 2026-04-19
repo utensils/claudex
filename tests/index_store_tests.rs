@@ -88,14 +88,14 @@ fn build_fixture() -> (TempDir, SessionStore, IndexStore) {
 fn sync_now_indexes_every_session() {
     let (_tmp, _store, idx) = build_fixture();
     // 2 sessions in alpha + 1 in beta + 1 in gamma = 4
-    let rows = idx.query_sessions(None, 100).unwrap();
+    let rows = idx.query_sessions(None, None, 100).unwrap();
     assert_eq!(rows.len(), 4);
 }
 
 #[test]
 fn query_sessions_filters_by_project() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_sessions(Some("alpha"), 100).unwrap();
+    let rows = idx.query_sessions(Some("alpha"), None, 100).unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r.project_name.contains("alpha")));
 }
@@ -103,7 +103,7 @@ fn query_sessions_filters_by_project() {
 #[test]
 fn query_sessions_respects_limit() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_sessions(None, 2).unwrap();
+    let rows = idx.query_sessions(None, None, 2).unwrap();
     assert_eq!(rows.len(), 2);
 }
 
@@ -170,9 +170,9 @@ fn search_fts_finds_terms_in_user_messages() {
     let hits = idx.search_fts("foo", None, 10).unwrap();
     assert!(!hits.is_empty());
     assert!(
-        hits.iter().any(|h| h.content.contains("foo")),
+        hits.iter().any(|h| h.snippet.contains("foo")),
         "got: {hits:?}",
-        hits = hits.iter().map(|h| h.content.as_str()).collect::<Vec<_>>()
+        hits = hits.iter().map(|h| h.snippet.as_str()).collect::<Vec<_>>()
     );
 }
 
@@ -215,14 +215,19 @@ fn query_pr_links_returns_unique_links() {
 #[test]
 fn query_file_mods_returns_file_counts() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_file_mods(None, 100).unwrap();
+    let rows = idx.query_file_mods(None, None, 100).unwrap();
     assert!(rows.iter().any(|r| r.file_path == "src/a.rs"));
+    let src_a = rows.iter().find(|r| r.file_path == "src/a.rs").unwrap();
+    assert_eq!(src_a.distinct_session_count, 1);
+    assert!(src_a.top_project.as_deref().unwrap_or("").contains("alpha"));
 }
 
 #[test]
 fn query_model_usage_groups_by_model_family() {
     let (_tmp, _store, idx) = build_fixture();
     let rows = idx.query_model_usage(None).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| !r.model.is_empty()));
     let models: Vec<_> = rows.iter().map(|r| r.model.as_str()).collect();
     assert!(models.iter().any(|m| m.contains("opus")));
     assert!(models.iter().any(|m| m.contains("sonnet")));
@@ -248,18 +253,18 @@ fn ensure_fresh_is_noop_within_staleness_window() {
     let (_tmp, store, mut idx) = build_fixture();
     // fixture already synced; ensure_fresh should return immediately without
     // changing anything.
-    let before = idx.query_sessions(None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, 100).unwrap().len();
     idx.ensure_fresh(&store).unwrap();
-    let after = idx.query_sessions(None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn force_rebuild_wipes_and_reindexes() {
     let (_tmp, store, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, 100).unwrap().len();
     let indexed = idx.force_rebuild(&store).unwrap();
-    let after = idx.query_sessions(None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
     assert!(indexed >= before);
 }
@@ -267,17 +272,17 @@ fn force_rebuild_wipes_and_reindexes() {
 #[test]
 fn sync_now_is_idempotent() {
     let (_tmp, store, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, 100).unwrap().len();
     idx.sync_now(&store).unwrap();
     idx.sync_now(&store).unwrap();
-    let after = idx.query_sessions(None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn sync_picks_up_new_sessions() {
     let (tmp, store, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, 100).unwrap().len();
 
     // Add a fresh session to an existing project.
     write_session(
@@ -290,6 +295,97 @@ fn sync_picks_up_new_sessions() {
     );
 
     idx.sync_now(&store).unwrap();
-    let after = idx.query_sessions(None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(after, before + 1);
+}
+
+#[test]
+fn query_sessions_filters_by_touched_file() {
+    let (_tmp, _store, idx) = build_fixture();
+    let rows = idx.query_sessions(None, Some("src/a.rs"), 100).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].session_id.as_deref(), Some("sess-a1"));
+}
+
+#[test]
+fn query_session_detail_returns_rich_metrics() {
+    let (_tmp, _store, idx) = build_fixture();
+    let session = idx.query_sessions(Some("alpha"), None, 10).unwrap();
+    let file_path = session
+        .iter()
+        .find(|row| row.session_id.as_deref() == Some("sess-a1"))
+        .map(|row| row.file_path.clone())
+        .unwrap();
+    let detail = idx
+        .query_session_detail(&file_path)
+        .unwrap()
+        .expect("session detail");
+    assert_eq!(detail.project, "/Users/test/Projects/alpha");
+    assert_eq!(detail.message_count, 3);
+    assert!(detail.cost_usd > 0.0);
+    assert_eq!(detail.thinking_block_count, 1);
+    assert_eq!(detail.files_modified, vec!["src/a.rs"]);
+    assert!(!detail.tools.is_empty());
+    assert!(!detail.pr_links.is_empty());
+    assert!(!detail.stop_reasons.is_empty());
+}
+
+#[test]
+fn mixed_model_sessions_are_split_in_token_usage_and_aggregated_per_session() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-mixed",
+        "sess-mixed",
+        &[
+            r#"{"type":"user","sessionId":"sess-mixed","timestamp":"2026-04-10T10:00:00Z","message":{"content":"do it"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-mixed","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":10,"cache_read_input_tokens":50},"content":[{"type":"text","text":"opus"}]}}"#,
+            r#"{"type":"assistant","sessionId":"sess-mixed","timestamp":"2026-04-10T10:02:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":40,"cache_creation_input_tokens":5,"cache_read_input_tokens":25},"content":[{"type":"text","text":"sonnet"}]}}"#,
+        ],
+    );
+
+    let store = SessionStore::at(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&store).unwrap();
+
+    let rows = idx.query_cost_per_session(None, 10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].input_tokens, 300);
+    assert_eq!(rows[0].output_tokens, 60);
+    assert_eq!(rows[0].cache_creation_tokens, 15);
+    assert_eq!(rows[0].cache_read_tokens, 75);
+    assert_eq!(rows[0].models.len(), 2);
+
+    let models = idx.query_model_usage(None).unwrap();
+    assert_eq!(models.len(), 2);
+    assert!(models.iter().any(|m| m.model.contains("opus")));
+    assert!(models.iter().any(|m| m.model.contains("sonnet")));
+}
+
+#[test]
+fn zero_token_model_rows_are_skipped() {
+    // Mixed-model session where one model records only zero-token assistant
+    // messages. The real model should still show up; the zero-token model
+    // must not pollute per-model aggregates.
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-zero",
+        "sess-zero",
+        &[
+            r#"{"type":"user","sessionId":"sess-zero","timestamp":"2026-04-10T10:00:00Z","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-zero","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"real"}]}}"#,
+            r#"{"type":"assistant","sessionId":"sess-zero","timestamp":"2026-04-10T10:02:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"empty"}]}}"#,
+        ],
+    );
+
+    let store = SessionStore::at(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&store).unwrap();
+
+    let models = idx.query_model_usage(None).unwrap();
+    assert_eq!(models.len(), 1);
+    assert!(models[0].model.contains("opus"));
 }

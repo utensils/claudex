@@ -27,6 +27,9 @@ enum Commands {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
         project: Option<String>,
+        /// Only show sessions that touched a matching file path
+        #[arg(long)]
+        file: Option<String>,
         /// Maximum number of results to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
@@ -65,6 +68,9 @@ enum Commands {
         /// Maximum number of matching messages to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
         /// Case-sensitive matching
         #[arg(long)]
         case_sensitive: bool,
@@ -113,6 +119,20 @@ Custom path:
     },
     /// Dashboard overview of sessions, cost, and tool usage
     Summary {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Skip index, scan files directly
+        #[arg(long)]
+        no_index: bool,
+    },
+    /// Detailed report for a single session
+    Session {
+        /// Session ID prefix or project name to inspect
+        selector: String,
+        /// Filter candidate sessions by project name (substring match on path)
+        #[arg(short, long)]
+        project: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -169,6 +189,9 @@ Custom path:
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
         project: Option<String>,
+        /// Filter matching file paths by substring
+        #[arg(long)]
+        path: Option<String>,
         /// Maximum number of files to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
@@ -233,10 +256,11 @@ fn main() {
     let result = match cli.command {
         Commands::Sessions {
             project,
+            file,
             limit,
             json,
             no_index,
-        } => commands::sessions::run(project.as_deref(), limit, json, no_index),
+        } => commands::sessions::run(project.as_deref(), file.as_deref(), limit, json, no_index),
         Commands::Cost {
             project,
             per_session,
@@ -248,9 +272,17 @@ fn main() {
             query,
             project,
             limit,
+            json,
             case_sensitive,
             no_index,
-        } => commands::search::run(&query, project.as_deref(), limit, case_sensitive, no_index),
+        } => commands::search::run(
+            &query,
+            project.as_deref(),
+            limit,
+            json,
+            case_sensitive,
+            no_index,
+        ),
         Commands::Tools {
             project,
             per_session,
@@ -260,6 +292,12 @@ fn main() {
         } => commands::tools::run(project.as_deref(), per_session, limit, json, no_index),
         Commands::Watch { raw, follow } => commands::watch::run(raw, follow.as_deref()),
         Commands::Summary { json, no_index } => commands::summary::run(json, no_index),
+        Commands::Session {
+            selector,
+            project,
+            json,
+            no_index,
+        } => commands::session::run(&selector, project.as_deref(), json, no_index),
         Commands::Export {
             selector,
             format,
@@ -279,9 +317,10 @@ fn main() {
         } => commands::prs::run(project.as_deref(), limit, json),
         Commands::Files {
             project,
+            path,
             limit,
             json,
-        } => commands::files::run(project.as_deref(), limit, json),
+        } => commands::files::run(project.as_deref(), path.as_deref(), limit, json),
         Commands::Models { project, json } => commands::models::run(project.as_deref(), json),
         Commands::Completions { shell } => generate_completions(&shell),
     };

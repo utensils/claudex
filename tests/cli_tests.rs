@@ -40,9 +40,12 @@ fn fixture_home() -> TempDir {
         &[
             r#"{"type":"user","sessionId":"sess-a1","timestamp":"2026-04-10T10:00:00Z","message":{"content":"find the foo bug"}}"#,
             r#"{"type":"assistant","sessionId":"sess-a1","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1000,"output_tokens":500,"cache_creation_input_tokens":200,"cache_read_input_tokens":5000},"content":[{"type":"tool_use","name":"Bash","id":"t1","input":{}},{"type":"text","text":"fixed"}]}}"#,
+            r#"{"type":"assistant","sessionId":"sess-a1","timestamp":"2026-04-10T10:01:15Z","message":{"model":"claude-sonnet-4-6","stop_reason":"tool_use","usage":{"input_tokens":300,"output_tokens":120,"cache_creation_input_tokens":0,"cache_read_input_tokens":200},"content":[{"type":"thinking","text":"checking follow-up"},{"type":"tool_use","name":"Edit","id":"t1b","input":{}},{"type":"text","text":"follow up on foo"}]}}"#,
             r#"{"type":"system","subtype":"turn_duration","durationMs":5000,"timestamp":"2026-04-10T10:01:30Z","sessionId":"sess-a1"}"#,
             r#"{"type":"file-history-snapshot","snapshot":{"messageId":"m1","trackedFileBackups":{"src/a.rs":{"backupFileName":"x","version":1}},"timestamp":"2026-04-10T10:01:00Z"}}"#,
             r#"{"type":"pr-link","prNumber":99,"prUrl":"https://github.com/org/alpha/pull/99","prRepository":"org/alpha","timestamp":"2026-04-10T10:02:00Z","sessionId":"sess-a1"}"#,
+            r#"{"type":"attachment","filename":"bug.png","mimeType":"image/png","timestamp":"2026-04-10T10:02:10Z","sessionId":"sess-a1"}"#,
+            r#"{"type":"permission-mode","mode":"bypassPermissions","timestamp":"2026-04-10T10:02:20Z","sessionId":"sess-a1"}"#,
         ],
     );
 
@@ -99,6 +102,7 @@ fn sessions_json_returns_expected_fields() {
     for row in arr {
         assert!(row.get("project").is_some());
         assert!(row.get("session_id").is_some());
+        assert!(row.get("file_path").is_some());
         assert!(row.get("message_count").is_some());
     }
 }
@@ -141,6 +145,16 @@ fn sessions_no_index_fallback_matches_indexed_count() {
     );
 }
 
+#[test]
+fn sessions_file_filter_returns_matching_session() {
+    let home = fixture_home();
+    let out = run(home.path(), &["sessions", "--json", "--file", "src/a.rs"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["session_id"].as_str(), Some("sess-a1"));
+}
+
 // --- cost ---
 
 #[test]
@@ -161,6 +175,7 @@ fn cost_per_session_json() {
     let arr = json_of(&out).as_array().unwrap().clone();
     assert!(!arr.is_empty());
     assert!(arr.iter().all(|r| r.get("session_id").is_some()));
+    assert!(arr.iter().all(|r| r.get("models").is_some()));
 }
 
 #[test]
@@ -231,6 +246,47 @@ fn search_case_sensitive_falls_back_to_file_scan() {
     assert!(out.status.success());
 }
 
+#[test]
+fn search_json_returns_structured_hits() {
+    let home = fixture_home();
+    let out = run(home.path(), &["search", "foo", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert!(!arr.is_empty());
+    assert!(arr[0].get("message_timestamp").is_some());
+    assert!(arr[0].get("snippet").is_some());
+}
+
+#[test]
+fn search_json_snippet_preserves_highlight_markers() {
+    // Both indexed and file-scan JSON paths wrap matches in `[[…]]` so
+    // downstream consumers can reproduce highlighting deterministically.
+    let home = fixture_home();
+
+    let indexed = run(home.path(), &["search", "foo", "--json"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    let arr = json_of(&indexed).as_array().unwrap().clone();
+    assert!(
+        arr.iter()
+            .any(|h| h["snippet"].as_str().unwrap_or_default().contains("[[")),
+        "indexed snippets missing markers: {arr:?}"
+    );
+
+    let scanned = run(
+        home.path(),
+        &["search", "foo", "--json", "--case-sensitive"],
+    );
+    assert!(scanned.status.success(), "stderr: {}", stderr_of(&scanned));
+    let arr = json_of(&scanned).as_array().unwrap().clone();
+    assert!(
+        arr.iter().any(|h| h["snippet"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[[foo]]")),
+        "file-scan snippets missing markers: {arr:?}"
+    );
+}
+
 // --- summary ---
 
 #[test]
@@ -242,8 +298,10 @@ fn summary_json_has_top_level_fields() {
     for field in [
         "total_sessions",
         "total_cost_usd",
+        "total_input_tokens",
         "top_projects",
         "top_tools",
+        "top_stop_reasons",
     ] {
         assert!(v.get(field).is_some(), "missing {field}");
     }
@@ -273,6 +331,7 @@ fn models_json_lists_model_families() {
         .collect();
     assert!(families.contains(&"Opus"));
     assert!(families.contains(&"Sonnet"));
+    assert!(arr.iter().all(|r| r.get("cache_read_tokens").is_some()));
 }
 
 #[test]
@@ -295,6 +354,21 @@ fn files_json_lists_modified_files() {
         arr.iter()
             .any(|r| r.get("file_path").and_then(Value::as_str) == Some("src/a.rs"))
     );
+    assert!(
+        arr.iter()
+            .all(|r| r.get("distinct_session_count").is_some())
+    );
+    assert!(arr.iter().all(|r| r.get("top_project").is_some()));
+}
+
+#[test]
+fn files_path_filter_limits_results() {
+    let home = fixture_home();
+    let out = run(home.path(), &["files", "--json", "--path", "src/a.rs"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["file_path"].as_str(), Some("src/a.rs"));
 }
 
 #[test]
@@ -347,6 +421,15 @@ fn export_json_by_session_id() {
         .unwrap_or_else(|e| panic!("expected JSON, got: {e}\nstdout: {}", stdout_of(&out)));
     // Export emits either an object or array depending on selector; both OK.
     assert!(v.is_object() || v.is_array());
+}
+
+#[test]
+fn export_json_by_project_is_valid_array() {
+    let home = fixture_home();
+    let out = run(home.path(), &["export", "projects", "--format", "json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert!(v.is_array(), "expected JSON array, got: {v:?}");
 }
 
 #[test]
@@ -415,6 +498,45 @@ fn tools_per_session_no_index() {
 }
 
 #[test]
+fn tools_per_session_no_index_sorts_missing_dates_last() {
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-delta",
+        "sess-d1",
+        &[
+            r#"{"type":"assistant","sessionId":"sess-d1","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"tool_use","name":"Read","id":"t9","input":{}},{"type":"text","text":"ok"}]}}"#,
+        ],
+    );
+
+    let indexed = run(home.path(), &["tools", "--per-session", "--json"]);
+    let scanned = run(
+        home.path(),
+        &["tools", "--per-session", "--json", "--no-index"],
+    );
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    assert!(scanned.status.success(), "stderr: {}", stderr_of(&scanned));
+
+    let indexed_rows = json_of(&indexed).as_array().unwrap().clone();
+    let scanned_rows = json_of(&scanned).as_array().unwrap().clone();
+    assert_eq!(
+        indexed_rows
+            .iter()
+            .map(|r| r["session_id"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        scanned_rows
+            .iter()
+            .map(|r| r["session_id"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        scanned_rows.last().and_then(|r| r["session_id"].as_str()),
+        Some("sess-d1")
+    );
+}
+
+#[test]
 fn cost_per_session_no_index() {
     let home = fixture_home();
     let out = run(
@@ -433,6 +555,8 @@ fn summary_no_index_matches_indexed() {
     let a = json_of(&indexed);
     let b = json_of(&scanned);
     assert_eq!(a["total_sessions"], b["total_sessions"]);
+    assert_eq!(a["total_input_tokens"], b["total_input_tokens"]);
+    assert_eq!(a["pr_count"], b["pr_count"]);
 }
 
 #[test]
@@ -541,8 +665,7 @@ fn prs_dedupes_by_pr_url() {
 
 #[test]
 fn files_text_column_header_is_modifications() {
-    // The count is edit events, not distinct sessions — the column header
-    // must reflect that so users don't misread it.
+    // Files should report both edit events and distinct sessions now.
     let home = fixture_home();
     let out = run(home.path(), &["files", "--limit", "5"]);
     assert!(out.status.success());
@@ -552,8 +675,67 @@ fn files_text_column_header_is_modifications() {
         "expected header 'Modifications'; got:\n{s}"
     );
     assert!(
-        !s.contains("Sessions"),
-        "header should NOT be 'Sessions'; got:\n{s}"
+        s.contains("Sessions"),
+        "expected header 'Sessions'; got:\n{s}"
+    );
+}
+
+#[test]
+fn session_json_returns_drilldown_fields() {
+    let home = fixture_home();
+    let out = run(home.path(), &["session", "sess-a1", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    for field in [
+        "project",
+        "file_path",
+        "cost_usd",
+        "models",
+        "tools",
+        "files_modified",
+        "pr_links",
+        "stop_reasons",
+        "attachments",
+        "permission_changes",
+    ] {
+        assert!(v.get(field).is_some(), "missing {field}");
+    }
+}
+
+#[test]
+fn session_no_index_matches_indexed_core_fields() {
+    let home = fixture_home();
+    let indexed = run(home.path(), &["session", "sess-a1", "--json"]);
+    let scanned = run(home.path(), &["session", "sess-a1", "--json", "--no-index"]);
+    let a = json_of(&indexed);
+    let b = json_of(&scanned);
+    assert_eq!(a["session_id"], b["session_id"]);
+    assert_eq!(a["message_count"], b["message_count"]);
+    assert_eq!(a["files_modified"], b["files_modified"]);
+    // Mixed-model sessions must collapse to `"mixed"` in both paths.
+    assert_eq!(a["model"].as_str(), Some("mixed"));
+    assert_eq!(b["model"].as_str(), Some("mixed"));
+}
+
+#[test]
+fn session_uuid_like_selector_does_not_fallback_to_project_matching() {
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-e1a2f4-app",
+        "sess-c1",
+        &[
+            r#"{"type":"user","sessionId":"sess-c1","timestamp":"2026-04-18T10:00:00Z","message":{"content":"hi"}}"#,
+        ],
+    );
+
+    let out = run(home.path(), &["session", "e1a2f4", "--json"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("no sessions found matching"),
+        "stderr: {}",
+        stderr_of(&out)
     );
 }
 

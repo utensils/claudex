@@ -7,17 +7,18 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
 ## Read-only reports
 
-| Command                          | What it does                                                   |
-| -------------------------------- | -------------------------------------------------------------- |
-| [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.     |
-| [`sessions`](/commands/sessions) | List sessions grouped by project.                              |
-| [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session). |
-| [`search`](/commands/search)     | Full-text search across session messages (FTS5).               |
-| [`tools`](/commands/tools)       | Tool-usage frequency, optionally per session.                  |
-| [`models`](/commands/models)     | Call counts, token usage, and cost per model.                  |
-| [`turns`](/commands/turns)       | Per-turn timing (avg / p50 / p95 / max).                       |
-| [`prs`](/commands/prs)           | Sessions linked to pull requests.                              |
-| [`files`](/commands/files)       | Most frequently modified files across sessions.                |
+| Command                          | What it does                                                     |
+| -------------------------------- | ---------------------------------------------------------------- |
+| [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.       |
+| [`sessions`](/commands/sessions) | List sessions grouped by project.                                |
+| [`session`](/commands/session)   | Drill into one session: spend, files, tools, PRs, turns.         |
+| [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session).   |
+| [`search`](/commands/search)     | Full-text search across session messages (FTS5), with JSON hits. |
+| [`tools`](/commands/tools)       | Tool-usage frequency, optionally per session.                    |
+| [`models`](/commands/models)     | Call counts, token usage, and cost per model.                    |
+| [`turns`](/commands/turns)       | Per-turn timing (avg / p50 / p95 / max).                         |
+| [`prs`](/commands/prs)           | Sessions linked to pull requests.                                |
+| [`files`](/commands/files)       | Most frequently modified files across sessions.                  |
 
 ### Flag support matrix
 
@@ -28,8 +29,9 @@ usage; the matrix below is the quick overview.
 | ---------- | :---------: | :-------: | :------: | :----------: |
 | `summary`  |      —      |     —     |    ✓     |      ✓       |
 | `sessions` |      ✓      |     ✓     |    ✓     |      ✓       |
+| `session`  |      ✓      |     —     |    ✓     |      ✓       |
 | `cost`     |      ✓      |     ✓     |    ✓     |      ✓       |
-| `search`   |      ✓      |     ✓     |    —     |      ✓       |
+| `search`   |      ✓      |     ✓     |    ✓     |      ✓       |
 | `tools`    |      ✓      |     ✓     |    ✓     |      ✓       |
 | `models`   |      ✓      |     —     |    ✓     |      —       |
 | `turns`    |      ✓      |     ✓     |    ✓     |      —       |
@@ -38,8 +40,8 @@ usage; the matrix below is the quick overview.
 
 Notes:
 
-- `search` is output-oriented (highlighted hits); it has no `--json` shape.
-  Case-sensitive queries fall back to a file scan automatically.
+- `search` supports `--json` now; case-sensitive queries still fall back to a
+  file scan automatically.
 - `turns`, `prs`, `files`, and `models` derive their data from the index
   only — there's no file-scan fallback path, so `--no-index` isn't accepted.
 - `summary` is a whole-tree dashboard; filtering by project or row limit
@@ -58,8 +60,9 @@ Notes:
 
 - **Project filter.** `--project foo` matches any session whose decoded project
   path contains `foo`. Worktree sessions roll up to their parent project.
-- **Session selector.** Commands that take a session (currently just
-  [`export`](/commands/export)) match on session-ID prefix or project name.
+- **Session selector.** Commands that take a session (currently
+  [`session`](/commands/session) and [`export`](/commands/export)) match on
+  session-ID prefix or project name.
 - **Limit default.** Most commands default to `--limit 20`. Pass a higher
   number for more rows.
 - **Thousands separators.** Token counts and message counts render as
@@ -76,6 +79,7 @@ Notes:
 - [models](/commands/models)
 - [prs](/commands/prs)
 - [search](/commands/search)
+- [session](/commands/session)
 - [sessions](/commands/sessions)
 - [summary](/commands/summary)
 - [tools](/commands/tools)

@@ -141,6 +141,43 @@ pub fn short_name(path: &str) -> String {
     format!("…{}", &path[adjusted..])
 }
 
+/// Match session files by session-ID prefix first, then by project-name
+/// substring unless the selector looks like a Claude UUID prefix.
+pub fn find_matching_sessions<'a>(
+    files: &'a [(String, PathBuf)],
+    selector: &str,
+) -> Vec<&'a (String, PathBuf)> {
+    let sel = selector.to_lowercase();
+
+    let id_matches: Vec<_> = files
+        .iter()
+        .filter(|(_, path)| {
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            stem.starts_with(&sel)
+        })
+        .collect();
+
+    if !id_matches.is_empty() || looks_like_session_id_prefix(selector) {
+        return id_matches;
+    }
+
+    files
+        .iter()
+        .filter(|(project_raw, _)| {
+            let decoded = decode_project_name(project_raw).to_lowercase();
+            project_raw.to_lowercase().contains(&sel) || decoded.contains(&sel)
+        })
+        .collect()
+}
+
+fn looks_like_session_id_prefix(selector: &str) -> bool {
+    let compact = selector.replace('-', "");
+    compact.len() >= 6 && compact.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +227,46 @@ mod tests {
         let s = short_name(long);
         assert!(s.starts_with('…'));
         assert!(s.len() <= 55);
+    }
+
+    #[test]
+    fn find_matching_sessions_prefers_id_prefixes() {
+        let files = vec![
+            (
+                "-Users-test-Projects-alpha".to_string(),
+                PathBuf::from("/tmp/e1a2f4b8-session.jsonl"),
+            ),
+            (
+                "-Users-test-Projects-e1a2f4-app".to_string(),
+                PathBuf::from("/tmp/other-session.jsonl"),
+            ),
+        ];
+
+        let matches = find_matching_sessions(&files, "e1a2f4");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].1, PathBuf::from("/tmp/e1a2f4b8-session.jsonl"));
+    }
+
+    #[test]
+    fn find_matching_sessions_does_not_fallback_for_uuid_like_misses() {
+        let files = vec![(
+            "-Users-test-Projects-e1a2f4-app".to_string(),
+            PathBuf::from("/tmp/other-session.jsonl"),
+        )];
+
+        let matches = find_matching_sessions(&files, "e1a2f4");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn find_matching_sessions_falls_back_to_project_names() {
+        let files = vec![(
+            "-Users-test-Projects-alpha".to_string(),
+            PathBuf::from("/tmp/other-session.jsonl"),
+        )];
+
+        let matches = find_matching_sessions(&files, "alpha");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].1, PathBuf::from("/tmp/other-session.jsonl"));
     }
 }

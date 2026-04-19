@@ -1,12 +1,14 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::parser::{parse_session, stream_records};
-use crate::store::{SessionStore, decode_project_name, display_project_name};
+use crate::store::{
+    SessionStore, decode_project_name, display_project_name, find_matching_sessions,
+};
 
 pub fn run(
     selector: &str,
@@ -20,7 +22,7 @@ pub fn run(
 
     let store = SessionStore::new()?;
     let all_files = store.all_session_files(project_filter)?;
-    let matching = find_matching(&all_files, selector);
+    let matching = find_matching_sessions(&all_files, selector);
 
     if matching.is_empty() {
         anyhow::bail!("no sessions found matching {:?}", selector);
@@ -33,48 +35,28 @@ pub fn run(
         None => Box::new(io::stdout()),
     };
 
-    for (project_raw, path) in &matching {
-        let project = display_project_name(&decode_project_name(project_raw));
-        let buf = if format == "json" {
-            build_json(&project, path)?
+    if format == "json" {
+        let mut payload = Vec::new();
+        for (project_raw, path) in &matching {
+            let project = display_project_name(&decode_project_name(project_raw));
+            payload.push(build_json_value(&project, path)?);
+        }
+        let output = if payload.len() == 1 {
+            payload.into_iter().next().unwrap_or(Value::Null)
         } else {
-            build_markdown(&project, path)?
+            Value::Array(payload)
         };
+        let buf = format!("{}\n", serde_json::to_string_pretty(&output)?);
         out.write_all(buf.as_bytes())?;
+    } else {
+        for (project_raw, path) in &matching {
+            let project = display_project_name(&decode_project_name(project_raw));
+            let buf = build_markdown(&project, path)?;
+            out.write_all(buf.as_bytes())?;
+        }
     }
 
     Ok(())
-}
-
-/// Return sessions that match `selector` as a session-ID prefix OR project-name substring.
-fn find_matching<'a>(files: &'a [(String, PathBuf)], selector: &str) -> Vec<&'a (String, PathBuf)> {
-    let sel = selector.to_lowercase();
-
-    // First try: session ID match via filename stem (most common — Claude Code names
-    // session files after the session UUID).
-    let id_matches: Vec<_> = files
-        .iter()
-        .filter(|(_, path)| {
-            let stem = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            stem.starts_with(&sel) || stem.contains(&sel)
-        })
-        .collect();
-
-    if !id_matches.is_empty() {
-        return id_matches;
-    }
-
-    // Fallback: project name match
-    files
-        .iter()
-        .filter(|(project_raw, _)| {
-            let decoded = decode_project_name(project_raw).to_lowercase();
-            project_raw.to_lowercase().contains(&sel) || decoded.contains(&sel)
-        })
-        .collect()
 }
 
 fn build_markdown(project: &str, path: &Path) -> Result<String> {
@@ -203,7 +185,7 @@ fn push_assistant_content(buf: &mut String, content: &Value) {
     }
 }
 
-fn build_json(project: &str, path: &Path) -> Result<String> {
+fn build_json_value(project: &str, path: &Path) -> Result<Value> {
     let stats = parse_session(path)?;
     let mut messages: Vec<Value> = Vec::new();
 
@@ -214,14 +196,12 @@ fn build_json(project: &str, path: &Path) -> Result<String> {
         true
     })?;
 
-    let output = serde_json::json!({
+    Ok(serde_json::json!({
         "project": project,
         "session_id": stats.session_id,
         "date": stats.first_timestamp.map(|d| d.to_rfc3339()),
         "model": stats.model,
         "message_count": stats.message_count,
         "messages": messages,
-    });
-
-    Ok(format!("{}\n", serde_json::to_string_pretty(&output)?))
+    }))
 }

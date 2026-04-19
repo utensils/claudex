@@ -104,6 +104,7 @@ export default defineConfig({
             { text: 'Overview', link: '/commands/' },
             { text: 'summary', link: '/commands/summary' },
             { text: 'sessions', link: '/commands/sessions' },
+            { text: 'session', link: '/commands/session' },
             { text: 'cost', link: '/commands/cost' },
             { text: 'search', link: '/commands/search' },
             { text: 'tools', link: '/commands/tools' },

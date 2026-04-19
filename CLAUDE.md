@@ -65,8 +65,11 @@ The `release.yml` workflow is the source of truth. To cut a new release:
    - `Cargo.lock` — the `[[package]]` block named `claudex`
    - `website/.vitepress/config.ts` — the `text: 'vX.Y.Z'` nav entry
 2. Update `README.md` install snippets if the tag is user-facing.
-3. Commit on a `release/vX.Y.Z` branch, open a PR, land it.
-4. `git tag vX.Y.Z && git push origin vX.Y.Z` — this fires `release.yml`.
+3. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new
+   `## [X.Y.Z] — YYYY-MM-DD` heading and refresh the compare links at the
+   bottom.
+4. Commit on a `release/vX.Y.Z` branch, open a PR, land it.
+5. `git tag vX.Y.Z && git push origin vX.Y.Z` — this fires `release.yml`.
 
 ### What `release.yml` does
 
@@ -115,6 +118,7 @@ All documented in `website/guide/installation.md`:
 | `flake.nix` | nothing to edit — re-reads `Cargo.toml` |
 | `website/.vitepress/config.ts` | nav entry `text: 'vX.Y.Z'` |
 | `README.md` | install snippets referencing `--tag vX.Y.Z` |
+| `CHANGELOG.md` | promote `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`; refresh compare links |
 
 ### Docs deploy
 

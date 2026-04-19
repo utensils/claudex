@@ -7,18 +7,24 @@ use crate::store::{SessionStore, decode_project_name, display_project_name, shor
 use crate::types::SessionInfo;
 use crate::ui;
 
-pub fn run(project: Option<&str>, limit: usize, json: bool, no_index: bool) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(project, limit, json) {
+pub fn run(
+    project: Option<&str>,
+    file: Option<&str>,
+    limit: usize,
+    json: bool,
+    no_index: bool,
+) -> Result<()> {
+    if !no_index && let Ok(()) = run_indexed(project, file, limit, json) {
         return Ok(());
     }
-    run_from_files(project, limit, json)
+    run_from_files(project, file, limit, json)
 }
 
-fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+fn run_indexed(project: Option<&str>, file: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&store)?;
-    let rows = idx.query_sessions(project, limit)?;
+    let rows = idx.query_sessions(project, file, limit)?;
 
     if json {
         let output: Vec<_> = rows
@@ -31,6 +37,7 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
                 serde_json::json!({
                     "project": s.project_name,
                     "session_id": s.session_id,
+                    "file_path": s.file_path,
                     "date": date,
                     "message_count": s.message_count,
                     "duration_ms": s.duration_ms,
@@ -44,11 +51,18 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
 
     let mut table = ui::table();
     table.set_header(ui::header([
-        "Project", "Date", "Messages", "Duration", "Model",
+        "Project", "Session", "Date", "Messages", "Duration", "Model",
     ]));
-    ui::right_align(&mut table, &[2, 3]);
+    ui::right_align(&mut table, &[3, 4]);
 
     for s in &rows {
+        let sid: String = s
+            .session_id
+            .as_deref()
+            .unwrap_or("-")
+            .chars()
+            .take(8)
+            .collect();
         let date = s
             .first_timestamp_ms
             .and_then(DateTime::from_timestamp_millis)
@@ -62,6 +76,7 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
             .to_string();
         table.add_row([
             ui::cell_project(&short_name(&s.project_name)),
+            ui::cell_dim(&sid),
             ui::cell_dim(&date),
             ui::cell_count(s.message_count as u64),
             ui::cell_plain(format_duration(s.duration_ms as u64)),
@@ -72,7 +87,12 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+fn run_from_files(
+    project: Option<&str>,
+    file: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
     let store = SessionStore::new()?;
     let mut sessions: Vec<SessionInfo> = Vec::new();
 
@@ -81,6 +101,14 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
             Ok(s) => s,
             Err(_) => continue,
         };
+        if let Some(file_filter) = file
+            && !stats
+                .file_paths_modified
+                .iter()
+                .any(|p| p.contains(file_filter))
+        {
+            continue;
+        }
         let session_id = stats
             .session_id
             .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
@@ -88,6 +116,7 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
         sessions.push(SessionInfo {
             project: display_project_name(&decode_project_name(&project_raw)),
             session_id,
+            file_path: Some(path.to_string_lossy().into_owned()),
             date: stats.first_timestamp,
             message_count: stats.message_count,
             duration_ms: stats.total_duration_ms,
@@ -105,6 +134,7 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
                 serde_json::json!({
                     "project": s.project,
                     "session_id": s.session_id,
+                    "file_path": s.file_path,
                     "date": s.date.map(|d| d.to_rfc3339()),
                     "message_count": s.message_count,
                     "duration_ms": s.duration_ms,
@@ -118,11 +148,12 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
 
     let mut table = ui::table();
     table.set_header(ui::header([
-        "Project", "Date", "Messages", "Duration", "Model",
+        "Project", "Session", "Date", "Messages", "Duration", "Model",
     ]));
-    ui::right_align(&mut table, &[2, 3]);
+    ui::right_align(&mut table, &[3, 4]);
 
     for s in &sessions {
+        let sid: String = s.session_id.chars().take(8).collect();
         let date = s
             .date
             .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
@@ -136,6 +167,7 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
             .to_string();
         table.add_row([
             ui::cell_project(&proj),
+            ui::cell_dim(&sid),
             ui::cell_dim(&date),
             ui::cell_count(s.message_count as u64),
             ui::cell_plain(format_duration(s.duration_ms)),

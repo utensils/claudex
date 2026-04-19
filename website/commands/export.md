@@ -69,9 +69,11 @@ shape you want for pasting into docs, wikis, or PR descriptions.
 
 ## JSON output
 
-Top-level keys: `session_id`, `project`, `date`, `model`, `message_count`,
-`messages`. The `messages` array preserves every raw JSONL record from the
-source session file, in chronological order — no flattening.
+If the selector resolves to one session, JSON export is one object. If it
+resolves to multiple sessions, JSON export is an array of those objects.
+Each object has top-level keys: `session_id`, `project`, `date`, `model`,
+`message_count`, `messages`. The `messages` array preserves every raw JSONL
+record from the source session file, in chronological order — no flattening.
 
 ```json
 {
@@ -119,10 +121,14 @@ claudex export <sid> --format json \
 
 ## Notes
 
-- **Selector precedence.** Session-ID prefix wins if there's an exact match,
-  even when `--project` is set. Fall back to the project filter otherwise.
+- **Selector precedence.** Session-ID prefix wins when it matches one or more
+  sessions, even when `--project` is set. If the selector looks like a Claude
+  session-ID prefix and matches nothing, claudex does not fall back to
+  project-name matching.
 - **No `--json` flag.** Use `--format json` — it's the format of the export,
   not a summary layer.
+- **Multiple matches.** Markdown writes the matching sessions sequentially.
+  JSON returns a proper array instead of concatenated objects.
 - **Large sessions.** Markdown export is streaming where possible, but huge
   sessions (100+ MB JSONL) can produce very long Markdown files. Use
   `--format json` if you want to slice the output yourself.
