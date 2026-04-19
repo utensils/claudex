@@ -186,7 +186,11 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             counts,
         ));
     }
-    rows.sort_by_key(|(_, _, date, _)| std::cmp::Reverse(*date));
+    rows.sort_by(|a, b| {
+        b.2.cmp(&a.2)
+            .then_with(|| a.0.cmp(&b.0))
+            .then_with(|| a.1.cmp(&b.1))
+    });
     rows.truncate(limit);
 
     if json {

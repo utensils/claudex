@@ -599,7 +599,7 @@ impl IndexStore {
 
             let row_id = tx.last_insert_rowid();
 
-            if entry.model_usage.is_empty() {
+            if entry.model_usage.is_empty() && entry.usage.total_tokens() > 0 {
                 let cost = entry.usage.cost_for_model(entry.model.as_deref());
                 tx.execute(
                     r#"INSERT INTO token_usage
@@ -622,7 +622,7 @@ impl IndexStore {
                         entry.iterations as i64,
                     ],
                 )?;
-            } else {
+            } else if !entry.model_usage.is_empty() {
                 for (model, usage) in &entry.model_usage {
                     let model_opt = if model.is_empty() {
                         None

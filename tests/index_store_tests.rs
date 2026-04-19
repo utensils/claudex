@@ -226,6 +226,8 @@ fn query_file_mods_returns_file_counts() {
 fn query_model_usage_groups_by_model_family() {
     let (_tmp, _store, idx) = build_fixture();
     let rows = idx.query_model_usage(None).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| !r.model.is_empty()));
     let models: Vec<_> = rows.iter().map(|r| r.model.as_str()).collect();
     assert!(models.iter().any(|m| m.contains("opus")));
     assert!(models.iter().any(|m| m.contains("sonnet")));

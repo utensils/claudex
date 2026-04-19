@@ -468,6 +468,45 @@ fn tools_per_session_no_index() {
 }
 
 #[test]
+fn tools_per_session_no_index_sorts_missing_dates_last() {
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-delta",
+        "sess-d1",
+        &[
+            r#"{"type":"assistant","sessionId":"sess-d1","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"tool_use","name":"Read","id":"t9","input":{}},{"type":"text","text":"ok"}]}}"#,
+        ],
+    );
+
+    let indexed = run(home.path(), &["tools", "--per-session", "--json"]);
+    let scanned = run(
+        home.path(),
+        &["tools", "--per-session", "--json", "--no-index"],
+    );
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    assert!(scanned.status.success(), "stderr: {}", stderr_of(&scanned));
+
+    let indexed_rows = json_of(&indexed).as_array().unwrap().clone();
+    let scanned_rows = json_of(&scanned).as_array().unwrap().clone();
+    assert_eq!(
+        indexed_rows
+            .iter()
+            .map(|r| r["session_id"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        scanned_rows
+            .iter()
+            .map(|r| r["session_id"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        scanned_rows.last().and_then(|r| r["session_id"].as_str()),
+        Some("sess-d1")
+    );
+}
+
+#[test]
 fn cost_per_session_no_index() {
     let home = fixture_home();
     let out = run(
