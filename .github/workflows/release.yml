@@ -65,10 +65,10 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --locked
 
-      - name: Ad-hoc code sign (macOS)
-        if: runner.os == 'macOS'
-        run: codesign -s - target/${{ matrix.target }}/release/claudex
-
+      # Order matters on macOS: `strip` invalidates any codesignature, so
+      # strip first and sign afterward. On Apple Silicon, an unsigned
+      # binary gets SIGKILL at launch (taskgated); without the re-sign,
+      # `install.sh` users see `Killed: 9`.
       - name: Strip binary
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
@@ -76,6 +76,10 @@ jobs:
           else
             strip --strip-all target/${{ matrix.target }}/release/claudex
           fi
+
+      - name: Ad-hoc code sign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - target/${{ matrix.target }}/release/claudex
 
       - name: Package
         run: tar -czf ${{ matrix.asset }} -C target/${{ matrix.target }}/release claudex
