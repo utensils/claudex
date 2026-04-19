@@ -31,7 +31,10 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     }
 
     let mut table = ui::table();
-    table.set_header(ui::header(["File Path", "Sessions"]));
+    // Label is "Modifications", not "Sessions" — the count is edit events
+    // across every session, not a distinct-session count. See the
+    // distinct-sessions SQL recipe in the docs for the latter.
+    table.set_header(ui::header(["File Path", "Modifications"]));
     ui::right_align(&mut table, &[1]);
     for r in &rows {
         table.add_row([

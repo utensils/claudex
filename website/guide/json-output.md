@@ -20,63 +20,70 @@ claudex summary --json
 ## Piping to jq
 
 ```bash
-# Sum cost across all projects
-claudex cost --json | jq '[.[].cost_usd] | add'
+# Total cost across everything
+claudex summary --json | jq '.total_cost_usd'
 
 # Project names only, sorted
 claudex sessions --json | jq -r '.[].project' | sort -u
 
 # p95 turn duration for one project
-claudex turns --project claudex --json | jq '.[0].p95_ms'
+claudex turns --project claudex --json | jq '.[0].p95_duration_ms'
 
-# Every PR this week
-claudex prs --json | jq '.[] | select(.first_timestamp > (now - 604800) * 1000)'
+# Every PR this month
+claudex prs --json \
+  | jq --arg m "$(date +%Y-%m)" '.[] | select(.timestamp | startswith($m))'
 ```
 
 ## Shapes, by command
 
+Per-command pages have the authoritative shape; this section is a cheat
+sheet.
+
 ### `summary`
 
-```json
-{
-  "total_sessions": 372,
-  "sessions_today": 4,
-  "sessions_this_week": 28,
-  "total_cost_usd": 512.34,
-  "cost_this_week_usd": 41.22,
-  "total_tokens": 93847123,
-  "thinking_block_count": 1289,
-  "avg_turn_duration_ms": 4132,
-  "pr_count": 14,
-  "files_modified_count": 842,
-  "top_projects": [{ "project": "claudex", "sessions": 41 }],
-  "top_tools": [{ "tool": "Edit", "calls": 1240 }],
-  "model_distribution": [
-    { "model": "claude-opus-4-7", "sessions": 12, "cost_usd": 210.44 }
-  ],
-  "most_recent": {
-    "project": "claudex",
-    "session_id": "e1a2f4…",
-    "date": "2026-04-18T14:22:13+00:00",
-    "model": "claude-sonnet-4-6",
-    "message_count": 83
-  }
-}
-```
+Single object. Keys: `total_sessions`, `sessions_today`,
+`sessions_this_week`, `total_cost_usd`, `cost_this_week_usd`,
+`total_tokens`, `thinking_block_count`, `avg_turn_duration_ms`, `pr_count`,
+`files_modified_count`, `top_projects`, `top_tools`, `model_distribution`,
+`most_recent`. See [`summary`](/commands/summary) for the full shape.
 
-### `sessions`, `cost --per-session`, `tools --per-session`
+### `sessions`
 
-Array of objects. Always includes `project` and `session_id`. Cost / token /
-tool fields depend on the command.
+Array. Each entry: `project`, `session_id`, `date`, `duration_ms`,
+`message_count`, `model`.
 
-### `cost`
+### `cost` (aggregated) / `cost --per-session`
 
-Array sorted by `cost_usd` descending. Each entry includes all four token
-counts plus the model that produced them.
+- Aggregated: `project`, `sessions`, `input_tokens`, `output_tokens`,
+  `cache_creation_tokens`, `cache_read_tokens`, `models` (array of
+  families), `cost_usd`.
+- Per-session: `project`, `session_id`, `date`, `model`, `input_tokens`,
+  `output_tokens`, `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`.
 
-### `turns`, `prs`, `files`, `models`
+### `tools` (aggregated) / `tools --per-session`
 
-Arrays. Field names mirror the column headers you see in the table output.
+- Aggregated: `tool`, `count`.
+- Per-session: `project`, `session_id`, `date`, `tools` (object —
+  `{name: count}`).
+
+### `models`
+
+Array. Each entry: `model`, `model_family`, `session_count`, `input_tokens`,
+`output_tokens`, `cost_usd`.
+
+### `turns`
+
+Array. Each entry: `project`, `turn_count`, `avg_duration_ms`,
+`p50_duration_ms`, `p95_duration_ms`, `max_duration_ms`.
+
+### `prs`
+
+Array. Each entry: `project`, `session_id`, `timestamp`, `pr_number`,
+`pr_repository`, `pr_url`.
+
+### `files`
+
+Array. Each entry: `file_path`, `modification_count`.
 
 ## Why not CSV?
 

@@ -18,9 +18,9 @@ claudex summary [--json] [--no-index]
 - **Turns** — average turn duration in milliseconds.
 - **PRs** — count of sessions linked to pull requests.
 - **Files** — total distinct files modified across all sessions.
-- **Top projects** — three to five by session count.
-- **Top tools** — three to five by call count (`Bash`, `Edit`, `Read`, etc).
-- **Model distribution** — sessions and cost per model.
+- **Top projects** — up to 5 by session count.
+- **Top tools** — up to 5 by call count (`Bash`, `Edit`, `Read`, etc).
+- **Model distribution** — sessions and cost per model family.
 - **Most recent session** — project, session ID, timestamp, model, message
   count.
 

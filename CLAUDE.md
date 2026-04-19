@@ -39,9 +39,89 @@ cargo test --test index_tests -- name_of_test_fn    # one integration test in te
 cargo test decode_                                  # all tests whose name contains decode_
 ```
 
-### CI (GitHub Actions, `.github/workflows/ci.yml`)
+### CI (GitHub Actions, `.github/workflows/`)
 
-`fmt`, `check`, `clippy -D warnings`, `test`, `build --release` must all pass. Run `ci-local` before pushing. A separate `coverage` job runs `cargo llvm-cov` and uploads to Codecov; it is non-blocking (`continue-on-error: true`, `fail_ci_if_error: false`).
+Three workflows:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | push to `main`, pull_request to `main` | `docs` (bun fmt:check + build), `fmt`, `check`, `clippy -D warnings`, `test`, `build --release`. Plus non-blocking `coverage` (cargo llvm-cov → Codecov). |
+| `pages.yml` | push to `main` touching `website/**` | Builds VitePress and deploys to GitHub Pages via `actions/deploy-pages@v4`. Base path `/claudex/`. |
+| `release.yml` | tag push `v*`, or manual `workflow_dispatch` with required `tag` input | Matrix build of prebuilt binaries (4 targets), publishes a GitHub Release. |
+
+Run `ci-local` (devshell) before pushing — mirrors the Rust-side checks
+exactly.
+
+## Release process
+
+### Cutting a release
+
+The `release.yml` workflow is the source of truth. To cut a new release:
+
+1. **Bump version in all four surfaces** — `Cargo.toml` is authoritative;
+   the flake re-reads it via `fromTOML`, so flake stays in sync
+   automatically. Remaining touch-points:
+   - `Cargo.toml` — `[package].version`
+   - `Cargo.lock` — the `[[package]]` block named `claudex`
+   - `website/.vitepress/config.ts` — the `text: 'vX.Y.Z'` nav entry
+2. Update `README.md` install snippets if the tag is user-facing.
+3. Commit on a `release/vX.Y.Z` branch, open a PR, land it.
+4. `git tag vX.Y.Z && git push origin vX.Y.Z` — this fires `release.yml`.
+
+### What `release.yml` does
+
+Matrix targets (4):
+
+- `aarch64-apple-darwin` on `macos-14`
+- `x86_64-apple-darwin`  on `macos-13`
+- `x86_64-unknown-linux-gnu`  on `ubuntu-22.04`
+- `aarch64-unknown-linux-gnu` on `ubuntu-22.04-arm`
+
+Per-target: `cargo build --release --target <t> --locked`, ad-hoc codesign
+on macOS, strip, tar. Linux runners are pinned to `ubuntu-22.04` so the
+glibc ABI floor stays stable across runner image upgrades. Release job
+aggregates artifacts, generates `SHA256SUMS`, publishes via
+`softprops/action-gh-release@v2`.
+
+`make_latest` is **conditional on an actual tag push**
+(`startsWith(github.ref, 'refs/tags/v')`). Manual `workflow_dispatch`
+rebuilds of historical tags won't demote newer releases.
+
+### The install script
+
+`install.sh` in the repo root pulls the canonical
+`/releases/latest/download/<asset>` redirect from GitHub — **no dependency
+on `api.github.com`**, so it works in environments where the REST API is
+blocked or rate-limited. Verifies against `SHA256SUMS` from the same
+release, installs to `$CLAUDEX_INSTALL_DIR` (default `~/.local/bin`),
+clears macOS quarantine. Override tag with `CLAUDEX_VERSION=v0.2.0`.
+
+### Three supported install paths
+
+All documented in `website/guide/installation.md`:
+
+1. **`install.sh`** — prebuilt tarball from GitHub Releases (fastest).
+2. **Cargo** — `cargo install --git https://github.com/utensils/claudex --tag vX.Y.Z`.
+3. **Nix flake** — `nix run`, `nix profile install`, or as a flake input.
+   `packages.default` and `apps.default` both carry populated `meta`
+   sourced from `Cargo.toml` via `fromTOML`.
+
+### Version bump — where it lands
+
+| Surface | Field |
+|---------|-------|
+| `Cargo.toml` | `version`, `description`, `homepage`, `documentation` |
+| `Cargo.lock` | auto on next `cargo` invocation; commit the update |
+| `flake.nix` | nothing to edit — re-reads `Cargo.toml` |
+| `website/.vitepress/config.ts` | nav entry `text: 'vX.Y.Z'` |
+| `README.md` | install snippets referencing `--tag vX.Y.Z` |
+
+### Docs deploy
+
+`pages.yml` redeploys automatically on pushes to `main` that touch
+`website/**`. No manual step. Canonical URL:
+<https://utensils.io/claudex/> (org CNAME; `utensils.github.io/claudex/`
+301-redirects here).
 
 ## Architecture
 

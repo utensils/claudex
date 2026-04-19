@@ -79,7 +79,7 @@ claudex cost --json --limit 3 \
 
 # p95 turn duration for one project
 claudex turns --project claudex --json \
-  | jq '.[0].p95_ms'
+  | jq '.[0].p95_duration_ms'
 ```
 
 ## Bonus: live tail
