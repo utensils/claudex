@@ -43,7 +43,8 @@
     #d97757 55%,
     #e8a388 100%
   );
-  --vp-home-hero-image-background-image: radial-gradient(
+  --vp-home-hero-image-background-image:
+    radial-gradient(
       circle at 30% 30%,
       rgba(217, 119, 87, 0.28) 0%,
       transparent 55%

@@ -12,12 +12,12 @@ claudex export <selector> [--format markdown|json]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `<selector>` | — | Session ID prefix _or_ project name substring. Required. |
-| `--format` | `markdown` | `markdown` or `json`. |
-| `-o`, `--output <path>` | stdout | Write to a file instead of stdout. |
-| `-p`, `--project <substr>` | — | Disambiguate when the selector matches more than one session. |
+| Flag                       | Default    | Description                                                   |
+| -------------------------- | ---------- | ------------------------------------------------------------- |
+| `<selector>`               | —          | Session ID prefix _or_ project name substring. Required.      |
+| `--format`                 | `markdown` | `markdown` or `json`.                                         |
+| `-o`, `--output <path>`    | stdout     | Write to a file instead of stdout.                            |
+| `-p`, `--project <substr>` | —          | Disambiguate when the selector matches more than one session. |
 
 ## Example
 

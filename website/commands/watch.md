@@ -10,10 +10,10 @@ claudex watch [--follow <path>] [--raw]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--follow <path>` | `~/.claudex/debug/latest.log` | Tail this file instead. |
-| `--raw` | off | Disable formatting; emit raw log lines. |
+| Flag              | Default                       | Description                             |
+| ----------------- | ----------------------------- | --------------------------------------- |
+| `--follow <path>` | `~/.claudex/debug/latest.log` | Tail this file instead.                 |
+| `--raw`           | off                           | Disable formatting; emit raw log lines. |
 
 ## The two-terminal pattern
 

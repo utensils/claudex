@@ -10,12 +10,12 @@ claudex sessions [-p/--project <substr>] [-l/--limit <n>] [--json] [--no-index]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `-l`, `--limit <n>` | `20` | Maximum number of rows. |
-| `--json` | off | Emit JSON. |
-| `--no-index` | off | Scan JSONL files directly; don't touch the index. |
+| Flag                       | Default | Description                                       |
+| -------------------------- | ------- | ------------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path.    |
+| `-l`, `--limit <n>`        | `20`    | Maximum number of rows.                           |
+| `--json`                   | off     | Emit JSON.                                        |
+| `--no-index`               | off     | Scan JSONL files directly; don't touch the index. |
 
 ## Example
 
@@ -32,14 +32,14 @@ claudex sessions --json --limit 5
 
 ## Columns
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project directory name (worktree sessions render as `name (worktree)`). |
-| Session | First 8 characters of the session UUID. |
-| Date | First timestamp, rendered as `YYYY-MM-DD`. |
-| Messages | Count of user + assistant messages in the session. |
-| Duration | Wall-clock duration from first to last message. |
-| Model | Most recent model tag seen in the session (Opus / Sonnet / Haiku). |
+| Column   | Source                                                                          |
+| -------- | ------------------------------------------------------------------------------- |
+| Project  | Decoded project directory name (worktree sessions render as `name (worktree)`). |
+| Session  | First 8 characters of the session UUID.                                         |
+| Date     | First timestamp, rendered as `YYYY-MM-DD`.                                      |
+| Messages | Count of user + assistant messages in the session.                              |
+| Duration | Wall-clock duration from first to last message.                                 |
+| Model    | Most recent model tag seen in the session (Opus / Sonnet / Haiku).              |
 
 ## JSON shape
 

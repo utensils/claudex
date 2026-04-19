@@ -13,13 +13,13 @@ claudex search <query> [-p/--project <substr>]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `<query>` | — | The text to search for. Positional, required. |
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `-l`, `--limit <n>` | `20` | Maximum hits to print. |
-| `--case-sensitive` | off | Drop back to a file scan (FTS5 is case-insensitive). |
-| `--no-index` | off | Scan JSONL files directly. |
+| Flag                       | Default | Description                                          |
+| -------------------------- | ------- | ---------------------------------------------------- |
+| `<query>`                  | —       | The text to search for. Positional, required.        |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path.       |
+| `-l`, `--limit <n>`        | `20`    | Maximum hits to print.                               |
+| `--case-sensitive`         | off     | Drop back to a file scan (FTS5 is case-insensitive). |
+| `--no-index`               | off     | Scan JSONL files directly.                           |
 
 ## Example
 
@@ -40,12 +40,12 @@ The index has an FTS5 virtual table `messages_fts` over every message. It uses
 the `porter unicode61` analyzer (stemming, unicode-aware tokenization). Queries
 accept FTS5 syntax:
 
-| Syntax | Meaning |
-|--------|---------|
-| `foo bar` | Match both words, any order. |
-| `"foo bar"` | Phrase match. |
-| `foo OR bar` | Either. |
-| `foo -bar` | `foo` but not `bar`. |
+| Syntax       | Meaning                      |
+| ------------ | ---------------------------- |
+| `foo bar`    | Match both words, any order. |
+| `"foo bar"`  | Phrase match.                |
+| `foo OR bar` | Either.                      |
+| `foo -bar`   | `foo` but not `bar`.         |
 
 Special characters (`{`, `[`, `.`, `/`) aren't tokens — search the word next
 to them.

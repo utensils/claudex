@@ -26,9 +26,9 @@ claudex summary [--json] [--no-index]
 
 ## Flags
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit JSON (see shape below). |
+| Flag         | Description                                       |
+| ------------ | ------------------------------------------------- |
+| `--json`     | Emit JSON (see shape below).                      |
 | `--no-index` | Scan JSONL files directly; don't touch the index. |
 
 ## Example
@@ -55,12 +55,8 @@ claudex summary --json | jq '.total_cost_usd'
   "avg_turn_duration_ms": 4132,
   "pr_count": 14,
   "files_modified_count": 842,
-  "top_projects": [
-    { "project": "claudex", "sessions": 41 }
-  ],
-  "top_tools": [
-    { "tool": "Edit", "calls": 1240 }
-  ],
+  "top_projects": [{ "project": "claudex", "sessions": 41 }],
+  "top_tools": [{ "tool": "Edit", "calls": 1240 }],
   "model_distribution": [
     { "model": "claude-opus-4-7", "sessions": 12, "cost_usd": 210.44 }
   ],

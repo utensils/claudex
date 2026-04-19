@@ -21,8 +21,7 @@ hero:
 
 features:
   - title: Every session, indexed
-    details:
-      Scans ~/.claude/projects/ into a local SQLite database at
+    details: Scans ~/.claude/projects/ into a local SQLite database at
       ~/.claudex/index.db. Incremental sync keyed on (path, size, mtime);
       staleness window is 5 minutes.
   - title: Ten reports out of the box
@@ -46,13 +45,11 @@ features:
       user and assistant message in every session, filtered by project, with
       SQLite's FTS5 ranking.
   - title: Live tail with structure
-    details:
-      claudex watch tails Claude Code's --debug-file log in real time,
+    details: claudex watch tails Claude Code's --debug-file log in real time,
       formats tool calls, detects new sessions, and separates them with a
       banner. --raw drops back to plain output.
   - title: JSON or TTY — your choice
-    details:
-      Human output uses a minimal comfy-table layout with dynamic width
+    details: Human output uses a minimal comfy-table layout with dynamic width
       detection. --json emits a stable shape for pipelines, grep, and jq.
   - title: Single binary, no daemon
     details:

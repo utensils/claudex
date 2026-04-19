@@ -7,17 +7,17 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
 ## Read-only reports
 
-| Command | What it does |
-|---------|--------------|
-| [`summary`](/commands/summary) | Dashboard — sessions, cost, top projects/tools, model mix. |
-| [`sessions`](/commands/sessions) | List sessions grouped by project. |
-| [`cost`](/commands/cost) | Token usage and approximate cost per project (or per session). |
-| [`search`](/commands/search) | Full-text search across session messages (FTS5). |
-| [`tools`](/commands/tools) | Tool-usage frequency, optionally per session. |
-| [`models`](/commands/models) | Call counts, token usage, and cost per model. |
-| [`turns`](/commands/turns) | Per-turn timing (avg / p50 / p95 / max). |
-| [`prs`](/commands/prs) | Sessions linked to pull requests. |
-| [`files`](/commands/files) | Most frequently modified files across sessions. |
+| Command                          | What it does                                                   |
+| -------------------------------- | -------------------------------------------------------------- |
+| [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.     |
+| [`sessions`](/commands/sessions) | List sessions grouped by project.                              |
+| [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session). |
+| [`search`](/commands/search)     | Full-text search across session messages (FTS5).               |
+| [`tools`](/commands/tools)       | Tool-usage frequency, optionally per session.                  |
+| [`models`](/commands/models)     | Call counts, token usage, and cost per model.                  |
+| [`turns`](/commands/turns)       | Per-turn timing (avg / p50 / p95 / max).                       |
+| [`prs`](/commands/prs)           | Sessions linked to pull requests.                              |
+| [`files`](/commands/files)       | Most frequently modified files across sessions.                |
 
 All read-only reports support:
 
@@ -29,12 +29,12 @@ All read-only reports support:
 
 ## Actions
 
-| Command | What it does |
-|---------|--------------|
-| [`export`](/commands/export) | Dump a session transcript as Markdown or JSON. |
-| [`watch`](/commands/watch) | Tail Claude Code's `--debug-file` log in real time. |
-| [`index`](/commands/index-cmd) | Manage the SQLite index — force sync or full rebuild. |
-| [`completions`](/commands/completions) | Generate shell completion scripts. |
+| Command                                | What it does                                          |
+| -------------------------------------- | ----------------------------------------------------- |
+| [`export`](/commands/export)           | Dump a session transcript as Markdown or JSON.        |
+| [`watch`](/commands/watch)             | Tail Claude Code's `--debug-file` log in real time.   |
+| [`index`](/commands/index-cmd)         | Manage the SQLite index — force sync or full rebuild. |
+| [`completions`](/commands/completions) | Generate shell completion scripts.                    |
 
 ## Conventions
 

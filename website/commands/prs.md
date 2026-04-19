@@ -11,11 +11,11 @@ claudex prs [-p/--project <substr>] [-l/--limit <n>] [--json]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `-l`, `--limit <n>` | `20` | Maximum rows. |
-| `--json` | off | Emit JSON. |
+| Flag                       | Default | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path. |
+| `-l`, `--limit <n>`        | `20`    | Maximum rows.                                  |
+| `--json`                   | off     | Emit JSON.                                     |
 
 ## Example
 
@@ -32,14 +32,14 @@ claudex prs --json | jq 'group_by(.project) | map({project: .[0].project, count:
 
 ## Columns
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project name. |
-| Session | 8-character session ID prefix. |
-| Date | First timestamp of the session. |
-| PR | PR number. |
-| Repo | `owner/repo`. |
-| URL | Full PR URL. |
+| Column  | Source                          |
+| ------- | ------------------------------- |
+| Project | Decoded project name.           |
+| Session | 8-character session ID prefix.  |
+| Date    | First timestamp of the session. |
+| PR      | PR number.                      |
+| Repo    | `owner/repo`.                   |
+| URL     | Full PR URL.                    |
 
 ## JSON shape
 

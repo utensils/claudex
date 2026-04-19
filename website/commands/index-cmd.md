@@ -12,8 +12,8 @@ claudex index [--force]
 
 ## Flags
 
-| Flag | Description |
-|------|-------------|
+| Flag      | Description                                                                         |
+| --------- | ----------------------------------------------------------------------------------- |
 | `--force` | Wipe the database and rebuild from scratch. Otherwise performs an incremental sync. |
 
 ## Example

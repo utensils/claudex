@@ -15,7 +15,10 @@ export default defineConfig({
   },
 
   head: [
-    ['link', { rel: 'icon', href: '/claudex/favicon.svg', type: 'image/svg+xml' }],
+    [
+      'link',
+      { rel: 'icon', href: '/claudex/favicon.svg', type: 'image/svg+xml' },
+    ],
     ['meta', { name: 'theme-color', content: '#D97757' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'claudex' }],
@@ -145,8 +148,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern:
-        'https://github.com/utensils/claudex/edit/main/website/:path',
+      pattern: 'https://github.com/utensils/claudex/edit/main/website/:path',
       text: 'Edit this page on GitHub',
     },
 

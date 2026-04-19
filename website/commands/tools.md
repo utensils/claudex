@@ -11,13 +11,13 @@ claudex tools [-p/--project <substr>] [--per-session]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `--per-session` | off | Break down per session instead of aggregating. |
-| `-l`, `--limit <n>` | `20` | Maximum rows. |
-| `--json` | off | Emit JSON. |
-| `--no-index` | off | Scan JSONL files directly. |
+| Flag                       | Default | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path. |
+| `--per-session`            | off     | Break down per session instead of aggregating. |
+| `-l`, `--limit <n>`        | `20`    | Maximum rows.                                  |
+| `--json`                   | off     | Emit JSON.                                     |
+| `--no-index`               | off     | Scan JSONL files directly.                     |
 
 ## Example
 
@@ -34,20 +34,20 @@ claudex tools --project claudex --per-session --limit 50
 
 ## Columns (aggregated)
 
-| Column | Source |
-|--------|--------|
-| Tool | Tool name as reported by Claude Code. |
-| Calls | Total invocations across matched sessions. |
-| Sessions | Distinct sessions that used the tool. |
+| Column   | Source                                     |
+| -------- | ------------------------------------------ |
+| Tool     | Tool name as reported by Claude Code.      |
+| Calls    | Total invocations across matched sessions. |
+| Sessions | Distinct sessions that used the tool.      |
 
 ## Columns (per-session)
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project name. |
+| Column  | Source                         |
+| ------- | ------------------------------ |
+| Project | Decoded project name.          |
 | Session | 8-character session ID prefix. |
-| Tool | Tool name. |
-| Calls | Invocations in that session. |
+| Tool    | Tool name.                     |
+| Calls   | Invocations in that session.   |
 
 ## JSON shape
 
@@ -56,7 +56,7 @@ Aggregated:
 ```json
 [
   { "tool": "Edit", "calls": 1240, "sessions": 92 },
-  { "tool": "Bash", "calls": 988,  "sessions": 110 }
+  { "tool": "Bash", "calls": 988, "sessions": 110 }
 ]
 ```
 

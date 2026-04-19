@@ -10,11 +10,11 @@ claudex files [-p/--project <substr>] [-l/--limit <n>] [--json]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `-l`, `--limit <n>` | `20` | Maximum files to show. |
-| `--json` | off | Emit JSON. |
+| Flag                       | Default | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path. |
+| `-l`, `--limit <n>`        | `20`    | Maximum files to show.                         |
+| `--json`                   | off     | Emit JSON.                                     |
 
 ## Example
 
@@ -31,10 +31,10 @@ claudex files --json | jq '.[] | select(.session_count >= 5) | .file_path'
 
 ## Columns
 
-| Column | Source |
-|--------|--------|
-| File | File path (usually absolute). |
-| Edits | Count of edit events across sessions. |
+| Column   | Source                                    |
+| -------- | ----------------------------------------- |
+| File     | File path (usually absolute).             |
+| Edits    | Count of edit events across sessions.     |
 | Sessions | Distinct sessions that modified the file. |
 
 ## JSON shape

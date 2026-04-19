@@ -38,14 +38,14 @@ produces plain help text. Handy when piping help into a file for docs.
 
 ## Palette roles
 
-| Role | Used for |
-|------|----------|
-| project | Project names, headlines |
-| cost | Dollar amounts (bolded for readability) |
-| count | Numeric counts with thousands separators |
-| dim | Timestamps, session ID prefixes, neutral metadata |
-| model | Model name (Opus / Sonnet / Haiku) |
-| role | Message roles (`user`, `assistant`) in search output |
+| Role    | Used for                                             |
+| ------- | ---------------------------------------------------- |
+| project | Project names, headlines                             |
+| cost    | Dollar amounts (bolded for readability)              |
+| count   | Numeric counts with thousands separators             |
+| dim     | Timestamps, session ID prefixes, neutral metadata    |
+| model   | Model name (Opus / Sonnet / Haiku)                   |
+| role    | Message roles (`user`, `assistant`) in search output |
 
 On the Claude-branded docs site you're reading right now, the palette echoes
 these roles — coral for brand / cost, cream for surfaces, deep ink for text.

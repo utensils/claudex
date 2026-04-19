@@ -25,15 +25,15 @@ ui::table() / palette       — comfy-table with dynamic width + owo-colors
 
 ## Modules
 
-| Module | Purpose |
-|--------|---------|
-| `src/main.rs` | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag. |
-| `src/store.rs` | Locates session files, decodes project-directory names (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), canonicalizes worktree paths (`…/.claude/worktrees/<branch>` aggregates to the parent project). |
-| `src/parser.rs` | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time. |
-| `src/types.rs` | `TokenUsage`, `ModelPricing` (Opus/Sonnet/Haiku tiers). `cost_for_model` is the single source of truth for pricing math. |
-| `src/index.rs` | `IndexStore` (SQLite). Ten relational tables plus an FTS5 virtual table. Incremental sync keyed on `(file_path, file_size, file_mtime)`. |
-| `src/ui.rs` | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation. |
-| `src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `completions`. |
+| Module              | Purpose                                                                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.rs`       | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag.                                                  |
+| `src/store.rs`      | Locates session files, decodes project-directory names (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), canonicalizes worktree paths (`…/.claude/worktrees/<branch>` aggregates to the parent project). |
+| `src/parser.rs`     | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                     |
+| `src/types.rs`      | `TokenUsage`, `ModelPricing` (Opus/Sonnet/Haiku tiers). `cost_for_model` is the single source of truth for pricing math.                                                                           |
+| `src/index.rs`      | `IndexStore` (SQLite). Ten relational tables plus an FTS5 virtual table. Incremental sync keyed on `(file_path, file_size, file_mtime)`.                                                           |
+| `src/ui.rs`         | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                        |
+| `src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `completions`.                                           |
 
 ## Key invariants
 

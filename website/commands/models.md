@@ -10,10 +10,10 @@ claudex models [-p/--project <substr>] [--json]
 
 ## Flags
 
-| Flag | Description |
-|------|-------------|
+| Flag                       | Description                                    |
+| -------------------------- | ---------------------------------------------- |
 | `-p`, `--project <substr>` | Filter by substring match on the project path. |
-| `--json` | Emit JSON. |
+| `--json`                   | Emit JSON.                                     |
 
 ## Example
 
@@ -30,17 +30,17 @@ claudex models --json | jq '.[] | select(.model | test("opus"; "i"))'
 
 ## Columns
 
-| Column | Source |
-|--------|--------|
-| Model | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
-| Tier | Opus / Sonnet / Haiku (derived from the name). |
-| Sessions | Distinct sessions that used the model. |
-| Messages | Assistant messages attributed to the model. |
-| Input | Total input tokens. |
-| Output | Total output tokens. |
-| Cache W | Cache-creation tokens. |
-| Cache R | Cache-read tokens. |
-| Cost (USD) | Model-specific cost. |
+| Column     | Source                                                                         |
+| ---------- | ------------------------------------------------------------------------------ |
+| Model      | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
+| Tier       | Opus / Sonnet / Haiku (derived from the name).                                 |
+| Sessions   | Distinct sessions that used the model.                                         |
+| Messages   | Assistant messages attributed to the model.                                    |
+| Input      | Total input tokens.                                                            |
+| Output     | Total output tokens.                                                           |
+| Cache W    | Cache-creation tokens.                                                         |
+| Cache R    | Cache-read tokens.                                                             |
+| Cost (USD) | Model-specific cost.                                                           |
 
 ## JSON shape
 

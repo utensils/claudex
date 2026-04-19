@@ -11,11 +11,11 @@ claudex turns [-p/--project <substr>] [-l/--limit <n>] [--json]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `-l`, `--limit <n>` | `20` | Maximum projects to show. |
-| `--json` | off | Emit JSON. |
+| Flag                       | Default | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path. |
+| `-l`, `--limit <n>`        | `20`    | Maximum projects to show.                      |
+| `--json`                   | off     | Emit JSON.                                     |
 
 ## Example
 
@@ -32,14 +32,14 @@ claudex turns --project claudex --json | jq '.[0].p95_ms'
 
 ## Columns
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project name. |
-| Turns | Number of turns measured. |
-| Avg | Arithmetic mean duration (ms). |
-| p50 | Median duration (ms). |
-| p95 | 95th-percentile duration (ms). |
-| Max | Longest single turn (ms). |
+| Column  | Source                         |
+| ------- | ------------------------------ |
+| Project | Decoded project name.          |
+| Turns   | Number of turns measured.      |
+| Avg     | Arithmetic mean duration (ms). |
+| p50     | Median duration (ms).          |
+| p95     | 95th-percentile duration (ms). |
+| Max     | Longest single turn (ms).      |
 
 ## JSON shape
 

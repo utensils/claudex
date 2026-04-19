@@ -17,13 +17,13 @@ on first use.
 
 ## Sync semantics
 
-| Trigger | What happens |
-|---------|--------------|
-| First run of any read command | Full scan of `~/.claude/projects/`, populate every table. |
-| Subsequent runs, last sync ≤ 5 min | Use the cached index as-is. |
+| Trigger                            | What happens                                              |
+| ---------------------------------- | --------------------------------------------------------- |
+| First run of any read command      | Full scan of `~/.claude/projects/`, populate every table. |
+| Subsequent runs, last sync ≤ 5 min | Use the cached index as-is.                               |
 | Subsequent runs, last sync > 5 min | Incremental sync — add new sessions, update changed ones. |
-| `claudex index` | Force a sync right now (incremental). |
-| `claudex index --force` | Wipe the database and rebuild from scratch. |
+| `claudex index`                    | Force a sync right now (incremental).                     |
+| `claudex index --force`            | Wipe the database and rebuild from scratch.               |
 
 The staleness window is `STALE_SECS = 300` in `src/index.rs`.
 

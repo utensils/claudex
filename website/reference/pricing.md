@@ -7,8 +7,8 @@ Source of truth: `src/types.rs`, `ModelPricing::for_model`.
 
 ## Tiers
 
-| Model tier | Input | Output | Cache write | Cache read |
-|------------|-------|--------|-------------|------------|
+| Model tier | Input         | Output        | Cache write   | Cache read   |
+| ---------- | ------------- | ------------- | ------------- | ------------ |
 | **Opus**   | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok | $1.50 / MTok |
 | **Sonnet** | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok  | $0.30 / MTok |
 | **Haiku**  | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok  | $0.08 / MTok |

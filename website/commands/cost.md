@@ -11,13 +11,13 @@ claudex cost [-p/--project <substr>] [--per-session]
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-p`, `--project <substr>` | — | Filter by substring match on the project path. |
-| `--per-session` | off | Break down per session instead of aggregating by project. |
-| `-l`, `--limit <n>` | `20` | Maximum number of rows. |
-| `--json` | off | Emit JSON. |
-| `--no-index` | off | Scan JSONL files directly. |
+| Flag                       | Default | Description                                               |
+| -------------------------- | ------- | --------------------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path.            |
+| `--per-session`            | off     | Break down per session instead of aggregating by project. |
+| `-l`, `--limit <n>`        | `20`    | Maximum number of rows.                                   |
+| `--json`                   | off     | Emit JSON.                                                |
+| `--no-index`               | off     | Scan JSONL files directly.                                |
 
 ## Example
 
@@ -34,27 +34,27 @@ claudex cost --json --limit 1000 | jq '[.[].cost_usd] | add'
 
 ## Columns (aggregated)
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project name. |
-| Sessions | Number of sessions counted. |
-| Input | Total input tokens. |
-| Output | Total output tokens. |
-| Cache W | Cache-creation tokens. |
-| Cache R | Cache-read tokens. |
-| Cost (USD) | Sum of per-message costs. |
+| Column     | Source                      |
+| ---------- | --------------------------- |
+| Project    | Decoded project name.       |
+| Sessions   | Number of sessions counted. |
+| Input      | Total input tokens.         |
+| Output     | Total output tokens.        |
+| Cache W    | Cache-creation tokens.      |
+| Cache R    | Cache-read tokens.          |
+| Cost (USD) | Sum of per-message costs.   |
 
 ## Columns (per-session)
 
-| Column | Source |
-|--------|--------|
-| Project | Decoded project name. |
-| Session | 8-character session ID prefix. |
-| Date | First timestamp. |
-| Model | Model tag (Opus / Sonnet / Haiku). |
-| Input | Input tokens for the session. |
-| Output | Output tokens for the session. |
-| Cost (USD) | Cost for the session. |
+| Column     | Source                             |
+| ---------- | ---------------------------------- |
+| Project    | Decoded project name.              |
+| Session    | 8-character session ID prefix.     |
+| Date       | First timestamp.                   |
+| Model      | Model tag (Opus / Sonnet / Haiku). |
+| Input      | Input tokens for the session.      |
+| Output     | Output tokens for the session.     |
+| Cost (USD) | Cost for the session.              |
 
 ## JSON shape
 
