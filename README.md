@@ -1,5 +1,8 @@
 # claudex
 
+[![CI](https://github.com/utensils/claudex/actions/workflows/ci.yml/badge.svg)](https://github.com/utensils/claudex/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/utensils/claudex/graph/badge.svg)](https://codecov.io/gh/utensils/claudex)
+
 Query, search, and analyze Claude Code sessions from the command line.
 
 > **Status**: early skeleton — help menu only, features coming soon.

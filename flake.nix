@@ -99,6 +99,7 @@
             packages = [
               rustToolchain
               pkgs.rust-analyzer
+              pkgs.cargo-llvm-cov
               pkgs.git
               pkgs.gh
               pkgs.jq
@@ -170,6 +171,25 @@
                   cargo clippy -- -D warnings
                   cargo test
                   cargo build --release
+                '';
+              }
+              {
+                category = "check";
+                name = "coverage";
+                help = "test coverage summary (pass --html for a browsable report)";
+                command = ''
+                  set -euo pipefail
+                  # llvm-cov/llvm-profdata ship with the rustc toolchain but
+                  # aren't on PATH; point cargo-llvm-cov at them explicitly.
+                  LLVM_COV="$(find /nix/store -maxdepth 3 -name llvm-cov 2>/dev/null | head -1)"
+                  LLVM_PROFDATA="$(find /nix/store -maxdepth 3 -name llvm-profdata 2>/dev/null | head -1)"
+                  export LLVM_COV LLVM_PROFDATA
+                  if [ "''${1:-}" = "--html" ]; then
+                    cargo llvm-cov --workspace --html --output-dir target/coverage
+                    echo "Report: target/coverage/html/index.html"
+                  else
+                    cargo llvm-cov --workspace --summary-only
+                  fi
                 '';
               }
               {

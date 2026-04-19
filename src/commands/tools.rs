@@ -3,11 +3,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::DateTime;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
+use crate::ui;
 
 pub fn run(
     project: Option<&str>,
@@ -52,9 +52,14 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             return Ok(());
         }
 
-        let mut table = Table::new();
-        table.load_preset(UTF8_FULL_CONDENSED);
-        table.set_header(["Project", "Session", "Top Tools", "Total Calls"]);
+        let mut table = ui::table();
+        table.set_header(ui::header([
+            "Project",
+            "Session",
+            "Top Tools",
+            "Total Calls",
+        ]));
+        ui::right_align(&mut table, &[3]);
 
         for r in &rows {
             let sid: String = r
@@ -70,13 +75,13 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             let top: Vec<_> = sorted
                 .iter()
                 .take(3)
-                .map(|(k, v)| format!("{}({})", k, v))
+                .map(|(k, v)| format!("{}({})", k, ui::fmt_count(**v as u64)))
                 .collect();
             table.add_row([
-                short_name(&r.project),
-                sid,
-                top.join(", "),
-                total.to_string(),
+                ui::cell_project(&short_name(&r.project)),
+                ui::cell_dim(&sid),
+                ui::cell_plain(top.join(", ")),
+                ui::cell_count(total as u64),
             ]);
         }
         println!("{table}");
@@ -94,11 +99,11 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Tool", "Calls"]);
+    let mut table = ui::table();
+    table.set_header(ui::header(["Tool", "Calls"]));
+    ui::right_align(&mut table, &[1]);
     for r in &rows {
-        table.add_row([r.tool_name.as_str(), &r.count.to_string()]);
+        table.add_row([ui::cell_tool(&r.tool_name), ui::cell_count(r.count as u64)]);
     }
     println!("{table}");
     Ok(())
@@ -145,11 +150,11 @@ fn run_aggregate(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Res
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Tool", "Calls"]);
+    let mut table = ui::table();
+    table.set_header(ui::header(["Tool", "Calls"]));
+    ui::right_align(&mut table, &[1]);
     for (name, count) in &rows {
-        table.add_row([name.as_str(), &count.to_string()]);
+        table.add_row([ui::cell_tool(name), ui::cell_count(*count)]);
     }
     println!("{table}");
     Ok(())
@@ -194,9 +199,14 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "Session", "Top Tools", "Total Calls"]);
+    let mut table = ui::table();
+    table.set_header(ui::header([
+        "Project",
+        "Session",
+        "Top Tools",
+        "Total Calls",
+    ]));
+    ui::right_align(&mut table, &[3]);
 
     for (project, session_id, _, counts) in &rows {
         let sid: String = session_id
@@ -211,9 +221,14 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         let top: Vec<_> = sorted
             .iter()
             .take(3)
-            .map(|(k, v)| format!("{}({})", k, v))
+            .map(|(k, v)| format!("{}({})", k, ui::fmt_count(**v)))
             .collect();
-        table.add_row([short_name(project), sid, top.join(", "), total.to_string()]);
+        table.add_row([
+            ui::cell_project(&short_name(project)),
+            ui::cell_dim(&sid),
+            ui::cell_plain(top.join(", ")),
+            ui::cell_count(total),
+        ]);
     }
     println!("{table}");
     Ok(())

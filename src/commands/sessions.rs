@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::DateTime;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::SessionInfo;
+use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool, no_index: bool) -> Result<()> {
     if !no_index {
@@ -44,9 +44,11 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "Date", "Messages", "Duration", "Model"]);
+    let mut table = ui::table();
+    table.set_header(ui::header([
+        "Project", "Date", "Messages", "Duration", "Model",
+    ]));
+    ui::right_align(&mut table, &[2, 3]);
 
     for s in &rows {
         let date = s
@@ -61,11 +63,11 @@ fn run_indexed(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
             .unwrap_or("-")
             .to_string();
         table.add_row([
-            short_name(&s.project_name),
-            date,
-            s.message_count.to_string(),
-            format_duration(s.duration_ms as u64),
-            model,
+            ui::cell_project(&short_name(&s.project_name)),
+            ui::cell_dim(&date),
+            ui::cell_count(s.message_count as u64),
+            ui::cell_plain(format_duration(s.duration_ms as u64)),
+            ui::cell_model(&model),
         ]);
     }
     println!("{table}");
@@ -116,9 +118,11 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "Date", "Messages", "Duration", "Model"]);
+    let mut table = ui::table();
+    table.set_header(ui::header([
+        "Project", "Date", "Messages", "Duration", "Model",
+    ]));
+    ui::right_align(&mut table, &[2, 3]);
 
     for s in &sessions {
         let date = s
@@ -133,11 +137,11 @@ fn run_from_files(project: Option<&str>, limit: usize, json: bool) -> Result<()>
             .unwrap_or("-")
             .to_string();
         table.add_row([
-            proj,
-            date,
-            s.message_count.to_string(),
-            format_duration(s.duration_ms),
-            model,
+            ui::cell_project(&proj),
+            ui::cell_dim(&date),
+            ui::cell_count(s.message_count as u64),
+            ui::cell_plain(format_duration(s.duration_ms)),
+            ui::cell_model(&model),
         ]);
     }
     println!("{table}");

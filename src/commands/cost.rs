@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::DateTime;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::{ModelPricing, TokenUsage};
+use crate::ui;
 
 pub fn run(
     project: Option<&str>,
@@ -58,9 +58,8 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             return Ok(());
         }
 
-        let mut table = Table::new();
-        table.load_preset(UTF8_FULL_CONDENSED);
-        table.set_header([
+        let mut table = ui::table();
+        table.set_header(ui::header([
             "Project",
             "Session",
             "Date",
@@ -68,7 +67,8 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             "Input",
             "Output",
             "Cost (USD)",
-        ]);
+        ]));
+        ui::right_align(&mut table, &[4, 5, 6]);
         for r in &rows {
             let sid: String = r
                 .session_id
@@ -88,13 +88,13 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                 .map(|m| ModelPricing::name(Some(m)).to_string())
                 .unwrap_or_else(|| "-".to_string());
             table.add_row([
-                short_name(&r.project),
-                sid,
-                date,
-                model,
-                fmt_tokens(r.input_tokens as u64),
-                fmt_tokens(r.output_tokens as u64),
-                format!("${:.4}", r.cost_usd),
+                ui::cell_project(&short_name(&r.project)),
+                ui::cell_dim(&sid),
+                ui::cell_dim(&date),
+                ui::cell_model(&model),
+                ui::cell_count(r.input_tokens as u64),
+                ui::cell_count(r.output_tokens as u64),
+                ui::cell_cost(r.cost_usd),
             ]);
         }
         println!("{table}");
@@ -123,9 +123,8 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header([
+    let mut table = ui::table();
+    table.set_header(ui::header([
         "Project",
         "Sessions",
         "Input",
@@ -133,7 +132,8 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         "Cache Read",
         "Model(s)",
         "Cost (USD)",
-    ]);
+    ]));
+    ui::right_align(&mut table, &[1, 2, 3, 4, 6]);
 
     let mut total_cost = 0.0f64;
     let mut total_in = 0i64;
@@ -148,13 +148,13 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             r.models.join("/")
         };
         table.add_row([
-            short_name(&r.project),
-            r.session_count.to_string(),
-            fmt_tokens(r.input_tokens as u64),
-            fmt_tokens(r.output_tokens as u64),
-            fmt_tokens(r.cache_read_tokens as u64),
-            model_str,
-            format!("${:.4}", r.cost_usd),
+            ui::cell_project(&short_name(&r.project)),
+            ui::cell_count(r.session_count as u64),
+            ui::cell_count(r.input_tokens as u64),
+            ui::cell_count(r.output_tokens as u64),
+            ui::cell_count(r.cache_read_tokens as u64),
+            ui::cell_model(&model_str),
+            ui::cell_cost(r.cost_usd),
         ]);
         total_cost += r.cost_usd;
         total_in += r.input_tokens;
@@ -162,15 +162,15 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         total_cr += r.cache_read_tokens;
         total_sessions += r.session_count;
     }
-    table.add_row([
+    table.add_row(ui::total_row([
         "TOTAL".to_string(),
-        total_sessions.to_string(),
-        fmt_tokens(total_in as u64),
-        fmt_tokens(total_out as u64),
-        fmt_tokens(total_cr as u64),
+        ui::fmt_count(total_sessions as u64),
+        ui::fmt_count(total_in as u64),
+        ui::fmt_count(total_out as u64),
+        ui::fmt_count(total_cr as u64),
         String::new(),
-        format!("${:.4}", total_cost),
-    ]);
+        ui::fmt_cost(total_cost),
+    ]));
     println!("{table}");
     Ok(())
 }
@@ -255,9 +255,8 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header([
+    let mut table = ui::table();
+    table.set_header(ui::header([
         "Project",
         "Sessions",
         "Input",
@@ -265,7 +264,8 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         "Cache Read",
         "Model(s)",
         "Cost (USD)",
-    ]);
+    ]));
+    ui::right_align(&mut table, &[1, 2, 3, 4, 6]);
 
     let mut total_cost = 0.0f64;
     let mut total_usage = TokenUsage::default();
@@ -278,27 +278,27 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
             r.models.join("/")
         };
         table.add_row([
-            short_name(&r.project),
-            r.session_count.to_string(),
-            fmt_tokens(r.usage.input_tokens),
-            fmt_tokens(r.usage.output_tokens),
-            fmt_tokens(r.usage.cache_read_tokens),
-            model_str,
-            format!("${:.4}", r.total_cost),
+            ui::cell_project(&short_name(&r.project)),
+            ui::cell_count(r.session_count as u64),
+            ui::cell_count(r.usage.input_tokens),
+            ui::cell_count(r.usage.output_tokens),
+            ui::cell_count(r.usage.cache_read_tokens),
+            ui::cell_model(&model_str),
+            ui::cell_cost(r.total_cost),
         ]);
         total_cost += r.total_cost;
         total_usage.add(&r.usage);
         total_sessions += r.session_count;
     }
-    table.add_row([
+    table.add_row(ui::total_row([
         "TOTAL".to_string(),
-        total_sessions.to_string(),
-        fmt_tokens(total_usage.input_tokens),
-        fmt_tokens(total_usage.output_tokens),
-        fmt_tokens(total_usage.cache_read_tokens),
+        ui::fmt_count(total_sessions as u64),
+        ui::fmt_count(total_usage.input_tokens),
+        ui::fmt_count(total_usage.output_tokens),
+        ui::fmt_count(total_usage.cache_read_tokens),
         String::new(),
-        format!("${:.4}", total_cost),
-    ]);
+        ui::fmt_cost(total_cost),
+    ]));
 
     println!("{table}");
     Ok(())
@@ -345,9 +345,8 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header([
+    let mut table = ui::table();
+    table.set_header(ui::header([
         "Project",
         "Session",
         "Date",
@@ -355,7 +354,8 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         "Input",
         "Output",
         "Cost (USD)",
-    ]);
+    ]));
+    ui::right_align(&mut table, &[4, 5, 6]);
 
     for (project, stats, cost) in &rows {
         let sid: String = stats
@@ -375,25 +375,15 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             .map(|m| ModelPricing::name(Some(m)).to_string())
             .unwrap_or_else(|| "-".to_string());
         table.add_row([
-            short_name(project),
-            sid,
-            date,
-            model,
-            fmt_tokens(stats.usage.input_tokens),
-            fmt_tokens(stats.usage.output_tokens),
-            format!("${:.4}", cost),
+            ui::cell_project(&short_name(project)),
+            ui::cell_dim(&sid),
+            ui::cell_dim(&date),
+            ui::cell_model(&model),
+            ui::cell_count(stats.usage.input_tokens),
+            ui::cell_count(stats.usage.output_tokens),
+            ui::cell_cost(*cost),
         ]);
     }
     println!("{table}");
     Ok(())
-}
-
-fn fmt_tokens(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
 }

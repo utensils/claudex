@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, Utc};
-use owo_colors::OwoColorize;
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::TokenUsage;
+use crate::ui;
 
 pub fn run(json: bool, no_index: bool) -> Result<()> {
     if !no_index {
@@ -63,20 +63,34 @@ fn run_indexed(json: bool) -> Result<()> {
     }
 
     section("Sessions");
-    println!("  Total:      {}", data.total_sessions.to_string().bold());
-    println!("  Today:      {}", data.sessions_today);
-    println!("  This week:  {}", data.sessions_this_week);
+    println!(
+        "  Total:      {}",
+        ui::emphasis(&ui::fmt_count(data.total_sessions as u64))
+    );
+    println!(
+        "  Today:      {}",
+        ui::fmt_count(data.sessions_today as u64)
+    );
+    println!(
+        "  This week:  {}",
+        ui::fmt_count(data.sessions_this_week as u64)
+    );
 
     section("Cost (estimated)");
-    println!("  All time:   ${:.4}", data.total_cost);
-    println!("  This week:  ${:.4}", data.week_cost);
+    println!("  All time:   {}", ui::cost(data.total_cost));
+    println!("  This week:  {}", ui::cost(data.week_cost));
 
     section("Top Projects");
     if data.top_projects.is_empty() {
         println!("  (none)");
     } else {
         for (i, (proj, count)) in data.top_projects.iter().enumerate() {
-            println!("  {}. {}  {} sessions", i + 1, proj.bright_blue(), count);
+            println!(
+                "  {}. {}  {} sessions",
+                i + 1,
+                ui::project(proj),
+                ui::fmt_count(*count as u64)
+            );
         }
     }
 
@@ -88,8 +102,8 @@ fn run_indexed(json: bool) -> Result<()> {
             println!(
                 "  {}. {}  {} calls",
                 i + 1,
-                tool.cyan(),
-                fmt_num(*count as u64)
+                ui::tool_name(tool),
+                ui::fmt_count(*count as u64)
             );
         }
     }
@@ -98,8 +112,13 @@ fn run_indexed(json: bool) -> Result<()> {
     if data.model_distribution.is_empty() {
         println!("  (none)");
     } else {
-        for (model, sessions, cost) in &data.model_distribution {
-            println!("  {}  {} sessions  ${:.4}", model.yellow(), sessions, cost);
+        for (model, sessions, c) in &data.model_distribution {
+            println!(
+                "  {}  {} sessions  {}",
+                ui::model_name(model),
+                ui::fmt_count(*sessions as u64),
+                ui::cost(*c)
+            );
         }
     }
 
@@ -107,7 +126,7 @@ fn run_indexed(json: bool) -> Result<()> {
     if data.thinking_block_count > 0 {
         println!(
             "  Thinking blocks:    {}",
-            fmt_num(data.thinking_block_count as u64)
+            ui::fmt_count(data.thinking_block_count as u64)
         );
     }
     if let Some(avg) = data.avg_turn_duration_ms {
@@ -119,30 +138,33 @@ fn run_indexed(json: bool) -> Result<()> {
         }
     }
     if data.pr_count > 0 {
-        println!("  PRs linked:         {}", data.pr_count);
+        println!(
+            "  PRs linked:         {}",
+            ui::fmt_count(data.pr_count as u64)
+        );
     }
     if data.files_modified_count > 0 {
         println!(
             "  Files modified:     {}",
-            fmt_num(data.files_modified_count as u64)
+            ui::fmt_count(data.files_modified_count as u64)
         );
     }
 
     if let Some(r) = &data.most_recent {
         section("Most Recent Session");
-        println!("  Project:   {}", r.project.bright_blue());
+        println!("  Project:   {}", ui::project(&r.project));
         if let Some(dt) = DateTime::from_timestamp_millis(r.first_timestamp_ms) {
             println!("  Date:      {}", dt.format("%Y-%m-%d %H:%M UTC"));
         }
         let sid: String = r.session_id.chars().take(8).collect();
-        println!("  Session:   {}", sid.dimmed());
+        println!("  Session:   {}", ui::session_id(&sid));
         let model = r
             .model
             .as_deref()
             .map(|m| m.trim_start_matches("claude-").to_string())
             .unwrap_or_else(|| "-".to_string());
         println!("  Model:     {}", model);
-        println!("  Messages:  {}", r.message_count);
+        println!("  Messages:  {}", ui::fmt_count(r.message_count as u64));
     }
 
     println!();
@@ -248,20 +270,28 @@ fn run_from_files(json: bool) -> Result<()> {
     }
 
     section("Sessions");
-    println!("  Total:      {}", total_sessions.to_string().bold());
-    println!("  Today:      {}", sessions_today);
-    println!("  This week:  {}", sessions_this_week);
+    println!(
+        "  Total:      {}",
+        ui::emphasis(&ui::fmt_count(total_sessions as u64))
+    );
+    println!("  Today:      {}", ui::fmt_count(sessions_today as u64));
+    println!("  This week:  {}", ui::fmt_count(sessions_this_week as u64));
 
     section("Cost (estimated)");
-    println!("  All time:   ${:.4}", total_cost);
-    println!("  This week:  ${:.4}", week_cost);
+    println!("  All time:   {}", ui::cost(total_cost));
+    println!("  This week:  {}", ui::cost(week_cost));
 
     section("Top Projects");
     if top_projects.is_empty() {
         println!("  (none)");
     } else {
         for (i, (proj, count)) in top_projects.iter().enumerate() {
-            println!("  {}. {}  {} sessions", i + 1, proj.bright_blue(), count);
+            println!(
+                "  {}. {}  {} sessions",
+                i + 1,
+                ui::project(proj),
+                ui::fmt_count(*count as u64)
+            );
         }
     }
 
@@ -270,23 +300,28 @@ fn run_from_files(json: bool) -> Result<()> {
         println!("  (none)");
     } else {
         for (i, (tool, count)) in top_tools.iter().enumerate() {
-            println!("  {}. {}  {} calls", i + 1, tool.cyan(), fmt_num(*count));
+            println!(
+                "  {}. {}  {} calls",
+                i + 1,
+                ui::tool_name(tool),
+                ui::fmt_count(*count)
+            );
         }
     }
 
     if let Some(r) = &most_recent {
         section("Most Recent Session");
-        println!("  Project:   {}", r.project.bright_blue());
+        println!("  Project:   {}", ui::project(&r.project));
         println!("  Date:      {}", r.date.format("%Y-%m-%d %H:%M UTC"));
         let sid: String = r.session_id.chars().take(8).collect();
-        println!("  Session:   {}", sid.dimmed());
+        println!("  Session:   {}", ui::session_id(&sid));
         let model = r
             .model
             .as_deref()
             .map(|m| m.trim_start_matches("claude-").to_string())
             .unwrap_or_else(|| "-".to_string());
         println!("  Model:     {}", model);
-        println!("  Messages:  {}", r.message_count);
+        println!("  Messages:  {}", ui::fmt_count(r.message_count as u64));
     }
 
     println!();
@@ -294,16 +329,6 @@ fn run_from_files(json: bool) -> Result<()> {
 }
 
 fn section(title: &str) {
-    println!("\n{}", title.bold());
+    println!("\n{}", ui::section_title(title));
     println!("{}", "─".repeat(title.len()));
-}
-
-fn fmt_num(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
 }

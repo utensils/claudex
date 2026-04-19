@@ -69,6 +69,7 @@ commands::<name>::run  →  stdout (tables via comfy-table / colors via owo-colo
 - `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions`, `token_usage`, `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`.
 - `src/commands/*.rs` — one module per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`.
 - `tests/index_tests.rs` — integration tests against `IndexStore` using `tempfile`.
+- `tests/completions_tests.rs` — shell-completion generation tests (clap_complete).
 
 ### Key invariants
 

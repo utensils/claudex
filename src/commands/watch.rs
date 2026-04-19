@@ -5,8 +5,9 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use owo_colors::OwoColorize;
 use serde_json::Value;
+
+use crate::ui;
 
 pub fn run(raw: bool, follow: Option<&str>) -> Result<()> {
     let path = match follow {
@@ -16,26 +17,28 @@ pub fn run(raw: bool, follow: Option<&str>) -> Result<()> {
 
     eprintln!(
         "Watching {} (Ctrl-C to exit)",
-        path.display().to_string().dimmed()
+        ui::timestamp(&path.display().to_string())
     );
     if !path.exists() {
         eprintln!(
             "{}  {}",
-            "waiting for".dimmed(),
-            "claude --debug-file <path>".dimmed()
+            ui::timestamp("waiting for"),
+            ui::timestamp("claude --debug-file <path>"),
         );
     }
 
     let mut pos: u64 = file_len(&path);
-    let mut leftover = String::new();
+    // Accumulate raw bytes; split on '\n' at the byte level so multi-byte
+    // UTF-8 codepoints that straddle a read boundary stay intact.
+    let mut leftover: Vec<u8> = Vec::new();
 
     loop {
         let len = file_len(&path);
         if len < pos {
             eprintln!(
                 "\n{}  {}",
-                "─── new session".bright_yellow(),
-                path.display().to_string().dimmed()
+                ui::banner("─── new session"),
+                ui::timestamp(&path.display().to_string())
             );
             pos = 0;
             leftover.clear();
@@ -47,7 +50,8 @@ pub fn run(raw: bool, follow: Option<&str>) -> Result<()> {
             let mut buf = Vec::new();
             if f.read_to_end(&mut buf).is_ok() {
                 pos += buf.len() as u64;
-                for line in lines_from_chunk(&buf, &mut leftover, raw) {
+                leftover.extend_from_slice(&buf);
+                for line in lines_from_leftover(&mut leftover, raw) {
                     println!("{line}");
                 }
             }
@@ -67,39 +71,37 @@ fn file_len(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-fn lines_from_chunk(buf: &[u8], leftover: &mut String, raw: bool) -> Vec<String> {
-    let chunk = String::from_utf8_lossy(buf);
-    let combined = format!("{leftover}{chunk}");
-    let ends_with_newline = combined.ends_with('\n');
-    let mut parts: Vec<&str> = combined.split('\n').collect();
-
-    if ends_with_newline {
-        leftover.clear();
-        if parts.last() == Some(&"") {
-            parts.pop();
-        }
-    } else {
-        *leftover = parts.pop().unwrap_or("").to_string();
-    }
-
-    parts
-        .into_iter()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            if raw {
-                line.to_string()
-            } else {
-                format_line(line)
+/// Extract every complete (`\n`-terminated) line from `buf` and return them
+/// formatted for display. Any trailing partial line stays in `buf` for the
+/// next poll. Operates on raw bytes so multi-byte UTF-8 codepoints that
+/// straddle chunk boundaries survive intact.
+fn lines_from_leftover(buf: &mut Vec<u8>, raw: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for i in 0..buf.len() {
+        if buf[i] == b'\n' {
+            let line = String::from_utf8_lossy(&buf[start..i]);
+            if !line.trim().is_empty() {
+                out.push(if raw {
+                    line.into_owned()
+                } else {
+                    format_line(&line)
+                });
             }
-        })
-        .collect()
+            start = i + 1;
+        }
+    }
+    if start > 0 {
+        buf.drain(..start);
+    }
+    out
 }
 
 fn format_line(line: &str) -> String {
     if let Ok(v) = serde_json::from_str::<Value>(line) {
         format_json_line(&v, line)
     } else {
-        format_text_line(line)
+        ui::classify_text_line(line)
     }
 }
 
@@ -112,26 +114,25 @@ fn format_json_line(v: &Value, raw_line: &str) -> String {
 
     // Session JSONL record style (has a "type" field)
     if let Some(record_type) = v["type"].as_str() {
-        let type_colored = match record_type {
-            "user" => record_type.bright_green().bold().to_string(),
-            "assistant" => record_type.bright_blue().bold().to_string(),
-            "system" => {
-                let dur = v["durationMs"].as_u64().unwrap_or(0);
-                let suffix = if dur > 0 {
-                    format!(" {dur}ms")
-                } else {
-                    String::new()
-                };
-                return format!(
-                    "{} [{}]{}",
-                    ts_short.dimmed(),
-                    "system".dimmed(),
-                    suffix.dimmed()
-                );
-            }
-            _ => record_type.bright_yellow().to_string(),
-        };
-        return format!("{} [{}]", ts_short.dimmed(), type_colored);
+        if record_type == "system" {
+            let dur = v["durationMs"].as_u64().unwrap_or(0);
+            let suffix = if dur > 0 {
+                format!(" {dur}ms")
+            } else {
+                String::new()
+            };
+            return format!(
+                "{} [{}]{}",
+                ui::timestamp(ts_short),
+                ui::level_debug("system"),
+                ui::level_debug(&suffix)
+            );
+        }
+        return format!(
+            "{} [{}]",
+            ui::timestamp(ts_short),
+            ui::record_type(record_type)
+        );
     }
 
     // Structured log style (level + message)
@@ -145,39 +146,24 @@ fn format_json_line(v: &Value, raw_line: &str) -> String {
         .unwrap_or(raw_line);
 
     let (level_s, msg_s) = match level.to_lowercase().as_str() {
-        "error" | "fatal" | "critical" => (level.red().bold().to_string(), msg.red().to_string()),
-        "warn" | "warning" => (level.yellow().to_string(), msg.yellow().to_string()),
-        "debug" | "trace" => (level.dimmed().to_string(), msg.dimmed().to_string()),
+        "error" | "fatal" | "critical" => (ui::level_error(level), ui::level_error(msg)),
+        "warn" | "warning" => (ui::level_warn(level), ui::level_warn(msg)),
+        "debug" | "trace" => (ui::level_debug(level), ui::level_debug(msg)),
         _ => (level.to_string(), msg.to_string()),
     };
 
     if ts_short.is_empty() {
         format!("[{level_s}] {msg_s}")
     } else {
-        format!("{} [{}] {}", ts_short.dimmed(), level_s, msg_s)
-    }
-}
-
-fn format_text_line(line: &str) -> String {
-    let lower = line.to_lowercase();
-    if lower.contains("error") || lower.contains("fatal") {
-        line.red().to_string()
-    } else if lower.contains("warn") {
-        line.yellow().to_string()
-    } else if lower.contains("tool_call") || lower.contains("tool_use") {
-        line.cyan().to_string()
-    } else if lower.contains("debug") || lower.contains("trace") {
-        line.dimmed().to_string()
-    } else {
-        line.to_string()
+        format!("{} [{}] {}", ui::timestamp(ts_short), level_s, msg_s)
     }
 }
 
 fn shorten_ts(ts: &str) -> &str {
     // Extract HH:MM:SS from "YYYY-MM-DDTHH:MM:SS..." or "YYYY-MM-DD HH:MM:SS..."
-    if ts.len() >= 19 {
+    if ts.len() >= 19 && ts.is_char_boundary(11) && ts.is_char_boundary(19) {
         &ts[11..19]
-    } else if ts.len() >= 8 {
+    } else if ts.len() >= 8 && ts.is_char_boundary(8) {
         &ts[..8]
     } else {
         ts
@@ -220,16 +206,6 @@ mod tests {
         assert_eq!(shorten_ts("12:34:56"), "12:34:56");
         assert_eq!(shorten_ts(""), "");
         assert_eq!(shorten_ts("abc"), "abc");
-    }
-
-    #[test]
-    fn format_text_line_classifies_keywords() {
-        assert!(strip_ansi(&format_text_line("ERROR: boom")).contains("ERROR"));
-        assert_ne!(format_text_line("ERROR: boom"), "ERROR: boom");
-        assert_ne!(format_text_line("warn me"), "warn me");
-        assert_ne!(format_text_line("tool_use: Read"), "tool_use: Read");
-        assert_ne!(format_text_line("[DEBUG] x"), "[DEBUG] x");
-        assert_eq!(format_text_line("plain text"), "plain text");
     }
 
     #[test]
@@ -288,48 +264,63 @@ mod tests {
     }
 
     #[test]
-    fn format_line_falls_back_to_text_for_non_json() {
+    fn format_line_falls_back_to_classify_for_non_json() {
         assert_eq!(
             strip_ansi(&format_line("plain log line")),
-            strip_ansi(&format_text_line("plain log line")),
+            strip_ansi(&ui::classify_text_line("plain log line")),
         );
     }
 
     #[test]
-    fn lines_from_chunk_splits_complete_lines() {
-        let mut leftover = String::new();
-        let lines = lines_from_chunk(b"a\nb\nc\n", &mut leftover, true);
+    fn lines_from_leftover_splits_complete_lines() {
+        let mut buf = b"a\nb\nc\n".to_vec();
+        let lines = lines_from_leftover(&mut buf, true);
         assert_eq!(lines, vec!["a", "b", "c"]);
-        assert_eq!(leftover, "");
+        assert!(buf.is_empty());
     }
 
     #[test]
-    fn lines_from_chunk_buffers_partial_line() {
-        let mut leftover = String::new();
-        let first = lines_from_chunk(b"hello wor", &mut leftover, true);
+    fn lines_from_leftover_buffers_partial_line() {
+        let mut buf = b"hello wor".to_vec();
+        let first = lines_from_leftover(&mut buf, true);
         assert!(first.is_empty());
-        assert_eq!(leftover, "hello wor");
+        assert_eq!(buf, b"hello wor");
 
-        let second = lines_from_chunk(b"ld\nnext\n", &mut leftover, true);
+        buf.extend_from_slice(b"ld\nnext\n");
+        let second = lines_from_leftover(&mut buf, true);
         assert_eq!(second, vec!["hello world", "next"]);
-        assert_eq!(leftover, "");
+        assert!(buf.is_empty());
     }
 
     #[test]
-    fn lines_from_chunk_skips_blank_lines() {
-        let mut leftover = String::new();
-        let lines = lines_from_chunk(b"a\n\n   \nb\n", &mut leftover, true);
+    fn lines_from_leftover_preserves_utf8_across_chunks() {
+        // "é" is 0xC3 0xA9. If the reader hands us the first byte alone, we
+        // must not insert a replacement character — the codepoint needs to
+        // reassemble after the next chunk arrives.
+        let mut buf = vec![b'a', 0xC3];
+        let first = lines_from_leftover(&mut buf, true);
+        assert!(first.is_empty());
+        buf.push(0xA9);
+        buf.push(b'\n');
+        let second = lines_from_leftover(&mut buf, true);
+        assert_eq!(second, vec!["aé"]);
+    }
+
+    #[test]
+    fn lines_from_leftover_skips_blank_lines() {
+        let mut buf = b"a\n\n   \nb\n".to_vec();
+        let lines = lines_from_leftover(&mut buf, true);
         assert_eq!(lines, vec!["a", "b"]);
     }
 
     #[test]
-    fn lines_from_chunk_raw_vs_formatted() {
+    fn lines_from_leftover_raw_vs_formatted() {
         let json = br#"{"level":"error","message":"boom"}
 "#;
-        let mut lo1 = String::new();
-        let raw = lines_from_chunk(json, &mut lo1, true);
-        let mut lo2 = String::new();
-        let formatted = lines_from_chunk(json, &mut lo2, false);
+        let mut buf1 = json.to_vec();
+        let raw = lines_from_leftover(&mut buf1, true);
+        let mut buf2 = json.to_vec();
+        let formatted = lines_from_leftover(&mut buf2, false);
 
         assert_eq!(raw.len(), 1);
         assert_eq!(formatted.len(), 1);
@@ -343,17 +334,19 @@ mod tests {
     }
 
     #[test]
-    fn lines_from_chunk_handles_trailing_newline_correctly() {
-        let mut leftover = String::new();
-        lines_from_chunk(b"a\n", &mut leftover, true);
-        assert_eq!(leftover, "");
+    fn lines_from_leftover_trailing_newline() {
+        let mut buf = b"a\n".to_vec();
+        lines_from_leftover(&mut buf, true);
+        assert!(buf.is_empty());
 
-        lines_from_chunk(b"b", &mut leftover, true);
-        assert_eq!(leftover, "b");
+        buf.extend_from_slice(b"b");
+        lines_from_leftover(&mut buf, true);
+        assert_eq!(buf, b"b");
 
-        let lines = lines_from_chunk(b"\n", &mut leftover, true);
+        buf.extend_from_slice(b"\n");
+        let lines = lines_from_leftover(&mut buf, true);
         assert_eq!(lines, vec!["b"]);
-        assert_eq!(leftover, "");
+        assert!(buf.is_empty());
     }
 
     #[test]
@@ -374,9 +367,6 @@ mod tests {
     #[test]
     fn default_debug_log_creates_dir_and_returns_path() {
         let tmp = tempfile::TempDir::new().unwrap();
-        // SAFETY: tests in this module run sequentially via --test-threads=1
-        // below when needed, but this test is self-contained — it sets HOME,
-        // exercises default_debug_log, then drops the guard.
         let _guard = HomeGuard::set(tmp.path());
         let path = default_debug_log().unwrap();
         assert_eq!(path, tmp.path().join(".claudex/debug/latest.log"));

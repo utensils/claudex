@@ -14,6 +14,12 @@ impl SessionStore {
         })
     }
 
+    /// Construct a store rooted at an explicit `projects` directory. Used by
+    /// integration tests so they don't have to mutate `$HOME`.
+    pub fn at(base_dir: PathBuf) -> Self {
+        Self { base_dir }
+    }
+
     pub fn project_dirs(&self) -> Result<Vec<(String, PathBuf)>> {
         if !self.base_dir.exists() {
             return Ok(Vec::new());

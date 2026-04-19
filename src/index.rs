@@ -9,6 +9,7 @@ use rusqlite::{Connection, params};
 use crate::parser::stream_records;
 use crate::store::{SessionStore, canonical_project_path, decode_project_name};
 use crate::types::{ModelPricing, TokenUsage};
+use crate::ui;
 
 const STALE_SECS: u64 = 300;
 const SCHEMA_VERSION: i64 = 2;
@@ -173,7 +174,16 @@ struct ParseEntry {
 impl IndexStore {
     pub fn open() -> Result<Self> {
         let dir = crate::claudex_dir()?;
-        let conn = Connection::open(dir.join("index.db"))?;
+        Self::open_at(&dir.join("index.db"))
+    }
+
+    /// Open (or create) an index at an explicit path. Used by integration
+    /// tests so they don't have to mutate `$HOME`.
+    pub fn open_at(db_path: &Path) -> Result<Self> {
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let store = Self { conn };
         store.create_schema()?;
@@ -322,7 +332,8 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Check staleness and sync if needed. Prints "Building index..." on first run.
+    /// Check staleness and sync if needed. Shows a spinner on stderr while
+    /// syncing (TTY-gated) so the user doesn't think the command has hung.
     pub fn ensure_fresh(&mut self, store: &SessionStore) -> Result<()> {
         let last_sync: Option<u64> = self
             .conn
@@ -338,13 +349,17 @@ impl IndexStore {
             if now_unix_secs().saturating_sub(ls) < STALE_SECS {
                 return Ok(());
             }
-        } else {
-            let count = store.all_session_files(None).map(|f| f.len()).unwrap_or(0);
-            eprintln!("Building index ({count} files)...");
         }
 
-        self.sync(store)?;
-        Ok(())
+        let message = if last_sync.is_none() {
+            "Building index..."
+        } else {
+            "Syncing index..."
+        };
+        let spinner = ui::Spinner::start(message);
+        let result = self.sync(store);
+        spinner.finish();
+        result.map(|_| ())
     }
 
     /// Force a full rebuild regardless of staleness.

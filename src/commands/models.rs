@@ -1,9 +1,9 @@
 use anyhow::Result;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::store::SessionStore;
 use crate::types::ModelPricing;
+use crate::ui;
 
 pub fn run(project: Option<&str>, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -35,9 +35,15 @@ pub fn run(project: Option<&str>, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Model", "Sessions", "Input", "Output", "Cost (USD)"]);
+    let mut table = ui::table();
+    table.set_header(ui::header([
+        "Model",
+        "Sessions",
+        "Input",
+        "Output",
+        "Cost (USD)",
+    ]));
+    ui::right_align(&mut table, &[1, 2, 3, 4]);
     let mut total_sessions = 0i64;
     let mut total_cost = 0.0f64;
     for r in &rows {
@@ -48,32 +54,22 @@ pub fn run(project: Option<&str>, json: bool) -> Result<()> {
             format!("{} ({})", family, r.model.trim_start_matches("claude-"))
         };
         table.add_row([
-            display,
-            r.session_count.to_string(),
-            fmt_tokens(r.input_tokens as u64),
-            fmt_tokens(r.output_tokens as u64),
-            format!("${:.4}", r.cost_usd),
+            ui::cell_model(&display),
+            ui::cell_count(r.session_count as u64),
+            ui::cell_count(r.input_tokens as u64),
+            ui::cell_count(r.output_tokens as u64),
+            ui::cell_cost(r.cost_usd),
         ]);
         total_sessions += r.session_count;
         total_cost += r.cost_usd;
     }
-    table.add_row([
+    table.add_row(ui::total_row([
         "TOTAL".to_string(),
-        total_sessions.to_string(),
+        ui::fmt_count(total_sessions as u64),
         String::new(),
         String::new(),
-        format!("${:.4}", total_cost),
-    ]);
+        ui::fmt_cost(total_cost),
+    ]));
     println!("{table}");
     Ok(())
-}
-
-fn fmt_tokens(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
 }

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
-use owo_colors::OwoColorize;
 
 use crate::index::IndexStore;
 use crate::parser::stream_records;
 use crate::store::{SessionStore, decode_project_name, short_name};
+use crate::ui;
 
 pub fn run(
     query: &str,
@@ -51,10 +51,10 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize) -> Result<()> {
 
         println!(
             "{} {} [{}] {}",
-            project_display.bright_blue().bold(),
-            sid.dimmed(),
-            date_str.dimmed(),
-            hit.message_type.bright_yellow(),
+            ui::project_headline(&project_display),
+            ui::session_id(&sid),
+            ui::timestamp(&date_str),
+            ui::role(&hit.message_type),
         );
         for line in hit.content.lines() {
             if line.to_lowercase().contains(&query.to_lowercase()) {
@@ -150,10 +150,10 @@ fn run_from_files(
 
             println!(
                 "{} {} [{}] {}",
-                project_display.bright_blue().bold(),
-                sid.dimmed(),
-                date_str.dimmed(),
-                role.bright_yellow(),
+                ui::project_headline(&project_display),
+                ui::session_id(&sid),
+                ui::timestamp(&date_str),
+                ui::role(role),
             );
 
             for line in text.lines() {
@@ -225,7 +225,7 @@ fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {
 
         result.push_str(&display[last..pos]);
         let matched = &display[pos..end];
-        result.push_str(&matched.bright_red().bold().to_string());
+        result.push_str(&ui::match_highlight(matched));
         last = end;
         search_from = end;
     }

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::store::SessionStore;
+use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -30,11 +30,14 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["File Path", "Sessions"]);
+    let mut table = ui::table();
+    table.set_header(ui::header(["File Path", "Sessions"]));
+    ui::right_align(&mut table, &[1]);
     for r in &rows {
-        table.add_row([r.file_path.as_str(), &r.modification_count.to_string()]);
+        table.add_row([
+            ui::cell_project(&r.file_path),
+            ui::cell_count(r.modification_count as u64),
+        ]);
     }
     println!("{table}");
     Ok(())
