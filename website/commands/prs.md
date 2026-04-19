@@ -32,30 +32,33 @@ claudex prs --json | jq 'group_by(.project) | map({project: .[0].project, count:
 
 ## Columns
 
-| Column  | Source                          |
-| ------- | ------------------------------- |
-| Project | Decoded project name.           |
-| Session | 8-character session ID prefix.  |
-| Date    | First timestamp of the session. |
-| PR      | PR number.                      |
-| Repo    | `owner/repo`.                   |
-| URL     | Full PR URL.                    |
+| Column    | Source                            |
+| --------- | --------------------------------- |
+| Project   | Decoded project name.             |
+| Session   | 8-character session ID prefix.    |
+| Timestamp | When the PR reference was logged. |
+| PR        | PR number.                        |
+| Repo      | `owner/repo`.                     |
+| URL       | Full PR URL.                      |
 
 ## JSON shape
 
 ```json
 [
   {
-    "project": "claudex",
-    "session_id": "e1a2f4...",
-    "first_timestamp": 1744000000000,
-    "date": "2026-04-18T14:22:13+00:00",
-    "pr_number": 11,
+    "project": "/Users/you/projects/claudex",
+    "session_id": "7671fcc3-0a7d-49bf-9996-e6c98129f005",
+    "timestamp": "2026-04-19T02:58:27.597Z",
+    "pr_number": 13,
     "pr_repository": "utensils/claudex",
-    "pr_url": "https://github.com/utensils/claudex/pull/11"
+    "pr_url": "https://github.com/utensils/claudex/pull/13"
   }
 ]
 ```
+
+Note: `timestamp` is the moment the PR URL appeared in the conversation —
+not the session's first message. Format is ISO-8601 with millisecond
+precision.
 
 ## Notes
 

@@ -24,8 +24,11 @@ claudex models
 # One project
 claudex models --project claudex
 
-# Most-used Opus variant across everything
-claudex models --json | jq '.[] | select(.model | test("opus"; "i"))'
+# All Opus rows (any variant)
+claudex models --json | jq '.[] | select(.model_family == "Opus")'
+
+# Top model by cost
+claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 ```
 
 ## Columns
@@ -33,13 +36,10 @@ claudex models --json | jq '.[] | select(.model | test("opus"; "i"))'
 | Column     | Source                                                                         |
 | ---------- | ------------------------------------------------------------------------------ |
 | Model      | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
-| Tier       | Opus / Sonnet / Haiku (derived from the name).                                 |
+| Family     | Opus / Sonnet / Haiku (derived from the name).                                 |
 | Sessions   | Distinct sessions that used the model.                                         |
-| Messages   | Assistant messages attributed to the model.                                    |
 | Input      | Total input tokens.                                                            |
 | Output     | Total output tokens.                                                           |
-| Cache W    | Cache-creation tokens.                                                         |
-| Cache R    | Cache-read tokens.                                                             |
 | Cost (USD) | Model-specific cost.                                                           |
 
 ## JSON shape
@@ -47,23 +47,22 @@ claudex models --json | jq '.[] | select(.model | test("opus"; "i"))'
 ```json
 [
   {
-    "model": "claude-opus-4-7",
-    "tier": "Opus",
-    "sessions": 12,
-    "messages": 421,
-    "input_tokens": 88000,
-    "output_tokens": 212000,
-    "cache_creation_tokens": 120000,
-    "cache_read_tokens": 8_400_000,
-    "cost_usd": 210.44
+    "model": "claude-opus-4-6",
+    "model_family": "Opus",
+    "session_count": 467,
+    "input_tokens": 1050304,
+    "output_tokens": 21225014,
+    "cost_usd": 30051.131094
   }
 ]
 ```
 
 ## Notes
 
-- **Tier detection.** The tier is derived from a substring match on the model
-  name — any model tag containing `opus`, `haiku`, or (by default) otherwise
-  is treated as Sonnet-class. See [Pricing model](/reference/pricing).
-- **Mixed-model sessions** show up under multiple rows; the `sessions` column
-  counts each model-session pair distinctly.
+- **Family detection.** `model_family` is a substring match on the model tag:
+  anything containing `opus` is `Opus`, `haiku` is `Haiku`, anything else is
+  `Sonnet`. See [Pricing model](/reference/pricing).
+- **Mixed-model sessions.** A session that switched models appears under
+  every model it used; `session_count` counts each model-session pair once.
+- **Cache tokens.** Not broken out here — see [`cost`](/commands/cost) or
+  [`summary`](/commands/summary) for cache-read / cache-creation detail.

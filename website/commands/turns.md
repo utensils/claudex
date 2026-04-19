@@ -27,7 +27,7 @@ claudex turns --limit 10
 claudex turns --project claudex
 
 # p95 as a single number
-claudex turns --project claudex --json | jq '.[0].p95_ms'
+claudex turns --project claudex --json | jq '.[0].p95_duration_ms'
 ```
 
 ## Columns
@@ -46,12 +46,12 @@ claudex turns --project claudex --json | jq '.[0].p95_ms'
 ```json
 [
   {
-    "project": "claudex",
-    "turns": 1420,
-    "avg_ms": 4132,
-    "p50_ms": 2811,
-    "p95_ms": 17420,
-    "max_ms": 98233
+    "project": "/Users/you/projects/claudex",
+    "turn_count": 1420,
+    "avg_duration_ms": 4132.0,
+    "p50_duration_ms": 2811.0,
+    "p95_duration_ms": 17420.0,
+    "max_duration_ms": 98233
   }
 ]
 ```

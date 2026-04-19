@@ -34,42 +34,65 @@ claudex cost --json --limit 1000 | jq '[.[].cost_usd] | add'
 
 ## Columns (aggregated)
 
-| Column     | Source                      |
-| ---------- | --------------------------- |
-| Project    | Decoded project name.       |
-| Sessions   | Number of sessions counted. |
-| Input      | Total input tokens.         |
-| Output     | Total output tokens.        |
-| Cache W    | Cache-creation tokens.      |
-| Cache R    | Cache-read tokens.          |
-| Cost (USD) | Sum of per-message costs.   |
+| Column     | Source                                   |
+| ---------- | ---------------------------------------- |
+| Project    | Decoded project name.                    |
+| Sessions   | Number of sessions counted.              |
+| Input      | Total input tokens.                      |
+| Output     | Total output tokens.                     |
+| Cache Read | Cache-read tokens.                       |
+| Model(s)   | Model families seen (Opus/Sonnet/Haiku). |
+| Cost (USD) | Sum of per-message costs.                |
 
 ## Columns (per-session)
 
-| Column     | Source                             |
-| ---------- | ---------------------------------- |
-| Project    | Decoded project name.              |
-| Session    | 8-character session ID prefix.     |
-| Date       | First timestamp.                   |
-| Model      | Model tag (Opus / Sonnet / Haiku). |
-| Input      | Input tokens for the session.      |
-| Output     | Output tokens for the session.     |
-| Cost (USD) | Cost for the session.              |
+| Column     | Source                          |
+| ---------- | ------------------------------- |
+| Project    | Decoded project name.           |
+| Session    | 8-character session ID prefix.  |
+| Date       | First timestamp.                |
+| Model      | Full model tag for the session. |
+| Input      | Input tokens for the session.   |
+| Output     | Output tokens for the session.  |
+| Cost (USD) | Cost for the session.           |
 
 ## JSON shape
+
+### Aggregated (default)
 
 ```json
 [
   {
-    "project": "claudex",
-    "session_id": "e1a2f4...",
-    "date": "2026-04-18T14:22:13+00:00",
-    "model": "claude-sonnet-4-6",
-    "input_tokens": 4120,
-    "output_tokens": 18330,
-    "cache_creation_tokens": 2048,
-    "cache_read_tokens": 94210,
-    "cost_usd": 0.441
+    "project": "/Users/you/projects/claudex",
+    "sessions": 123,
+    "input_tokens": 326297,
+    "output_tokens": 6679149,
+    "cache_creation_tokens": 80583078,
+    "cache_read_tokens": 7157509259,
+    "models": ["Opus", "Sonnet"],
+    "cost_usd": 12735.6563118
+  }
+]
+```
+
+Note: `models` is an **array of model-family names** (Opus / Sonnet / Haiku)
+for any model that contributed to the project's cost. Sorted by `cost_usd`
+descending.
+
+### Per-session (`--per-session`)
+
+```json
+[
+  {
+    "project": "/Users/you/projects/claudex",
+    "session_id": "f69d4985-f914-4968-81c0-009ea004fbc5",
+    "date": "2026-04-01T16:36:41.451+00:00",
+    "model": "claude-opus-4-6",
+    "input_tokens": 34960,
+    "output_tokens": 483151,
+    "cache_creation_tokens": 4027298,
+    "cache_read_tokens": 893758965,
+    "cost_usd": 1452.91101
   }
 ]
 ```

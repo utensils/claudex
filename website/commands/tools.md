@@ -34,43 +34,57 @@ claudex tools --project claudex --per-session --limit 50
 
 ## Columns (aggregated)
 
-| Column   | Source                                     |
-| -------- | ------------------------------------------ |
-| Tool     | Tool name as reported by Claude Code.      |
-| Calls    | Total invocations across matched sessions. |
-| Sessions | Distinct sessions that used the tool.      |
+| Column | Source                                     |
+| ------ | ------------------------------------------ |
+| Tool   | Tool name as reported by Claude Code.      |
+| Count  | Total invocations across matched sessions. |
 
 ## Columns (per-session)
 
-| Column  | Source                         |
-| ------- | ------------------------------ |
-| Project | Decoded project name.          |
-| Session | 8-character session ID prefix. |
-| Tool    | Tool name.                     |
-| Calls   | Invocations in that session.   |
+The per-session table lists each session with a `tool=count` cell for every
+tool the session touched.
+
+| Column  | Source                          |
+| ------- | ------------------------------- |
+| Project | Decoded project name.           |
+| Session | 8-character session ID prefix.  |
+| Date    | First timestamp of the session. |
+| Tools   | Tool invocations as a map.      |
 
 ## JSON shape
 
-Aggregated:
+### Aggregated (default)
 
 ```json
 [
-  { "tool": "Edit", "calls": 1240, "sessions": 92 },
-  { "tool": "Bash", "calls": 988, "sessions": 110 }
+  { "tool": "Bash", "count": 25963 },
+  { "tool": "Read", "count": 12870 }
 ]
 ```
 
-Per-session:
+### Per-session (`--per-session`)
 
 ```json
 [
   {
-    "project": "claudex",
-    "session_id": "e1a2f4...",
-    "tool": "Edit",
-    "calls": 14
+    "project": "/Users/you/projects/claudex",
+    "session_id": "0272bcdb-aea1-4d8c-b80c-809b07154b8a",
+    "date": "2026-04-19T02:50:53.545+00:00",
+    "tools": {
+      "Bash": 2,
+      "Edit": 14,
+      "Read": 7
+    }
   }
 ]
+```
+
+Note the per-session `tools` is a **nested object** (`tool_name → count`),
+not a flat array. To flatten in jq:
+
+```bash
+claudex tools --per-session --json \
+  | jq '.[] | {session: .session_id, tools: (.tools | to_entries | map({tool: .key, count: .value}))}'
 ```
 
 ## Notes
