@@ -60,12 +60,41 @@
             pkgs.libiconv
           ];
 
+          # Cargo.toml is the source of truth for package metadata; we re-use
+          # it here so version / description / license stay in sync with the
+          # Rust-side manifest and crates.io output.
+          cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
+          claudexMeta = {
+            description = cargoToml.package.description;
+            homepage = cargoToml.package.homepage;
+            license = lib.licenses.mit;
+            mainProgram = "claudex";
+            maintainers = [
+              {
+                name = "James Brink";
+                email = "brink.james@gmail.com";
+                github = "jamesbrink";
+                githubId = 28793;
+              }
+            ];
+            platforms = lib.platforms.unix;
+          };
+
           commonArgs = {
             inherit src;
-            pname = "claudex";
-            version = "0.1.0";
+            pname = cargoToml.package.name;
+            version = cargoToml.package.version;
             strictDeps = true;
             buildInputs = darwinInputs;
+            meta = claudexMeta;
+          }
+          // lib.optionalAttrs pkgs.stdenv.isDarwin {
+            # On Darwin the Xcode clang invoked by crane can't find Nix-provided
+            # libiconv without an explicit library path. Set both so the rustc
+            # link step and bindgen's clang find the library.
+            LIBRARY_PATH = "${pkgs.libiconv}/lib";
+            NIX_LDFLAGS = "-L${pkgs.libiconv}/lib";
           };
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -88,6 +117,7 @@
           apps.default = {
             type = "app";
             program = "${claudex}/bin/claudex";
+            meta = claudexMeta;
           };
 
           devshells.default = {
@@ -106,14 +136,16 @@
               # Docs site (VitePress, Tailwind v4, Vue 3) lives in ./website.
               # prettier is a devDependency installed by `bun install`.
               pkgs.bun
-            ] ++ darwinInputs;
+            ]
+            ++ darwinInputs;
 
             env = [
               {
                 name = "RUST_BACKTRACE";
                 value = "1";
               }
-            ] ++ lib.optionals pkgs.stdenv.isDarwin [
+            ]
+            ++ lib.optionals pkgs.stdenv.isDarwin [
               {
                 name = "LIBRARY_PATH";
                 value = "${pkgs.libiconv}/lib";
