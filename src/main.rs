@@ -2,6 +2,7 @@ use clap::builder::ValueHint;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use claudex::commands;
+use claudex::ui::{self, ColorChoice};
 
 #[derive(Parser)]
 #[command(
@@ -11,6 +12,10 @@ use claudex::commands;
     arg_required_else_help = true
 )]
 struct Cli {
+    /// Control terminal color output
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto, global = true)]
+    color: ColorChoice,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -208,6 +213,7 @@ Setup instructions:
 fn main() {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
+    ui::apply_color_choice(cli.color);
     let result = match cli.command {
         Commands::Sessions {
             project,

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::index::IndexStore;
 use crate::store::{SessionStore, short_name};
+use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -34,9 +34,9 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "PR #", "Repository", "URL"]);
+    let mut table = ui::table();
+    table.set_header(ui::header(["Project", "PR #", "Repository", "URL"]));
+    ui::right_align(&mut table, &[1]);
     for r in &rows {
         let sid: String = r
             .session_id
@@ -51,10 +51,10 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
             r.pr_repository.clone()
         };
         table.add_row([
-            short_name(&r.project),
-            format!("#{}", r.pr_number),
-            repo,
-            r.pr_url.clone(),
+            ui::cell_project(&short_name(&r.project)),
+            ui::cell_plain(format!("#{}", ui::fmt_count(r.pr_number as u64))),
+            ui::cell_dim(&repo),
+            ui::cell_plain(r.pr_url.clone()),
         ]);
     }
     println!("{table}");

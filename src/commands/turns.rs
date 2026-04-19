@@ -1,9 +1,9 @@
 use anyhow::Result;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 
 use crate::commands::sessions::format_duration;
 use crate::index::IndexStore;
 use crate::store::{SessionStore, short_name};
+use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
@@ -35,17 +35,17 @@ pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
-    table.set_header(["Project", "Turns", "Avg", "P50", "P95", "Max"]);
+    let mut table = ui::table();
+    table.set_header(ui::header(["Project", "Turns", "Avg", "P50", "P95", "Max"]));
+    ui::right_align(&mut table, &[1, 2, 3, 4, 5]);
     for r in &rows {
         table.add_row([
-            short_name(&r.project),
-            r.turn_count.to_string(),
-            format_duration(r.avg_duration_ms as u64),
-            format_duration(r.p50_duration_ms as u64),
-            format_duration(r.p95_duration_ms as u64),
-            format_duration(r.max_duration_ms as u64),
+            ui::cell_project(&short_name(&r.project)),
+            ui::cell_count(r.turn_count as u64),
+            ui::cell_plain(format_duration(r.avg_duration_ms as u64)),
+            ui::cell_plain(format_duration(r.p50_duration_ms as u64)),
+            ui::cell_plain(format_duration(r.p95_duration_ms as u64)),
+            ui::cell_plain(format_duration(r.max_duration_ms as u64)),
         ]);
     }
     println!("{table}");

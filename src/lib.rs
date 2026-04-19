@@ -7,6 +7,7 @@ pub mod index;
 pub mod parser;
 pub mod store;
 pub mod types;
+pub mod ui;
 
 /// Returns `~/.claudex`, creating it if missing.
 pub fn claudex_dir() -> Result<PathBuf> {
