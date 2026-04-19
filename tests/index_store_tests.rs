@@ -362,3 +362,30 @@ fn mixed_model_sessions_are_split_in_token_usage_and_aggregated_per_session() {
     assert!(models.iter().any(|m| m.model.contains("opus")));
     assert!(models.iter().any(|m| m.model.contains("sonnet")));
 }
+
+#[test]
+fn zero_token_model_rows_are_skipped() {
+    // Mixed-model session where one model records only zero-token assistant
+    // messages. The real model should still show up; the zero-token model
+    // must not pollute per-model aggregates.
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-zero",
+        "sess-zero",
+        &[
+            r#"{"type":"user","sessionId":"sess-zero","timestamp":"2026-04-10T10:00:00Z","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-zero","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"real"}]}}"#,
+            r#"{"type":"assistant","sessionId":"sess-zero","timestamp":"2026-04-10T10:02:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"empty"}]}}"#,
+        ],
+    );
+
+    let store = SessionStore::at(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&store).unwrap();
+
+    let models = idx.query_model_usage(None).unwrap();
+    assert_eq!(models.len(), 1);
+    assert!(models[0].model.contains("opus"));
+}

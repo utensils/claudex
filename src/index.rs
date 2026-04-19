@@ -624,6 +624,9 @@ impl IndexStore {
                 )?;
             } else if !entry.model_usage.is_empty() {
                 for (model, usage) in &entry.model_usage {
+                    if usage.usage.total_tokens() == 0 {
+                        continue;
+                    }
                     let model_opt = if model.is_empty() {
                         None
                     } else {
