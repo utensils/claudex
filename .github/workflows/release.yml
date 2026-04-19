@@ -50,6 +50,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Belt-and-braces: ensure the cross target's std is actually present.
+      # On cross-target macOS builds we've seen `rustup toolchain install
+      # --target` not materialize std (E0463: can't find crate for `core`),
+      # so force-add it explicitly.
+      - name: Add cross target
+        run: rustup target add ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
