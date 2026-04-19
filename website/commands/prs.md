@@ -60,6 +60,15 @@ Note: `timestamp` is the moment the PR URL appeared in the conversation —
 not the session's first message. Format is ISO-8601 with millisecond
 precision.
 
+## Deduplication
+
+Output is **one row per unique `pr_url`**. A single PR commonly gets
+referenced from many sessions (the original session that opened it, plus
+any later ones that mentioned the URL); rather than emit one row per
+session, `prs` picks the row with the most recent `timestamp` per URL and
+shows that. `session_id`, `project`, and `timestamp` describe the most
+recent mention.
+
 ## Notes
 
 - **Detection.** PR URLs are pulled out of message text during ingest

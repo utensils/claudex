@@ -224,21 +224,22 @@ claudex export <session-id-prefix> --format json \
 
 ## PRs
 
-### Unique PRs this month
+`claudex prs` already deduplicates by `pr_url` — you get one row per unique
+PR, with the most recent mention's timestamp.
 
-A single PR can be referenced by many sessions; dedupe by URL:
+### PRs this month
 
 ```bash
 claudex prs --json \
-  | jq -r --arg m "$(date +%Y-%m)" '
-      map(select(.timestamp | startswith($m)))
-      | unique_by(.pr_url)
-      | .[] | "#\(.pr_number)  \(.pr_repository)  \(.pr_url)"'
+  | jq -r --arg m "$(date +%Y-%m)" \
+       '.[] | select(.timestamp | startswith($m))
+              | "#\(.pr_number)  \(.pr_repository)  \(.pr_url)"'
 ```
 
 ```
-#12  utensils/claudex  https://github.com/utensils/claudex/pull/12
+#14  utensils/claudex  https://github.com/utensils/claudex/pull/14
 #13  utensils/claudex  https://github.com/utensils/claudex/pull/13
+#12  utensils/claudex  https://github.com/utensils/claudex/pull/12
 ```
 
 ### PR count per project
@@ -246,7 +247,7 @@ claudex prs --json \
 ```bash
 claudex prs --json \
   | jq 'group_by(.project)
-        | map({project: .[0].project, prs: (map(.pr_url) | unique | length)})
+        | map({project: .[0].project, prs: length})
         | sort_by(-.prs)'
 ```
 

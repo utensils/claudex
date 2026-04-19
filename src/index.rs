@@ -334,6 +334,11 @@ impl IndexStore {
 
     /// Check staleness and sync if needed. Shows a spinner on stderr while
     /// syncing (TTY-gated) so the user doesn't think the command has hung.
+    ///
+    /// Staleness is bypassed when the sessions root on disk differs from the
+    /// one stamped in `meta` by the last sync — otherwise a shared
+    /// `CLAUDEX_DIR` across different `$HOME` values could serve cached rows
+    /// from a previous home for up to `STALE_SECS` seconds.
     pub fn ensure_fresh(&mut self, store: &SessionStore) -> Result<()> {
         let last_sync: Option<u64> = self
             .conn
@@ -345,8 +350,20 @@ impl IndexStore {
             .ok()
             .and_then(|s| s.parse().ok());
 
+        let sessions_root = store.base_dir.to_string_lossy().into_owned();
+        let stored_root: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'sessions_root'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+        let root_changed = stored_root.as_deref() != Some(sessions_root.as_str());
+
         if let Some(ls) = last_sync
             && now_unix_secs().saturating_sub(ls) < STALE_SECS
+            && !root_changed
         {
             return Ok(());
         }
@@ -591,6 +608,13 @@ impl IndexStore {
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync', ?)",
             params![now_unix_secs().to_string()],
+        )?;
+        // Stamp the sessions root so `ensure_fresh` can invalidate the
+        // staleness shortcut when the root changes (different $HOME or a
+        // moved `.claude/projects/` directory sharing one `CLAUDEX_DIR`).
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('sessions_root', ?)",
+            params![store.base_dir.to_string_lossy().into_owned()],
         )?;
         tx.commit()?;
 
@@ -891,13 +915,20 @@ impl IndexStore {
     ) -> Result<Vec<PrLinkRow>> {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
+        // One row per unique PR URL. A single PR is often referenced from many
+        // sessions, which would otherwise produce a wall of duplicates. We
+        // surface the most recent mention (MAX(timestamp)) and the session
+        // that produced it — SQLite's bare-columns rule pairs the bare
+        // columns with the MAX() row.
         let mut stmt = self.conn.prepare(
             r#"SELECT s.project_name, s.session_id,
-                      p.pr_number, p.pr_url, p.pr_repository, p.timestamp
+                      p.pr_number, p.pr_url, p.pr_repository,
+                      MAX(p.timestamp) AS latest_ts
                FROM pr_links p
                JOIN sessions s ON s.id = p.session_rowid
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY p.timestamp DESC
+               GROUP BY p.pr_url
+               ORDER BY latest_ts DESC
                LIMIT ?"#,
         )?;
         let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {

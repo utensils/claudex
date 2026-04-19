@@ -510,6 +510,102 @@ fn completions_fish() {
 }
 
 #[test]
+fn prs_dedupes_by_pr_url() {
+    // Two sessions reference the same PR URL; `prs` should emit one row, not two.
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-alpha",
+        "sess-a",
+        &[
+            r#"{"type":"user","sessionId":"sess-a","timestamp":"2026-04-10T10:00:00Z","message":{"content":"open pr"}}"#,
+            r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/alpha/pull/42","prRepository":"org/alpha","timestamp":"2026-04-10T10:01:00Z","sessionId":"sess-a"}"#,
+        ],
+    );
+    write_session(
+        &projects,
+        "-Users-test-Projects-alpha",
+        "sess-b",
+        &[
+            r#"{"type":"user","sessionId":"sess-b","timestamp":"2026-04-10T11:00:00Z","message":{"content":"checked pr"}}"#,
+            r#"{"type":"pr-link","prNumber":42,"prUrl":"https://github.com/org/alpha/pull/42","prRepository":"org/alpha","timestamp":"2026-04-10T11:05:00Z","sessionId":"sess-b"}"#,
+        ],
+    );
+    let out = run(tmp.path(), &["prs", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1, "PRs should dedupe by pr_url; got: {arr:?}");
+    assert_eq!(arr[0]["pr_number"].as_i64(), Some(42));
+}
+
+#[test]
+fn files_text_column_header_is_modifications() {
+    // The count is edit events, not distinct sessions — the column header
+    // must reflect that so users don't misread it.
+    let home = fixture_home();
+    let out = run(home.path(), &["files", "--limit", "5"]);
+    assert!(out.status.success());
+    let s = stdout_of(&out);
+    assert!(
+        s.contains("Modifications"),
+        "expected header 'Modifications'; got:\n{s}"
+    );
+    assert!(
+        !s.contains("Sessions"),
+        "header should NOT be 'Sessions'; got:\n{s}"
+    );
+}
+
+#[test]
+fn claudex_dir_resyncs_when_sessions_root_changes() {
+    // Codex review P1: a CLAUDEX_DIR shared across different $HOME values must
+    // not serve stale rows from a previous HOME for the staleness window.
+    // home_a has 2 sessions; home_b has 1 — a stale-cache bug would make the
+    // second run return 2 instead of 1.
+    let state = tempfile::tempdir().expect("state tempdir");
+    let home_a = fixture_home();
+
+    let home_b = TempDir::new().unwrap();
+    let projects_b = home_b.path().join(".claude").join("projects");
+    write_session(
+        &projects_b,
+        "-Users-test-Projects-gamma",
+        "sess-g1",
+        &[
+            r#"{"type":"user","sessionId":"sess-g1","timestamp":"2026-04-15T09:00:00Z","message":{"content":"hi from home b"}}"#,
+        ],
+    );
+
+    let run_with = |home: &Path| -> Vec<Value> {
+        let out = Command::new(BIN)
+            .env("HOME", home)
+            .env("NO_COLOR", "1")
+            .env("CLAUDEX_DIR", state.path())
+            .args(["sessions", "--json"])
+            .output()
+            .expect("spawn claudex");
+        assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+        json_of(&out).as_array().unwrap().clone()
+    };
+
+    let rows_a = run_with(home_a.path());
+    assert_eq!(rows_a.len(), 2, "home_a should have two sessions");
+
+    let rows_b = run_with(home_b.path());
+    assert_eq!(
+        rows_b.len(),
+        1,
+        "sharing CLAUDEX_DIR across HOMEs must trigger a re-sync; got {rows_b:?}"
+    );
+    assert!(
+        rows_b[0]["project"].as_str().unwrap().contains("gamma"),
+        "expected gamma session, got: {:?}",
+        rows_b[0]
+    );
+}
+
+#[test]
 fn claudex_dir_env_override_creates_index_under_custom_path() {
     // Confirms that `CLAUDEX_DIR=...` redirects index.db away from
     // `~/.claudex/`. Documented in guide/installation.md and reference/environment.md.
