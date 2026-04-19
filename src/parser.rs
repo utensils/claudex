@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -8,6 +8,27 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::types::TokenUsage;
+
+#[derive(Debug, Clone, Default)]
+pub struct ModelSessionStats {
+    pub usage: TokenUsage,
+    pub assistant_message_count: u64,
+    pub inference_geos: BTreeSet<String>,
+    pub service_tiers: BTreeSet<String>,
+    pub speed_sum: f64,
+    pub speed_samples: u64,
+    pub iterations: u64,
+}
+
+impl ModelSessionStats {
+    pub fn avg_speed(&self) -> Option<f64> {
+        if self.speed_samples == 0 {
+            None
+        } else {
+            Some(self.speed_sum / self.speed_samples as f64)
+        }
+    }
+}
 
 /// Aggregated statistics extracted from a single session JSONL file.
 #[derive(Debug, Default)]
@@ -20,6 +41,7 @@ pub struct SessionStats {
     pub model: Option<String>,
     pub usage: TokenUsage,
     pub tool_names: Vec<String>,
+    pub model_usage: BTreeMap<String, ModelSessionStats>,
     // Extended metric fields
     pub turn_durations: Vec<(u64, String)>, // (duration_ms, timestamp)
     pub pr_links: Vec<(i64, String, String, String)>, // (pr_number, url, repo, timestamp)
@@ -32,6 +54,33 @@ pub struct SessionStats {
     pub speed: Option<f64>,
     pub service_tier: Option<String>,
     pub iterations: u64,
+}
+
+impl SessionStats {
+    pub fn cost_usd(&self) -> f64 {
+        if self.model_usage.is_empty() {
+            return self.usage.cost_for_model(self.model.as_deref());
+        }
+        self.model_usage
+            .iter()
+            .map(|(model, stats)| {
+                let model = if model.is_empty() {
+                    None
+                } else {
+                    Some(model.as_str())
+                };
+                stats.usage.cost_for_model(model)
+            })
+            .sum()
+    }
+
+    pub fn model_names(&self) -> Vec<String> {
+        self.model_usage
+            .keys()
+            .filter(|name| !name.is_empty())
+            .cloned()
+            .collect()
+    }
 }
 
 /// Parse a JSONL session file line-by-line, accumulating stats without loading
@@ -72,12 +121,16 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 }
 
                 let usage = &msg["usage"];
-                stats.usage.input_tokens += usage["input_tokens"].as_u64().unwrap_or(0);
-                stats.usage.output_tokens += usage["output_tokens"].as_u64().unwrap_or(0);
-                stats.usage.cache_creation_tokens +=
+                let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
+                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+                let cache_creation_tokens =
                     usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                stats.usage.cache_read_tokens +=
-                    usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                let cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+
+                stats.usage.input_tokens += input_tokens;
+                stats.usage.output_tokens += output_tokens;
+                stats.usage.cache_creation_tokens += cache_creation_tokens;
+                stats.usage.cache_read_tokens += cache_read_tokens;
 
                 if stats.inference_geo.is_none() {
                     stats.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
@@ -89,6 +142,29 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                     stats.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
                 }
                 stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
+
+                let model_key = msg["model"].as_str().unwrap_or("").to_string();
+                let model_stats = stats.model_usage.entry(model_key).or_default();
+                model_stats.usage.input_tokens += input_tokens;
+                model_stats.usage.output_tokens += output_tokens;
+                model_stats.usage.cache_creation_tokens += cache_creation_tokens;
+                model_stats.usage.cache_read_tokens += cache_read_tokens;
+                model_stats.assistant_message_count += 1;
+                if let Some(geo) = usage["inference_geo"].as_str()
+                    && !geo.is_empty()
+                {
+                    model_stats.inference_geos.insert(geo.to_string());
+                }
+                if let Some(tier) = usage["service_tier"].as_str()
+                    && !tier.is_empty()
+                {
+                    model_stats.service_tiers.insert(tier.to_string());
+                }
+                if let Some(speed) = usage["speed"].as_f64() {
+                    model_stats.speed_sum += speed;
+                    model_stats.speed_samples += 1;
+                }
+                model_stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
 
                 if let Some(stop) = msg["stop_reason"].as_str() {
                     *stats

@@ -5,6 +5,7 @@ use anyhow::Result;
 use chrono::DateTime;
 
 use crate::index::IndexStore;
+use crate::parser::SessionStats;
 use crate::parser::parse_session;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::{ModelPricing, TokenUsage};
@@ -39,11 +40,13 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                         .first_timestamp_ms
                         .and_then(DateTime::from_timestamp_millis)
                         .map(|d| d.to_rfc3339());
+                    let model = single_model(&r.models);
                     serde_json::json!({
                         "project": r.project,
                         "session_id": r.session_id,
                         "date": date,
-                        "model": r.model,
+                        "model": model,
+                        "models": r.models,
                         "input_tokens": r.input_tokens,
                         "output_tokens": r.output_tokens,
                         "cache_creation_tokens": r.cache_creation_tokens,
@@ -61,12 +64,14 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             "Project",
             "Session",
             "Date",
-            "Model",
+            "Model(s)",
             "Input",
             "Output",
+            "Cache Write",
+            "Cache Read",
             "Cost (USD)",
         ]));
-        ui::right_align(&mut table, &[4, 5, 6]);
+        ui::right_align(&mut table, &[4, 5, 6, 7, 8]);
         for r in &rows {
             let sid: String = r
                 .session_id
@@ -80,11 +85,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                 .and_then(DateTime::from_timestamp_millis)
                 .map(|d| d.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "-".to_string());
-            let model = r
-                .model
-                .as_deref()
-                .map(|m| ModelPricing::name(Some(m)).to_string())
-                .unwrap_or_else(|| "-".to_string());
+            let model = display_models(&r.models);
             table.add_row([
                 ui::cell_project(&short_name(&r.project)),
                 ui::cell_dim(&sid),
@@ -92,6 +93,8 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                 ui::cell_model(&model),
                 ui::cell_count(r.input_tokens as u64),
                 ui::cell_count(r.output_tokens as u64),
+                ui::cell_count(r.cache_creation_tokens as u64),
+                ui::cell_count(r.cache_read_tokens as u64),
                 ui::cell_cost(r.cost_usd),
             ]);
         }
@@ -112,6 +115,11 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                     "output_tokens": r.output_tokens,
                     "cache_creation_tokens": r.cache_creation_tokens,
                     "cache_read_tokens": r.cache_read_tokens,
+                    "avg_cost_per_session_usd": if r.session_count == 0 {
+                        0.0
+                    } else {
+                        r.cost_usd / r.session_count as f64
+                    },
                     "cost_usd": r.cost_usd,
                     "models": r.models,
                 })
@@ -127,15 +135,17 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         "Sessions",
         "Input",
         "Output",
+        "Cache Write",
         "Cache Read",
         "Model(s)",
         "Cost (USD)",
     ]));
-    ui::right_align(&mut table, &[1, 2, 3, 4, 6]);
+    ui::right_align(&mut table, &[1, 2, 3, 4, 5, 7]);
 
     let mut total_cost = 0.0f64;
     let mut total_in = 0i64;
     let mut total_out = 0i64;
+    let mut total_cc = 0i64;
     let mut total_cr = 0i64;
     let mut total_sessions = 0i64;
 
@@ -150,6 +160,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             ui::cell_count(r.session_count as u64),
             ui::cell_count(r.input_tokens as u64),
             ui::cell_count(r.output_tokens as u64),
+            ui::cell_count(r.cache_creation_tokens as u64),
             ui::cell_count(r.cache_read_tokens as u64),
             ui::cell_model(&model_str),
             ui::cell_cost(r.cost_usd),
@@ -157,6 +168,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         total_cost += r.cost_usd;
         total_in += r.input_tokens;
         total_out += r.output_tokens;
+        total_cc += r.cache_creation_tokens;
         total_cr += r.cache_read_tokens;
         total_sessions += r.session_count;
     }
@@ -165,6 +177,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         ui::fmt_count(total_sessions as u64),
         ui::fmt_count(total_in as u64),
         ui::fmt_count(total_out as u64),
+        ui::fmt_count(total_cc as u64),
         ui::fmt_count(total_cr as u64),
         String::new(),
         ui::fmt_cost(total_cost),
@@ -214,11 +227,10 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
                 total_cost: 0.0,
                 models: Vec::new(),
             });
-        entry.total_cost += stats.usage.cost_for_model(stats.model.as_deref());
+        entry.total_cost += stats.cost_usd();
         entry.usage.add(&stats.usage);
         entry.session_count += 1;
-        if let Some(m) = &stats.model {
-            let family = ModelPricing::name(Some(m)).to_string();
+        for family in session_model_families(&stats) {
             if !entry.models.contains(&family) {
                 entry.models.push(family);
             }
@@ -244,6 +256,11 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
                     "output_tokens": r.usage.output_tokens,
                     "cache_creation_tokens": r.usage.cache_creation_tokens,
                     "cache_read_tokens": r.usage.cache_read_tokens,
+                    "avg_cost_per_session_usd": if r.session_count == 0 {
+                        0.0
+                    } else {
+                        r.total_cost / r.session_count as f64
+                    },
                     "cost_usd": r.total_cost,
                     "models": r.models,
                 })
@@ -259,11 +276,12 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         "Sessions",
         "Input",
         "Output",
+        "Cache Write",
         "Cache Read",
         "Model(s)",
         "Cost (USD)",
     ]));
-    ui::right_align(&mut table, &[1, 2, 3, 4, 6]);
+    ui::right_align(&mut table, &[1, 2, 3, 4, 5, 7]);
 
     let mut total_cost = 0.0f64;
     let mut total_usage = TokenUsage::default();
@@ -280,6 +298,7 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
             ui::cell_count(r.session_count as u64),
             ui::cell_count(r.usage.input_tokens),
             ui::cell_count(r.usage.output_tokens),
+            ui::cell_count(r.usage.cache_creation_tokens),
             ui::cell_count(r.usage.cache_read_tokens),
             ui::cell_model(&model_str),
             ui::cell_cost(r.total_cost),
@@ -293,6 +312,7 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
         ui::fmt_count(total_sessions as u64),
         ui::fmt_count(total_usage.input_tokens),
         ui::fmt_count(total_usage.output_tokens),
+        ui::fmt_count(total_usage.cache_creation_tokens),
         ui::fmt_count(total_usage.cache_read_tokens),
         String::new(),
         ui::fmt_cost(total_cost),
@@ -312,7 +332,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         if stats.usage.total_tokens() == 0 {
             continue;
         }
-        let cost = stats.usage.cost_for_model(stats.model.as_deref());
+        let cost = stats.cost_usd();
         rows.push((
             display_project_name(&decode_project_name(project_raw)),
             stats,
@@ -330,7 +350,8 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
                     "project": project,
                     "session_id": stats.session_id,
                     "date": stats.first_timestamp.map(|d| d.to_rfc3339()),
-                    "model": stats.model,
+                    "model": single_model(&stats.model_names()),
+                    "models": stats.model_names(),
                     "input_tokens": stats.usage.input_tokens,
                     "output_tokens": stats.usage.output_tokens,
                     "cache_creation_tokens": stats.usage.cache_creation_tokens,
@@ -348,12 +369,14 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         "Project",
         "Session",
         "Date",
-        "Model",
+        "Model(s)",
         "Input",
         "Output",
+        "Cache Write",
+        "Cache Read",
         "Cost (USD)",
     ]));
-    ui::right_align(&mut table, &[4, 5, 6]);
+    ui::right_align(&mut table, &[4, 5, 6, 7, 8]);
 
     for (project, stats, cost) in &rows {
         let sid: String = stats
@@ -367,11 +390,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             .first_timestamp
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "-".to_string());
-        let model = stats
-            .model
-            .as_deref()
-            .map(|m| ModelPricing::name(Some(m)).to_string())
-            .unwrap_or_else(|| "-".to_string());
+        let model = display_models(&stats.model_names());
         table.add_row([
             ui::cell_project(&short_name(project)),
             ui::cell_dim(&sid),
@@ -379,9 +398,42 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             ui::cell_model(&model),
             ui::cell_count(stats.usage.input_tokens),
             ui::cell_count(stats.usage.output_tokens),
+            ui::cell_count(stats.usage.cache_creation_tokens),
+            ui::cell_count(stats.usage.cache_read_tokens),
             ui::cell_cost(*cost),
         ]);
     }
     println!("{table}");
     Ok(())
+}
+
+fn session_model_families(stats: &SessionStats) -> Vec<String> {
+    let mut families = Vec::new();
+    for model in stats.model_names() {
+        let family = ModelPricing::name(Some(&model)).to_string();
+        if !families.contains(&family) {
+            families.push(family);
+        }
+    }
+    if families.is_empty()
+        && let Some(model) = &stats.model
+    {
+        families.push(ModelPricing::name(Some(model)).to_string());
+    }
+    families
+}
+
+fn display_models(models: &[String]) -> String {
+    match models {
+        [] => "-".to_string(),
+        [single] => ModelPricing::name(Some(single)).to_string(),
+        _ => "Mixed".to_string(),
+    }
+}
+
+fn single_model(models: &[String]) -> Option<String> {
+    match models {
+        [single] => Some(single.clone()),
+        _ => None,
+    }
 }

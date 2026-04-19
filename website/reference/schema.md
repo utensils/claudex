@@ -1,6 +1,6 @@
 # Index schema
 
-The SQLite index at `~/.claudex/index.db`. **Schema version: 2.**
+The SQLite index at `~/.claudex/index.db`. **Schema version: 3.**
 
 ::: warning Not a stable surface
 Table and column names may change between releases. Use `claudex <cmd> --json`
@@ -34,7 +34,7 @@ One row per JSONL file.
 | `last_timestamp`  | INTEGER     | Unix ms.                                                       |
 | `duration_ms`     | INTEGER     | Last minus first.                                              |
 | `message_count`   | INTEGER     | User + assistant.                                              |
-| `model`           | TEXT        | Last-seen model tag.                                           |
+| `model`           | TEXT        | Sole model tag, or `mixed` when a session switched models.     |
 | `indexed_at`      | INTEGER     | Unix seconds.                                                  |
 
 Indexes: `idx_sessions_project`, `idx_sessions_timestamp`.
@@ -44,16 +44,17 @@ Indexes: `idx_sessions_project`, `idx_sessions_timestamp`.
 One row per `(session, model)` pair. A session that switched models has
 multiple rows.
 
-| Column                                                                        | Notes                                      |
-| ----------------------------------------------------------------------------- | ------------------------------------------ |
-| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).    |
-| `model`                                                                       | Model tag.                                 |
-| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                             |
-| `cost_usd`                                                                    | Pre-computed cost for this row.            |
-| `inference_geo`                                                               | Region, if reported.                       |
-| `speed`                                                                       | Tokens/sec, if reported.                   |
-| `service_tier`                                                                | `standard`, `priority`, etc.               |
-| `iterations`                                                                  | Count of messages contributing to the row. |
+| Column                                                                        | Notes                                       |
+| ----------------------------------------------------------------------------- | ------------------------------------------- |
+| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).     |
+| `model`                                                                       | Model tag.                                  |
+| `assistant_message_count`                                                     | Assistant messages contributing to the row. |
+| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                              |
+| `cost_usd`                                                                    | Pre-computed cost for this row.             |
+| `inference_geo`                                                               | Region, if reported.                        |
+| `speed`                                                                       | Tokens/sec, if reported.                    |
+| `service_tier`                                                                | `standard`, `priority`, etc.                |
+| `iterations`                                                                  | Count of messages contributing to the row.  |
 
 Index: `idx_token_usage_session`.
 

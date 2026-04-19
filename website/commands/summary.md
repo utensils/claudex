@@ -20,6 +20,7 @@ claudex summary [--json] [--no-index]
 - **Files** — total distinct files modified across all sessions.
 - **Top projects** — up to 5 by session count.
 - **Top tools** — up to 5 by call count (`Bash`, `Edit`, `Read`, etc).
+- **Top stop reasons** — up to 5 by assistant stop reason.
 - **Model distribution** — sessions and cost per model family.
 - **Most recent session** — project, session ID, timestamp, model, message
   count.
@@ -50,13 +51,18 @@ claudex summary --json | jq '.total_cost_usd'
   "sessions_this_week": 28,
   "total_cost_usd": 512.34,
   "cost_this_week_usd": 41.22,
-  "total_tokens": 93847123,
+  "total_input_tokens": 93847123,
+  "total_output_tokens": 18123456,
+  "total_cache_creation_tokens": 301122,
+  "total_cache_read_tokens": 5512201,
+  "total_tokens": 116784902,
   "thinking_block_count": 1289,
   "avg_turn_duration_ms": 4132,
   "pr_count": 14,
   "files_modified_count": 842,
   "top_projects": [{ "project": "claudex", "sessions": 41 }],
   "top_tools": [{ "tool": "Edit", "calls": 1240 }],
+  "top_stop_reasons": [{ "stop_reason": "end_turn", "count": 812 }],
   "model_distribution": [
     { "model": "claude-opus-4-7", "sessions": 12, "cost_usd": 210.44 }
   ],

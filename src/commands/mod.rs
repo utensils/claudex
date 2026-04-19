@@ -5,6 +5,7 @@ pub mod index;
 pub mod models;
 pub mod prs;
 pub mod search;
+pub mod session;
 pub mod sessions;
 pub mod summary;
 pub mod tools;

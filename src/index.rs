@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,13 +6,14 @@ use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
 use rusqlite::{Connection, params};
 
+use crate::parser::ModelSessionStats;
 use crate::parser::stream_records;
 use crate::store::{SessionStore, canonical_project_path, decode_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 fn now_unix_secs() -> u64 {
     SystemTime::now()
@@ -30,6 +31,7 @@ pub struct IndexStore {
 pub struct IndexedSession {
     pub project_name: String,
     pub session_id: Option<String>,
+    pub file_path: String,
     pub first_timestamp_ms: Option<i64>,
     pub message_count: i64,
     pub duration_ms: i64,
@@ -51,7 +53,7 @@ pub struct SessionCostRow {
     pub project: String,
     pub session_id: Option<String>,
     pub first_timestamp_ms: Option<i64>,
-    pub model: Option<String>,
+    pub models: Vec<String>,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_creation_tokens: i64,
@@ -74,9 +76,10 @@ pub struct SessionToolRow {
 pub struct SearchHit {
     pub project_name: String,
     pub session_id: Option<String>,
-    pub first_timestamp_ms: Option<i64>,
+    pub message_timestamp_ms: Option<i64>,
     pub message_type: String,
-    pub content: String,
+    pub snippet: String,
+    pub rank: f64,
 }
 
 pub struct SummaryData {
@@ -91,6 +94,7 @@ pub struct SummaryData {
     pub total_cache_read: i64,
     pub top_projects: Vec<(String, i64)>,
     pub top_tools: Vec<(String, i64)>,
+    pub top_stop_reasons: Vec<(String, i64)>,
     pub most_recent: Option<MostRecentSession>,
     // Extended metric summary
     pub thinking_block_count: i64,
@@ -129,6 +133,9 @@ pub struct PrLinkRow {
 pub struct FileModRow {
     pub file_path: String,
     pub modification_count: i64,
+    pub distinct_session_count: i64,
+    pub last_touched_timestamp_ms: Option<i64>,
+    pub top_project: Option<String>,
 }
 
 pub struct ModelUsageRow {
@@ -136,8 +143,82 @@ pub struct ModelUsageRow {
     pub session_count: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
     pub cost_usd: f64,
+    pub avg_cost_per_session_usd: f64,
+    pub avg_tokens_per_session: f64,
+    pub service_tiers: Vec<String>,
+    pub inference_geos: Vec<String>,
+    pub avg_speed: Option<f64>,
+    pub total_iterations: i64,
 }
+
+pub struct SessionModelUsageRow {
+    pub model: String,
+    pub assistant_message_count: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cost_usd: f64,
+    pub inference_geos: Vec<String>,
+    pub service_tiers: Vec<String>,
+    pub avg_speed: Option<f64>,
+    pub iterations: i64,
+}
+
+pub struct StopReasonRow {
+    pub stop_reason: String,
+    pub count: i64,
+}
+
+pub struct AttachmentRow {
+    pub filename: String,
+    pub mime_type: String,
+}
+
+pub struct PermissionChangeRow {
+    pub mode: String,
+    pub timestamp: String,
+}
+
+pub struct SessionDetail {
+    pub project: String,
+    pub file_path: String,
+    pub session_id: Option<String>,
+    pub first_timestamp_ms: Option<i64>,
+    pub last_timestamp_ms: Option<i64>,
+    pub duration_ms: i64,
+    pub message_count: i64,
+    pub model: Option<String>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cost_usd: f64,
+    pub thinking_block_count: i64,
+    pub files_modified: Vec<String>,
+    pub tools: Vec<ToolRow>,
+    pub pr_links: Vec<PrLinkRow>,
+    pub turn_stats: Option<TurnStatsRow>,
+    pub stop_reasons: Vec<StopReasonRow>,
+    pub attachments: Vec<AttachmentRow>,
+    pub permission_changes: Vec<PermissionChangeRow>,
+    pub model_usage: Vec<SessionModelUsageRow>,
+}
+
+type SessionRow = (
+    i64,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+    Option<String>,
+);
 
 // --- Internal parse types ---
 
@@ -155,6 +236,7 @@ struct ParseEntry {
     message_count: usize,
     model: Option<String>,
     usage: TokenUsage,
+    model_usage: BTreeMap<String, ModelSessionStats>,
     tool_names: Vec<String>,
     messages: Vec<MessageForFts>,
     // Extended metric fields
@@ -251,6 +333,7 @@ impl IndexStore {
             CREATE TABLE IF NOT EXISTS token_usage (
                 session_id            INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
                 model                 TEXT,
+                assistant_message_count INTEGER NOT NULL DEFAULT 0,
                 input_tokens          INTEGER NOT NULL DEFAULT 0,
                 output_tokens         INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
@@ -476,7 +559,7 @@ impl IndexStore {
 
             let first_ts = entry.first_timestamp.map(|d| d.timestamp_millis());
             let last_ts = entry.last_timestamp.map(|d| d.timestamp_millis());
-            let cost = entry.usage.cost_for_model(entry.model.as_deref());
+            let session_model = session_model_label(entry.model.as_deref(), &entry.model_usage);
 
             tx.execute(
                 r#"INSERT INTO sessions
@@ -493,33 +576,67 @@ impl IndexStore {
                     last_ts,
                     entry.duration_ms as i64,
                     entry.message_count as i64,
-                    entry.model,
+                    session_model,
                     now_secs,
                 ],
             )?;
 
             let row_id = tx.last_insert_rowid();
 
-            tx.execute(
-                r#"INSERT INTO token_usage
-                   (session_id, model, input_tokens, output_tokens,
-                    cache_creation_tokens, cache_read_tokens, cost_usd,
-                    inference_geo, speed, service_tier, iterations)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-                params![
-                    row_id,
-                    entry.model,
-                    entry.usage.input_tokens as i64,
-                    entry.usage.output_tokens as i64,
-                    entry.usage.cache_creation_tokens as i64,
-                    entry.usage.cache_read_tokens as i64,
-                    cost,
-                    entry.inference_geo,
-                    entry.speed,
-                    entry.service_tier,
-                    entry.iterations as i64,
-                ],
-            )?;
+            if entry.model_usage.is_empty() {
+                let cost = entry.usage.cost_for_model(entry.model.as_deref());
+                tx.execute(
+                    r#"INSERT INTO token_usage
+                       (session_id, model, assistant_message_count, input_tokens, output_tokens,
+                        cache_creation_tokens, cache_read_tokens, cost_usd,
+                        inference_geo, speed, service_tier, iterations)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                    params![
+                        row_id,
+                        entry.model,
+                        0i64,
+                        entry.usage.input_tokens as i64,
+                        entry.usage.output_tokens as i64,
+                        entry.usage.cache_creation_tokens as i64,
+                        entry.usage.cache_read_tokens as i64,
+                        cost,
+                        entry.inference_geo,
+                        entry.speed,
+                        entry.service_tier,
+                        entry.iterations as i64,
+                    ],
+                )?;
+            } else {
+                for (model, usage) in &entry.model_usage {
+                    let model_opt = if model.is_empty() {
+                        None
+                    } else {
+                        Some(model.as_str())
+                    };
+                    let cost = usage.usage.cost_for_model(model_opt);
+                    tx.execute(
+                        r#"INSERT INTO token_usage
+                           (session_id, model, assistant_message_count, input_tokens, output_tokens,
+                            cache_creation_tokens, cache_read_tokens, cost_usd,
+                            inference_geo, speed, service_tier, iterations)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                        params![
+                            row_id,
+                            model_opt,
+                            usage.assistant_message_count as i64,
+                            usage.usage.input_tokens as i64,
+                            usage.usage.output_tokens as i64,
+                            usage.usage.cache_creation_tokens as i64,
+                            usage.usage.cache_read_tokens as i64,
+                            cost,
+                            join_strings(&usage.inference_geos),
+                            usage.avg_speed(),
+                            join_strings(&usage.service_tiers),
+                            usage.iterations as i64,
+                        ],
+                    )?;
+                }
+            }
 
             let mut tool_counts: HashMap<String, i64> = HashMap::new();
             for name in &entry.tool_names {
@@ -626,27 +743,48 @@ impl IndexStore {
     pub fn query_sessions(
         &self,
         project_filter: Option<&str>,
+        file_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<IndexedSession>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
+        let project = project_filter.map(|f| format!("%{f}%"));
+        let file = file_filter.map(|f| format!("%{f}%"));
+        let project_pat = project.as_deref();
+        let file_pat = file.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT project_name, session_id, first_timestamp, message_count, duration_ms, model
-               FROM sessions
-               WHERE (? IS NULL OR project_name LIKE ? OR file_path LIKE ?)
-               ORDER BY first_timestamp DESC
+            r#"SELECT s.project_name, s.session_id, s.file_path, s.first_timestamp,
+                      s.message_count, s.duration_ms, s.model
+               FROM sessions s
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                 AND (? IS NULL OR EXISTS (
+                       SELECT 1
+                       FROM file_modifications fm
+                       WHERE fm.session_rowid = s.id
+                         AND fm.file_path LIKE ?
+                 ))
+               ORDER BY s.first_timestamp DESC
                LIMIT ?"#,
         )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
-            Ok(IndexedSession {
-                project_name: row.get(0)?,
-                session_id: row.get(1)?,
-                first_timestamp_ms: row.get(2)?,
-                message_count: row.get(3)?,
-                duration_ms: row.get(4)?,
-                model: row.get(5)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![
+                project_pat,
+                project_pat,
+                project_pat,
+                file_pat,
+                file_pat,
+                limit as i64
+            ],
+            |row| {
+                Ok(IndexedSession {
+                    project_name: row.get(0)?,
+                    session_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    first_timestamp_ms: row.get(3)?,
+                    message_count: row.get(4)?,
+                    duration_ms: row.get(5)?,
+                    model: row.get(6)?,
+                })
+            },
+        )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -715,13 +853,18 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT s.project_name, s.session_id, s.first_timestamp,
-                      t.model, t.input_tokens, t.output_tokens,
-                      t.cache_creation_tokens, t.cache_read_tokens, t.cost_usd
+                      GROUP_CONCAT(DISTINCT t.model),
+                      COALESCE(SUM(t.input_tokens), 0),
+                      COALESCE(SUM(t.output_tokens), 0),
+                      COALESCE(SUM(t.cache_creation_tokens), 0),
+                      COALESCE(SUM(t.cache_read_tokens), 0),
+                      COALESCE(SUM(t.cost_usd), 0)
                FROM sessions s
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY t.cost_usd DESC
+               GROUP BY s.id
+               ORDER BY SUM(t.cost_usd) DESC
                LIMIT ?"#,
         )?;
         let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
@@ -729,7 +872,7 @@ impl IndexStore {
                 project: row.get(0)?,
                 session_id: row.get(1)?,
                 first_timestamp_ms: row.get(2)?,
-                model: row.get(3)?,
+                models: split_csv(row.get::<_, Option<String>>(3)?.as_deref()),
                 input_tokens: row.get(4)?,
                 output_tokens: row.get(5)?,
                 cache_creation_tokens: row.get(6)?,
@@ -830,22 +973,24 @@ impl IndexStore {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, s.first_timestamp,
-                      f.message_type, f.content
+            r#"SELECT s.project_name, s.session_id, f.timestamp, f.message_type,
+                      snippet(messages_fts, 2, '[[', ']]', '...', 20),
+                      bm25(messages_fts)
                FROM messages_fts f
                JOIN sessions s ON s.id = f.session_id
                WHERE messages_fts MATCH ?
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY rank
+               ORDER BY bm25(messages_fts)
                LIMIT ?"#,
         )?;
         let rows = stmt.query_map(params![fts_query, fp, fp, fp, limit as i64], |row| {
             Ok(SearchHit {
                 project_name: row.get(0)?,
                 session_id: row.get(1)?,
-                first_timestamp_ms: row.get(2)?,
+                message_timestamp_ms: row.get(2)?,
                 message_type: row.get(3)?,
-                content: row.get(4)?,
+                snippet: row.get(4)?,
+                rank: row.get(5)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -948,25 +1093,54 @@ impl IndexStore {
     pub fn query_file_mods(
         &self,
         project_filter: Option<&str>,
+        path_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<FileModRow>> {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
+        let path = path_filter.map(|f| format!("%{f}%"));
+        let path_pat = path.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT fm.file_path, COUNT(*) AS cnt
-               FROM file_modifications fm
-               JOIN sessions s ON s.id = fm.session_rowid
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY fm.file_path
-               ORDER BY cnt DESC
+            r#"WITH filtered AS (
+                   SELECT fm.file_path, fm.session_rowid, s.project_name, s.last_timestamp
+                   FROM file_modifications fm
+                   JOIN sessions s ON s.id = fm.session_rowid
+                   WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                     AND (? IS NULL OR fm.file_path LIKE ?)
+               ),
+               ranked_projects AS (
+                   SELECT file_path, project_name, COUNT(*) AS project_events,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY file_path
+                              ORDER BY COUNT(*) DESC, project_name ASC
+                          ) AS rn
+                   FROM filtered
+                   GROUP BY file_path, project_name
+               )
+               SELECT f.file_path,
+                      COUNT(*) AS cnt,
+                      COUNT(DISTINCT f.session_rowid) AS distinct_sessions,
+                      MAX(f.last_timestamp) AS last_touched,
+                      rp.project_name
+               FROM filtered f
+               LEFT JOIN ranked_projects rp
+                 ON rp.file_path = f.file_path AND rp.rn = 1
+               GROUP BY f.file_path
+               ORDER BY cnt DESC, f.file_path ASC
                LIMIT ?"#,
         )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
-            Ok(FileModRow {
-                file_path: row.get(0)?,
-                modification_count: row.get(1)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![fp, fp, fp, path_pat, path_pat, limit as i64],
+            |row| {
+                Ok(FileModRow {
+                    file_path: row.get(0)?,
+                    modification_count: row.get(1)?,
+                    distinct_session_count: row.get(2)?,
+                    last_touched_timestamp_ms: row.get(3)?,
+                    top_project: row.get(4)?,
+                })
+            },
+        )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -976,10 +1150,16 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT t.model,
-                      COUNT(*) AS sessions,
+                      COUNT(DISTINCT t.session_id) AS sessions,
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
-                      COALESCE(SUM(t.cost_usd), 0)
+                      COALESCE(SUM(t.cache_creation_tokens), 0),
+                      COALESCE(SUM(t.cache_read_tokens), 0),
+                      COALESCE(SUM(t.cost_usd), 0),
+                      GROUP_CONCAT(DISTINCT t.service_tier),
+                      GROUP_CONCAT(DISTINCT t.inference_geo),
+                      AVG(t.speed),
+                      COALESCE(SUM(t.iterations), 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
@@ -987,16 +1167,292 @@ impl IndexStore {
                ORDER BY SUM(t.cost_usd) DESC"#,
         )?;
         let rows = stmt.query_map(params![fp, fp, fp], |row| {
+            let session_count = row.get::<_, i64>(1)?;
+            let input_tokens = row.get::<_, i64>(2)?;
+            let output_tokens = row.get::<_, i64>(3)?;
+            let cache_creation_tokens = row.get::<_, i64>(4)?;
+            let cache_read_tokens = row.get::<_, i64>(5)?;
+            let cost_usd = row.get::<_, f64>(6)?;
+            let total_tokens =
+                input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens;
             Ok(ModelUsageRow {
                 model: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                session_count: row.get(1)?,
-                input_tokens: row.get(2)?,
-                output_tokens: row.get(3)?,
-                cost_usd: row.get(4)?,
+                session_count,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                cost_usd,
+                avg_cost_per_session_usd: if session_count == 0 {
+                    0.0
+                } else {
+                    cost_usd / session_count as f64
+                },
+                avg_tokens_per_session: if session_count == 0 {
+                    0.0
+                } else {
+                    total_tokens as f64 / session_count as f64
+                },
+                service_tiers: split_csv(row.get::<_, Option<String>>(7)?.as_deref()),
+                inference_geos: split_csv(row.get::<_, Option<String>>(8)?.as_deref()),
+                avg_speed: row.get(9)?,
+                total_iterations: row.get(10)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn query_session_detail(&self, file_path: &str) -> Result<Option<SessionDetail>> {
+        let session_row: Option<SessionRow> = self
+            .conn
+            .query_row(
+                r#"SELECT id, project_name, file_path, session_id, first_timestamp,
+                          last_timestamp, duration_ms, message_count, model
+                   FROM sessions
+                   WHERE file_path = ?"#,
+                params![file_path],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ))
+                },
+            )
+            .ok();
+
+        let Some((
+            session_rowid,
+            project,
+            file_path,
+            session_id,
+            first_timestamp_ms,
+            last_timestamp_ms,
+            duration_ms,
+            message_count,
+            model,
+        )) = session_row
+        else {
+            return Ok(None);
+        };
+
+        let (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd): (
+            i64,
+            i64,
+            i64,
+            i64,
+            f64,
+        ) = self.conn.query_row(
+            r#"SELECT COALESCE(SUM(input_tokens), 0),
+                      COALESCE(SUM(output_tokens), 0),
+                      COALESCE(SUM(cache_creation_tokens), 0),
+                      COALESCE(SUM(cache_read_tokens), 0),
+                      COALESCE(SUM(cost_usd), 0)
+               FROM token_usage
+               WHERE session_id = ?"#,
+            params![session_rowid],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+
+        let thinking_block_count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(thinking_blocks), 0) FROM thinking_usage WHERE session_rowid = ?",
+                params![session_rowid],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let tools = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT tool_name, count
+                   FROM tool_calls
+                   WHERE session_id = ?
+                   ORDER BY count DESC, tool_name ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| {
+                Ok(ToolRow {
+                    tool_name: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let pr_links = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT ?, ?, pr_number, pr_url, pr_repository, COALESCE(timestamp, '')
+                   FROM pr_links
+                   WHERE session_rowid = ?
+                   ORDER BY timestamp DESC, pr_url ASC"#,
+            )?;
+            stmt.query_map(
+                params![project.clone(), session_id.clone(), session_rowid],
+                |row| {
+                    Ok(PrLinkRow {
+                        project: row.get(0)?,
+                        session_id: row.get(1)?,
+                        pr_number: row.get(2)?,
+                        pr_url: row.get(3)?,
+                        pr_repository: row.get(4)?,
+                        timestamp: row.get(5)?,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let files_modified = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT DISTINCT file_path
+                   FROM file_modifications
+                   WHERE session_rowid = ?
+                   ORDER BY file_path ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let turn_stats = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT duration_ms
+                   FROM turn_durations
+                   WHERE session_rowid = ?
+                   ORDER BY duration_ms ASC"#,
+            )?;
+            let durations = stmt
+                .query_map(params![session_rowid], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if durations.is_empty() {
+                None
+            } else {
+                let turn_count = durations.len() as i64;
+                let avg_duration_ms = durations.iter().sum::<i64>() as f64 / turn_count as f64;
+                Some(TurnStatsRow {
+                    project: project.clone(),
+                    turn_count,
+                    avg_duration_ms,
+                    p50_duration_ms: percentile_sorted(&durations, 50),
+                    p95_duration_ms: percentile_sorted(&durations, 95),
+                    max_duration_ms: *durations.last().unwrap_or(&0),
+                })
+            }
+        };
+
+        let stop_reasons = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT stop_reason, count
+                   FROM stop_reasons
+                   WHERE session_rowid = ?
+                   ORDER BY count DESC, stop_reason ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| {
+                Ok(StopReasonRow {
+                    stop_reason: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let attachments = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT filename, mime_type
+                   FROM attachments
+                   WHERE session_rowid = ?
+                   ORDER BY filename ASC, mime_type ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| {
+                Ok(AttachmentRow {
+                    filename: row.get(0)?,
+                    mime_type: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let permission_changes = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT mode, COALESCE(timestamp, '')
+                   FROM permission_changes
+                   WHERE session_rowid = ?
+                   ORDER BY timestamp ASC, mode ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| {
+                Ok(PermissionChangeRow {
+                    mode: row.get(0)?,
+                    timestamp: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let model_usage = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT model, assistant_message_count, input_tokens, output_tokens,
+                          cache_creation_tokens, cache_read_tokens, cost_usd,
+                          inference_geo, service_tier, speed, iterations
+                   FROM token_usage
+                   WHERE session_id = ?
+                   ORDER BY cost_usd DESC, model ASC"#,
+            )?;
+            stmt.query_map(params![session_rowid], |row| {
+                Ok(SessionModelUsageRow {
+                    model: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    assistant_message_count: row.get(1)?,
+                    input_tokens: row.get(2)?,
+                    output_tokens: row.get(3)?,
+                    cache_creation_tokens: row.get(4)?,
+                    cache_read_tokens: row.get(5)?,
+                    cost_usd: row.get(6)?,
+                    inference_geos: split_csv(row.get::<_, Option<String>>(7)?.as_deref()),
+                    service_tiers: split_csv(row.get::<_, Option<String>>(8)?.as_deref()),
+                    avg_speed: row.get(9)?,
+                    iterations: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(Some(SessionDetail {
+            project,
+            file_path,
+            session_id,
+            first_timestamp_ms,
+            last_timestamp_ms,
+            duration_ms,
+            message_count,
+            model,
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            cost_usd,
+            thinking_block_count,
+            files_modified,
+            tools,
+            pr_links,
+            turn_stats,
+            stop_reasons,
+            attachments,
+            permission_changes,
+            model_usage,
+        }))
     }
 
     pub fn query_summary(&self) -> Result<SummaryData> {
@@ -1083,6 +1539,17 @@ impl IndexStore {
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        let mut stop_stmt = self.conn.prepare(
+            r#"SELECT stop_reason, SUM(count) AS total
+               FROM stop_reasons
+               GROUP BY stop_reason
+               ORDER BY total DESC
+               LIMIT 5"#,
+        )?;
+        let top_stop_reasons: Vec<(String, i64)> = stop_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
         let most_recent: Option<MostRecentSession> = self
             .conn
             .query_row(
@@ -1140,34 +1607,34 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT model, COUNT(*) AS sessions, COALESCE(SUM(cost_usd), 0) AS cost
-               FROM token_usage
-               GROUP BY model
-               ORDER BY cost DESC"#,
+            r#"SELECT session_id, model, COALESCE(cost_usd, 0)
+               FROM token_usage"#,
         )?;
         let raw_model_rows = mdist_stmt
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, f64>(2)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut family_map: HashMap<String, (i64, f64)> = HashMap::new();
-        for (model, sessions, cost) in raw_model_rows {
+        let mut family_map: HashMap<String, (std::collections::HashSet<i64>, f64)> = HashMap::new();
+        for (session_id, model, cost) in raw_model_rows {
             let family = model
                 .as_deref()
                 .map(|m| ModelPricing::name(Some(m)).to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-            let entry = family_map.entry(family).or_insert((0, 0.0));
-            entry.0 += sessions;
+            let entry = family_map
+                .entry(family)
+                .or_insert_with(|| (std::collections::HashSet::new(), 0.0));
+            entry.0.insert(session_id);
             entry.1 += cost;
         }
         let mut model_distribution: Vec<(String, i64, f64)> = family_map
             .into_iter()
-            .map(|(family, (sessions, cost))| (family, sessions, cost))
+            .map(|(family, (sessions, cost))| (family, sessions.len() as i64, cost))
             .collect();
         model_distribution
             .sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
@@ -1185,6 +1652,7 @@ impl IndexStore {
             total_cache_read: total_cr,
             top_projects,
             top_tools,
+            top_stop_reasons,
             most_recent,
             thinking_block_count,
             avg_turn_duration_ms,
@@ -1201,6 +1669,40 @@ fn fts_escape(query: &str) -> String {
         format!("\"{}\"", escaped)
     } else {
         escaped
+    }
+}
+
+fn split_csv(raw: Option<&str>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    raw.unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| seen.insert((*s).to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+fn join_strings(values: &std::collections::BTreeSet<String>) -> Option<String> {
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().cloned().collect::<Vec<_>>().join(","))
+    }
+}
+
+fn session_model_label(
+    primary_model: Option<&str>,
+    model_usage: &BTreeMap<String, ModelSessionStats>,
+) -> Option<String> {
+    let models = model_usage
+        .keys()
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    match models.len() {
+        0 => primary_model.map(ToOwned::to_owned),
+        1 => Some(models[0].to_string()),
+        _ => Some("mixed".to_string()),
     }
 }
 
@@ -1231,6 +1733,7 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
         message_count: 0,
         model: None,
         usage: TokenUsage::default(),
+        model_usage: BTreeMap::new(),
         tool_names: Vec::new(),
         messages: Vec::new(),
         turn_durations: Vec::new(),
@@ -1284,12 +1787,16 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                 }
 
                 let usage = &msg["usage"];
-                entry.usage.input_tokens += usage["input_tokens"].as_u64().unwrap_or(0);
-                entry.usage.output_tokens += usage["output_tokens"].as_u64().unwrap_or(0);
-                entry.usage.cache_creation_tokens +=
+                let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
+                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+                let cache_creation_tokens =
                     usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                entry.usage.cache_read_tokens +=
-                    usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                let cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+
+                entry.usage.input_tokens += input_tokens;
+                entry.usage.output_tokens += output_tokens;
+                entry.usage.cache_creation_tokens += cache_creation_tokens;
+                entry.usage.cache_read_tokens += cache_read_tokens;
 
                 if entry.inference_geo.is_none() {
                     entry.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
@@ -1301,6 +1808,29 @@ fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
                     entry.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
                 }
                 entry.iterations += usage["iterations"].as_u64().unwrap_or(0);
+
+                let model_key = msg["model"].as_str().unwrap_or("").to_string();
+                let model_stats = entry.model_usage.entry(model_key).or_default();
+                model_stats.usage.input_tokens += input_tokens;
+                model_stats.usage.output_tokens += output_tokens;
+                model_stats.usage.cache_creation_tokens += cache_creation_tokens;
+                model_stats.usage.cache_read_tokens += cache_read_tokens;
+                model_stats.assistant_message_count += 1;
+                if let Some(geo) = usage["inference_geo"].as_str()
+                    && !geo.is_empty()
+                {
+                    model_stats.inference_geos.insert(geo.to_string());
+                }
+                if let Some(tier) = usage["service_tier"].as_str()
+                    && !tier.is_empty()
+                {
+                    model_stats.service_tiers.insert(tier.to_string());
+                }
+                if let Some(speed) = usage["speed"].as_f64() {
+                    model_stats.speed_sum += speed;
+                    model_stats.speed_samples += 1;
+                }
+                model_stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
 
                 if let Some(stop) = msg["stop_reason"].as_str() {
                     *entry

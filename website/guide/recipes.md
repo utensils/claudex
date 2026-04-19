@@ -81,27 +81,7 @@ claudex sessions --project claudex --json --limit 100
 ### Sessions that touched a specific file
 
 ```bash
-sqlite3 ~/.claudex/index.db <<'SQL'
-.mode box
-SELECT s.project_name,
-       substr(s.session_id, 1, 8)                              AS sid,
-       datetime(s.first_timestamp/1000, 'unixepoch')           AS started
-FROM   sessions s
-JOIN   file_modifications fm ON fm.session_rowid = s.id
-WHERE  fm.file_path LIKE '%src/index.rs%'
-GROUP BY s.id
-ORDER BY s.first_timestamp DESC
-LIMIT 10;
-SQL
-```
-
-```
-┌───────────────────────────────────────────┬──────────┬─────────────────────┐
-│               project_name                │   sid    │       started       │
-├───────────────────────────────────────────┼──────────┼─────────────────────┤
-│ /Users/you/projects/claudex               │ 3b50e273 │ 2026-04-19 00:47:36 │
-│ /Users/you/projects/claudex               │ 0e119824 │ 2026-04-19 00:40:30 │
-└───────────────────────────────────────────┴──────────┴─────────────────────┘
+claudex sessions --file src/index.rs --limit 10
 ```
 
 ## Search
@@ -166,33 +146,27 @@ claudex files --json | jq -r '.[] | select(.modification_count >= 20) | .file_pa
 
 ### Files touched by the most distinct sessions
 
-`claudex files` counts edit _events_, not distinct sessions. For "edited
-across N sessions" use the index directly:
+`claudex files --json` includes `distinct_session_count`, so you no longer
+need raw SQL for this:
 
 ```bash
-sqlite3 ~/.claudex/index.db <<'SQL'
-.mode box
-SELECT fm.file_path,
-       COUNT(DISTINCT fm.session_rowid) AS sessions
-FROM   file_modifications fm
-GROUP BY fm.file_path
-HAVING sessions >= 5
-ORDER BY sessions DESC
-LIMIT 20;
-SQL
+claudex files --json \
+  | jq -r '.[] | select(.distinct_session_count >= 5) | [.file_path, .distinct_session_count] | @tsv'
 ```
 
+## Session drill-down
+
+### Inspect one session
+
+```bash
+claudex session <session-id-prefix>
 ```
-┌─────────────────────────────────────────┬──────────┐
-│                file_path                │ sessions │
-├─────────────────────────────────────────┼──────────┤
-│ CLAUDE.md                               │ 60       │
-│ README.md                               │ 33       │
-│ flake.nix                               │ 33       │
-│ CHANGELOG.md                            │ 31       │
-│ .gitignore                              │ 22       │
-│ app/views/dealflow/emails/show.html.erb │ 19       │
-└─────────────────────────────────────────┴──────────┘
+
+### Pull just the files, tools, and stop reasons
+
+```bash
+claudex session <session-id-prefix> --json \
+  | jq '{files: .files_modified, tools: .tools, stop_reasons: .stop_reasons}'
 ```
 
 ## Export

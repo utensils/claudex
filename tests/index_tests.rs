@@ -56,6 +56,14 @@ fn test_parser_realistic_session() {
     assert_eq!(stats.usage.cache_creation_tokens, 150);
     assert_eq!(stats.usage.cache_read_tokens, 1800);
     assert_eq!(stats.tool_names, vec!["Bash", "Edit"]);
+    assert_eq!(stats.model_usage.len(), 1);
+    assert_eq!(
+        stats
+            .model_usage
+            .get("claude-opus-4-6")
+            .map(|m| m.assistant_message_count),
+        Some(2)
+    );
     assert_eq!(stats.thinking_block_count, 1);
     assert_eq!(stats.turn_durations.len(), 2);
     assert_eq!(stats.turn_durations[0].0, 45000);
@@ -74,6 +82,54 @@ fn test_parser_realistic_session() {
     assert_eq!(stats.iterations, 1);
     assert_eq!(*stats.stop_reason_counts.get("tool_use").unwrap(), 1);
     assert_eq!(*stats.stop_reason_counts.get("end_turn").unwrap(), 1);
+}
+
+#[test]
+fn test_parser_tracks_mixed_model_usage() {
+    let dir = TempDir::new().unwrap();
+    let file = setup_project(
+        dir.path(),
+        "-Users-test-Projects-myapp",
+        "sess-mixed",
+        &[
+            r#"{"type":"user","sessionId":"sess-mixed","timestamp":"2026-04-18T10:00:00Z","message":{"content":"fix it"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-mixed","timestamp":"2026-04-18T10:01:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":10,"cache_read_input_tokens":50},"content":[{"type":"text","text":"first pass"}]}}"#,
+            r#"{"type":"assistant","sessionId":"sess-mixed","timestamp":"2026-04-18T10:02:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":40,"cache_creation_input_tokens":0,"cache_read_input_tokens":25},"content":[{"type":"text","text":"second pass"}]}}"#,
+        ],
+    );
+
+    let stats = claudex::parser::parse_session(&file).unwrap();
+
+    assert_eq!(stats.model_usage.len(), 2);
+    assert_eq!(
+        stats
+            .model_usage
+            .get("claude-opus-4-6")
+            .map(|m| m.usage.input_tokens),
+        Some(100)
+    );
+    assert_eq!(
+        stats
+            .model_usage
+            .get("claude-sonnet-4-6")
+            .map(|m| m.usage.input_tokens),
+        Some(200)
+    );
+    let expected = claudex::types::TokenUsage {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_creation_tokens: 10,
+        cache_read_tokens: 50,
+    }
+    .cost_for_model(Some("claude-opus-4-6"))
+        + claudex::types::TokenUsage {
+            input_tokens: 200,
+            output_tokens: 40,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 25,
+        }
+        .cost_for_model(Some("claude-sonnet-4-6"));
+    assert!((stats.cost_usd() - expected).abs() < 0.0001);
 }
 
 #[test]

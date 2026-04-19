@@ -10,25 +10,48 @@ pub fn run(
     query: &str,
     project: Option<&str>,
     limit: usize,
+    json: bool,
     case_sensitive: bool,
     no_index: bool,
 ) -> Result<()> {
     // FTS5 is case-insensitive; fall back to file scan for case-sensitive queries
     if !no_index
         && !case_sensitive
-        && let Ok(()) = run_indexed(query, project, limit)
+        && let Ok(()) = run_indexed(query, project, limit, json)
     {
         return Ok(());
     }
-    run_from_files(query, project, limit, case_sensitive)
+    run_from_files(query, project, limit, json, case_sensitive)
 }
 
-fn run_indexed(query: &str, project: Option<&str>, limit: usize) -> Result<()> {
+fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
     let store = SessionStore::new()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&store)?;
 
     let hits = idx.search_fts(query, project, limit)?;
+
+    if json {
+        let output: Vec<_> = hits
+            .iter()
+            .map(|hit| {
+                let message_timestamp = hit
+                    .message_timestamp_ms
+                    .and_then(DateTime::from_timestamp_millis)
+                    .map(|d| d.to_rfc3339());
+                serde_json::json!({
+                    "project": hit.project_name,
+                    "session_id": hit.session_id,
+                    "message_timestamp": message_timestamp,
+                    "message_type": hit.message_type,
+                    "snippet": strip_search_markers(&hit.snippet),
+                    "rank": hit.rank,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
 
     if hits.is_empty() {
         println!("No matches found for {query:?}");
@@ -37,7 +60,7 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize) -> Result<()> {
 
     for hit in &hits {
         let date_str = hit
-            .first_timestamp_ms
+            .message_timestamp_ms
             .and_then(DateTime::from_timestamp_millis)
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "-".to_string());
@@ -57,11 +80,7 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize) -> Result<()> {
             ui::timestamp(&date_str),
             ui::role(&hit.message_type),
         );
-        for line in hit.content.lines() {
-            if line.to_lowercase().contains(&query.to_lowercase()) {
-                print_highlighted(line, query, false);
-            }
-        }
+        println!("  {}", render_indexed_snippet(&hit.snippet));
         println!();
     }
     Ok(())
@@ -71,6 +90,7 @@ fn run_from_files(
     query: &str,
     project: Option<&str>,
     limit: usize,
+    json: bool,
     case_sensitive: bool,
 ) -> Result<()> {
     let store = SessionStore::new()?;
@@ -83,6 +103,7 @@ fn run_from_files(
     };
 
     let mut found = 0usize;
+    let mut json_hits = Vec::new();
 
     'outer: for (project_raw, path) in &files {
         let project_display = short_name(&decode_project_name(project_raw));
@@ -149,13 +170,15 @@ fn run_from_files(
                 .take(8)
                 .collect();
 
-            println!(
-                "{} {} [{}] {}",
-                ui::project_headline(&project_display),
-                ui::session_id(&sid),
-                ui::timestamp(&date_str),
-                ui::role(role),
-            );
+            if !json {
+                println!(
+                    "{} {} [{}] {}",
+                    ui::project_headline(&project_display),
+                    ui::session_id(&sid),
+                    ui::timestamp(&date_str),
+                    ui::role(role),
+                );
+            }
 
             for line in text.lines() {
                 let line_cmp = if case_sensitive {
@@ -164,15 +187,26 @@ fn run_from_files(
                     line.to_lowercase()
                 };
                 if line_cmp.contains(&query_cmp) {
-                    print_highlighted(line, query, case_sensitive);
+                    let snippet = build_file_scan_snippet(line, query, case_sensitive);
+                    if json {
+                        json_hits.push(serde_json::json!({
+                            "project": decode_project_name(project_raw),
+                            "session_id": session_id,
+                            "message_timestamp": session_date.map(|d| d.to_rfc3339()),
+                            "message_type": role,
+                            "snippet": snippet,
+                            "rank": serde_json::Value::Null,
+                        }));
+                    } else {
+                        print_highlighted(line, query, case_sensitive);
+                        println!();
+                    }
+                    found += 1;
+                    if found >= limit {
+                        stop = true;
+                        return false;
+                    }
                 }
-            }
-            println!();
-
-            found += 1;
-            if found >= limit {
-                stop = true;
-                return false;
             }
             true
         })?;
@@ -180,6 +214,11 @@ fn run_from_files(
         if stop {
             break 'outer;
         }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&json_hits)?);
+        return Ok(());
     }
 
     if found == 0 {
@@ -232,4 +271,57 @@ fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {
     }
     result.push_str(&display[last..]);
     println!("  {}", result);
+}
+
+fn render_indexed_snippet(snippet: &str) -> String {
+    let mut out = String::new();
+    let mut rest = snippet;
+    while let Some(start) = rest.find("[[") {
+        let (before, after_start) = rest.split_at(start);
+        out.push_str(before);
+        let after_start = &after_start[2..];
+        if let Some(end) = after_start.find("]]") {
+            let (matched, after_end) = after_start.split_at(end);
+            out.push_str(&ui::match_highlight(matched));
+            rest = &after_end[2..];
+        } else {
+            out.push_str(after_start);
+            rest = "";
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn strip_search_markers(snippet: &str) -> String {
+    snippet.replace("[[", "").replace("]]", "")
+}
+
+fn build_file_scan_snippet(line: &str, query: &str, case_sensitive: bool) -> String {
+    const CONTEXT: usize = 80;
+    let haystack = if case_sensitive {
+        line.to_string()
+    } else {
+        line.to_lowercase()
+    };
+    let needle = if case_sensitive {
+        query.to_string()
+    } else {
+        query.to_lowercase()
+    };
+    if let Some(pos) = haystack.find(&needle) {
+        let mut start = pos.saturating_sub(CONTEXT);
+        while start > 0 && !line.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = (pos + needle.len() + CONTEXT).min(line.len());
+        while end < line.len() && !line.is_char_boundary(end) {
+            end += 1;
+        }
+        let prefix = if start > 0 { "..." } else { "" };
+        let suffix = if end < line.len() { "..." } else { "" };
+        format!("{prefix}{}{suffix}", &line[start..end])
+    } else {
+        line.to_string()
+    }
 }

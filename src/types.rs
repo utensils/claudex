@@ -82,6 +82,7 @@ impl TokenUsage {
 pub struct SessionInfo {
     pub project: String,
     pub session_id: String,
+    pub file_path: Option<String>,
     pub date: Option<DateTime<Utc>>,
     pub message_count: usize,
     pub duration_ms: u64,

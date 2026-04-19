@@ -54,10 +54,11 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         table.set_header(ui::header([
             "Project",
             "Session",
+            "Date",
             "Top Tools",
             "Total Calls",
         ]));
-        ui::right_align(&mut table, &[3]);
+        ui::right_align(&mut table, &[4]);
 
         for r in &rows {
             let sid: String = r
@@ -70,6 +71,11 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             let total: i64 = r.tools.values().sum();
             let mut sorted: Vec<_> = r.tools.iter().collect();
             sorted.sort_by(|a, b| b.1.cmp(a.1));
+            let date = r
+                .first_timestamp_ms
+                .and_then(DateTime::from_timestamp_millis)
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| "-".to_string());
             let top: Vec<_> = sorted
                 .iter()
                 .take(3)
@@ -78,6 +84,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             table.add_row([
                 ui::cell_project(&short_name(&r.project)),
                 ui::cell_dim(&sid),
+                ui::cell_dim(&date),
                 ui::cell_plain(top.join(", ")),
                 ui::cell_count(total as u64),
             ]);
@@ -179,6 +186,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             counts,
         ));
     }
+    rows.sort_by_key(|(_, _, date, _)| std::cmp::Reverse(*date));
     rows.truncate(limit);
 
     if json {
@@ -201,18 +209,22 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
     table.set_header(ui::header([
         "Project",
         "Session",
+        "Date",
         "Top Tools",
         "Total Calls",
     ]));
-    ui::right_align(&mut table, &[3]);
+    ui::right_align(&mut table, &[4]);
 
-    for (project, session_id, _, counts) in &rows {
+    for (project, session_id, date, counts) in &rows {
         let sid: String = session_id
             .as_deref()
             .unwrap_or("-")
             .chars()
             .take(8)
             .collect();
+        let date = date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "-".to_string());
         let total: u64 = counts.values().sum();
         let mut sorted: Vec<_> = counts.iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(a.1));
@@ -224,6 +236,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
         table.add_row([
             ui::cell_project(&short_name(project)),
             ui::cell_dim(&sid),
+            ui::cell_dim(&date),
             ui::cell_plain(top.join(", ")),
             ui::cell_count(total),
         ]);

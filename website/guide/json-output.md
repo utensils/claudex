@@ -43,22 +43,37 @@ sheet.
 
 Single object. Keys: `total_sessions`, `sessions_today`,
 `sessions_this_week`, `total_cost_usd`, `cost_this_week_usd`,
-`total_tokens`, `thinking_block_count`, `avg_turn_duration_ms`, `pr_count`,
-`files_modified_count`, `top_projects`, `top_tools`, `model_distribution`,
-`most_recent`. See [`summary`](/commands/summary) for the full shape.
+`total_input_tokens`, `total_output_tokens`, `total_cache_creation_tokens`,
+`total_cache_read_tokens`, `total_tokens`, `thinking_block_count`,
+`avg_turn_duration_ms`, `pr_count`, `files_modified_count`, `top_projects`,
+`top_tools`, `top_stop_reasons`, `model_distribution`, `most_recent`. See
+[`summary`](/commands/summary) for the full shape.
 
 ### `sessions`
 
-Array. Each entry: `project`, `session_id`, `date`, `duration_ms`,
-`message_count`, `model`.
+Array. Each entry: `project`, `session_id`, `file_path`, `date`,
+`duration_ms`, `message_count`, `model`.
+
+### `session`
+
+Single object. Keys include `project`, `file_path`, `session_id`, `date`,
+`last_activity`, token totals, `cost_usd`, `turn_stats`, `models`, `tools`,
+`files_modified`, `pr_links`, `stop_reasons`, `attachments`,
+`permission_changes`.
 
 ### `cost` (aggregated) / `cost --per-session`
 
 - Aggregated: `project`, `sessions`, `input_tokens`, `output_tokens`,
-  `cache_creation_tokens`, `cache_read_tokens`, `models` (array of
-  families), `cost_usd`.
-- Per-session: `project`, `session_id`, `date`, `model`, `input_tokens`,
-  `output_tokens`, `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`.
+  `cache_creation_tokens`, `cache_read_tokens`, `avg_cost_per_session_usd`,
+  `models` (array of families), `cost_usd`.
+- Per-session: `project`, `session_id`, `date`, `model`, `models`,
+  `input_tokens`, `output_tokens`, `cache_creation_tokens`,
+  `cache_read_tokens`, `cost_usd`.
+
+### `search`
+
+Array. Each entry: `project`, `session_id`, `message_timestamp`,
+`message_type`, `snippet`, `rank`.
 
 ### `tools` (aggregated) / `tools --per-session`
 
@@ -69,7 +84,9 @@ Array. Each entry: `project`, `session_id`, `date`, `duration_ms`,
 ### `models`
 
 Array. Each entry: `model`, `model_family`, `session_count`, `input_tokens`,
-`output_tokens`, `cost_usd`.
+`output_tokens`, `cache_creation_tokens`, `cache_read_tokens`,
+`avg_cost_per_session_usd`, `avg_tokens_per_session`, `service_tiers`,
+`inference_geos`, `avg_speed`, `total_iterations`, `cost_usd`.
 
 ### `turns`
 
@@ -83,7 +100,8 @@ Array. Each entry: `project`, `session_id`, `timestamp`, `pr_number`,
 
 ### `files`
 
-Array. Each entry: `file_path`, `modification_count`.
+Array. Each entry: `file_path`, `modification_count`,
+`distinct_session_count`, `last_touched_at`, `top_project`.
 
 ## Why not CSV?
 
