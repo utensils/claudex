@@ -174,7 +174,16 @@ struct ParseEntry {
 impl IndexStore {
     pub fn open() -> Result<Self> {
         let dir = crate::claudex_dir()?;
-        let conn = Connection::open(dir.join("index.db"))?;
+        Self::open_at(&dir.join("index.db"))
+    }
+
+    /// Open (or create) an index at an explicit path. Used by integration
+    /// tests so they don't have to mutate `$HOME`.
+    pub fn open_at(db_path: &Path) -> Result<Self> {
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let store = Self { conn };
         store.create_schema()?;

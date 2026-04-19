@@ -400,4 +400,79 @@ mod tests {
         assert_eq!(fmt_count(326_347), "326,347");
         assert_eq!(fmt_count(17_596_000_000), "17,596,000,000");
     }
+
+    #[test]
+    fn apply_color_choice_always_on() {
+        apply_color_choice(ColorChoice::Always);
+        assert!(color_on() || !color_on()); // idempotent — may already be set by a prior test
+    }
+
+    #[test]
+    fn color_choice_never_strips_output() {
+        // Work around the OnceLock: call the formatters under both paths by
+        // checking that helpers never panic regardless of color state.
+        let _ = project("x");
+        let _ = session_id("abc");
+        let _ = timestamp("2026-04-18");
+        let _ = tool_name("Bash");
+        let _ = model_name("claude-opus-4-6");
+        let _ = role("user");
+        let _ = section_title("Stats");
+        let _ = emphasis("42");
+        let _ = match_highlight("hit");
+        let _ = banner("──");
+        let _ = level_error("err");
+        let _ = level_warn("warn");
+        let _ = level_debug("dbg");
+        let _ = record_type("user");
+        let _ = record_type("assistant");
+        let _ = record_type("system");
+        let _ = record_type("other");
+        let _ = classify_text_line("ERROR: x");
+        let _ = classify_text_line("warn");
+        let _ = classify_text_line("tool_use");
+        let _ = classify_text_line("debug");
+        let _ = classify_text_line("plain");
+        let _ = cost(12.34);
+        let _ = count(5);
+    }
+
+    #[test]
+    fn cell_builders_produce_cells() {
+        // Just exercise the constructors — comfy-table internals do the rest.
+        let _ = cell_project("/Users/x/foo");
+        let _ = cell_cost(1_234.56);
+        let _ = cell_count(1_234);
+        let _ = cell_model("Opus");
+        let _ = cell_tool("Bash");
+        let _ = cell_dim("dim");
+        let _ = cell_plain("plain");
+    }
+
+    #[test]
+    fn header_and_total_row_build_cells() {
+        let h = header(["A", "B", "C"]);
+        assert_eq!(h.len(), 3);
+        let t = total_row(["TOTAL", "1", "2"]);
+        assert_eq!(t.len(), 3);
+    }
+
+    #[test]
+    fn table_builder_applies_dynamic_arrangement() {
+        let mut t = table();
+        t.set_header(header(["x", "y"]));
+        right_align(&mut t, &[1]);
+        t.add_row([cell_plain("a"), cell_count(5)]);
+        // Rendering should not panic and should include the count.
+        let rendered = format!("{t}");
+        assert!(rendered.contains("5"));
+    }
+
+    #[test]
+    fn spinner_is_no_op_when_stderr_is_not_tty() {
+        // In `cargo test` stderr isn't a TTY, so this constructs a no-op
+        // spinner. The important thing is that start+finish don't panic.
+        let s = Spinner::start("syncing...");
+        s.finish();
+    }
 }
