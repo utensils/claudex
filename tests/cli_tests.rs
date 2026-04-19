@@ -646,6 +646,28 @@ fn session_no_index_matches_indexed_core_fields() {
 }
 
 #[test]
+fn session_uuid_like_selector_does_not_fallback_to_project_matching() {
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-e1a2f4-app",
+        "sess-c1",
+        &[
+            r#"{"type":"user","sessionId":"sess-c1","timestamp":"2026-04-18T10:00:00Z","message":{"content":"hi"}}"#,
+        ],
+    );
+
+    let out = run(home.path(), &["session", "e1a2f4", "--json"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("no sessions found matching"),
+        "stderr: {}",
+        stderr_of(&out)
+    );
+}
+
+#[test]
 fn claudex_dir_resyncs_when_sessions_root_changes() {
     // Codex review P1: a CLAUDEX_DIR shared across different $HOME values must
     // not serve stale rows from a previous HOME for the staleness window.

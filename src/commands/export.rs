@@ -1,12 +1,14 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::parser::{parse_session, stream_records};
-use crate::store::{SessionStore, decode_project_name, display_project_name};
+use crate::store::{
+    SessionStore, decode_project_name, display_project_name, find_matching_sessions,
+};
 
 pub fn run(
     selector: &str,
@@ -20,7 +22,7 @@ pub fn run(
 
     let store = SessionStore::new()?;
     let all_files = store.all_session_files(project_filter)?;
-    let matching = find_matching(&all_files, selector);
+    let matching = find_matching_sessions(&all_files, selector);
 
     if matching.is_empty() {
         anyhow::bail!("no sessions found matching {:?}", selector);
@@ -55,37 +57,6 @@ pub fn run(
     }
 
     Ok(())
-}
-
-/// Return sessions that match `selector` as a session-ID prefix OR project-name substring.
-fn find_matching<'a>(files: &'a [(String, PathBuf)], selector: &str) -> Vec<&'a (String, PathBuf)> {
-    let sel = selector.to_lowercase();
-
-    // First try: session ID match via filename stem (most common — Claude Code names
-    // session files after the session UUID).
-    let id_matches: Vec<_> = files
-        .iter()
-        .filter(|(_, path)| {
-            let stem = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            stem.starts_with(&sel) || stem.contains(&sel)
-        })
-        .collect();
-
-    if !id_matches.is_empty() {
-        return id_matches;
-    }
-
-    // Fallback: project name match
-    files
-        .iter()
-        .filter(|(project_raw, _)| {
-            let decoded = decode_project_name(project_raw).to_lowercase();
-            project_raw.to_lowercase().contains(&sel) || decoded.contains(&sel)
-        })
-        .collect()
 }
 
 fn build_markdown(project: &str, path: &Path) -> Result<String> {

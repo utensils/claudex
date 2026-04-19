@@ -78,4 +78,6 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
   every model it used; `session_count` counts each model-session pair once.
 - **Runtime metadata.** `service_tiers`, `inference_geos`, `avg_speed`, and
   `total_iterations` come from the usage blocks Claude Code records on
-  assistant messages. They are best-effort; missing values stay empty/null.
+  assistant messages. `avg_speed` is the mean of per-session model averages,
+  not a throughput-weighted global average. These fields are best-effort;
+  missing values stay empty/null.

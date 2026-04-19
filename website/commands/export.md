@@ -121,8 +121,10 @@ claudex export <sid> --format json \
 
 ## Notes
 
-- **Selector precedence.** Session-ID prefix wins if there's an exact match,
-  even when `--project` is set. Fall back to the project filter otherwise.
+- **Selector precedence.** Session-ID prefix wins when it matches one or more
+  sessions, even when `--project` is set. If the selector looks like a Claude
+  session-ID prefix and matches nothing, claudex does not fall back to
+  project-name matching.
 - **No `--json` flag.** Use `--format json` — it's the format of the export,
   not a summary layer.
 - **Multiple matches.** Markdown writes the matching sessions sequentially.

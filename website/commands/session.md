@@ -101,7 +101,8 @@ claudex session ab --project claudex
 ## Notes
 
 - **Selector resolution.** Session-ID prefix wins if it matches. Project-name
-  matching is a fallback for when you only know the project.
+  matching is the fallback when the selector does not look like a Claude
+  session-ID prefix.
 - **Exactly one session.** `session` is not a batch command. If the selector
   matches more than one session, claudex stops and asks you to refine it.
 - **Use `export` for transcripts.** `session` is an analysis report; it does

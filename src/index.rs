@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,6 +8,7 @@ use rusqlite::{Connection, params};
 
 use crate::parser::ModelSessionStats;
 use crate::parser::stream_records;
+use crate::stats::percentile_sorted;
 use crate::store::{SessionStore, canonical_project_path, decode_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
@@ -219,6 +220,21 @@ type SessionRow = (
     i64,
     Option<String>,
 );
+
+#[derive(Default)]
+struct ModelUsageAccumulator {
+    session_ids: HashSet<i64>,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_creation_tokens: i64,
+    cache_read_tokens: i64,
+    cost_usd: f64,
+    service_tiers: BTreeSet<String>,
+    inference_geos: BTreeSet<String>,
+    speed_sum: f64,
+    speed_samples: u64,
+    total_iterations: i64,
+}
 
 // --- Internal parse types ---
 
@@ -872,7 +888,7 @@ impl IndexStore {
                 project: row.get(0)?,
                 session_id: row.get(1)?,
                 first_timestamp_ms: row.get(2)?,
-                models: split_csv(row.get::<_, Option<String>>(3)?.as_deref()),
+                models: split_joined_values(row.get::<_, Option<String>>(3)?.as_deref()),
                 input_tokens: row.get(4)?,
                 output_tokens: row.get(5)?,
                 cache_creation_tokens: row.get(6)?,
@@ -1150,57 +1166,115 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT t.model,
-                      COUNT(DISTINCT t.session_id) AS sessions,
-                      COALESCE(SUM(t.input_tokens), 0),
-                      COALESCE(SUM(t.output_tokens), 0),
-                      COALESCE(SUM(t.cache_creation_tokens), 0),
-                      COALESCE(SUM(t.cache_read_tokens), 0),
-                      COALESCE(SUM(t.cost_usd), 0),
-                      GROUP_CONCAT(DISTINCT t.service_tier),
-                      GROUP_CONCAT(DISTINCT t.inference_geo),
-                      AVG(t.speed),
-                      COALESCE(SUM(t.iterations), 0)
+                      t.session_id,
+                      COALESCE(t.input_tokens, 0),
+                      COALESCE(t.output_tokens, 0),
+                      COALESCE(t.cache_creation_tokens, 0),
+                      COALESCE(t.cache_read_tokens, 0),
+                      COALESCE(t.cost_usd, 0),
+                      t.service_tier,
+                      t.inference_geo,
+                      t.speed,
+                      COALESCE(t.iterations, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY t.model
-               ORDER BY SUM(t.cost_usd) DESC"#,
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)"#,
         )?;
         let rows = stmt.query_map(params![fp, fp, fp], |row| {
-            let session_count = row.get::<_, i64>(1)?;
-            let input_tokens = row.get::<_, i64>(2)?;
-            let output_tokens = row.get::<_, i64>(3)?;
-            let cache_creation_tokens = row.get::<_, i64>(4)?;
-            let cache_read_tokens = row.get::<_, i64>(5)?;
-            let cost_usd = row.get::<_, f64>(6)?;
-            let total_tokens =
-                input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens;
-            Ok(ModelUsageRow {
-                model: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                session_count,
+            Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, f64>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<f64>>(9)?,
+                row.get::<_, i64>(10)?,
+            ))
+        })?;
+
+        let mut aggregated: BTreeMap<String, ModelUsageAccumulator> = BTreeMap::new();
+        for row in rows {
+            let (
+                model,
+                session_id,
                 input_tokens,
                 output_tokens,
                 cache_creation_tokens,
                 cache_read_tokens,
                 cost_usd,
-                avg_cost_per_session_usd: if session_count == 0 {
-                    0.0
-                } else {
-                    cost_usd / session_count as f64
-                },
-                avg_tokens_per_session: if session_count == 0 {
-                    0.0
-                } else {
-                    total_tokens as f64 / session_count as f64
-                },
-                service_tiers: split_csv(row.get::<_, Option<String>>(7)?.as_deref()),
-                inference_geos: split_csv(row.get::<_, Option<String>>(8)?.as_deref()),
-                avg_speed: row.get(9)?,
-                total_iterations: row.get(10)?,
+                service_tiers,
+                inference_geos,
+                speed,
+                iterations,
+            ) = row?;
+            let entry = aggregated.entry(model).or_default();
+            entry.session_ids.insert(session_id);
+            entry.input_tokens += input_tokens;
+            entry.output_tokens += output_tokens;
+            entry.cache_creation_tokens += cache_creation_tokens;
+            entry.cache_read_tokens += cache_read_tokens;
+            entry.cost_usd += cost_usd;
+            entry.total_iterations += iterations;
+            for tier in split_joined_values(service_tiers.as_deref()) {
+                entry.service_tiers.insert(tier);
+            }
+            for geo in split_joined_values(inference_geos.as_deref()) {
+                entry.inference_geos.insert(geo);
+            }
+            if let Some(speed) = speed {
+                entry.speed_sum += speed;
+                entry.speed_samples += 1;
+            }
+        }
+
+        let mut result = aggregated
+            .into_iter()
+            .map(|(model, acc)| {
+                let session_count = acc.session_ids.len() as i64;
+                let total_tokens = acc.input_tokens
+                    + acc.output_tokens
+                    + acc.cache_creation_tokens
+                    + acc.cache_read_tokens;
+                ModelUsageRow {
+                    model,
+                    session_count,
+                    input_tokens: acc.input_tokens,
+                    output_tokens: acc.output_tokens,
+                    cache_creation_tokens: acc.cache_creation_tokens,
+                    cache_read_tokens: acc.cache_read_tokens,
+                    cost_usd: acc.cost_usd,
+                    avg_cost_per_session_usd: if session_count == 0 {
+                        0.0
+                    } else {
+                        acc.cost_usd / session_count as f64
+                    },
+                    avg_tokens_per_session: if session_count == 0 {
+                        0.0
+                    } else {
+                        total_tokens as f64 / session_count as f64
+                    },
+                    service_tiers: acc.service_tiers.into_iter().collect(),
+                    inference_geos: acc.inference_geos.into_iter().collect(),
+                    avg_speed: if acc.speed_samples == 0 {
+                        None
+                    } else {
+                        Some(acc.speed_sum / acc.speed_samples as f64)
+                    },
+                    total_iterations: acc.total_iterations,
+                }
             })
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+            .collect::<Vec<_>>();
+
+        result.sort_by(|a, b| {
+            b.cost_usd
+                .total_cmp(&a.cost_usd)
+                .then_with(|| a.model.cmp(&b.model))
+        });
+        Ok(result)
     }
 
     pub fn query_session_detail(&self, file_path: &str) -> Result<Option<SessionDetail>> {
@@ -1420,8 +1494,10 @@ impl IndexStore {
                     cache_creation_tokens: row.get(4)?,
                     cache_read_tokens: row.get(5)?,
                     cost_usd: row.get(6)?,
-                    inference_geos: split_csv(row.get::<_, Option<String>>(7)?.as_deref()),
-                    service_tiers: split_csv(row.get::<_, Option<String>>(8)?.as_deref()),
+                    inference_geos: split_joined_values(
+                        row.get::<_, Option<String>>(7)?.as_deref(),
+                    ),
+                    service_tiers: split_joined_values(row.get::<_, Option<String>>(8)?.as_deref()),
                     avg_speed: row.get(9)?,
                     iterations: row.get(10)?,
                 })
@@ -1672,10 +1748,12 @@ fn fts_escape(query: &str) -> String {
     }
 }
 
-fn split_csv(raw: Option<&str>) -> Vec<String> {
+const MULTI_VALUE_SEPARATOR: &str = "\u{1f}";
+
+fn split_joined_values(raw: Option<&str>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
     raw.unwrap_or("")
-        .split(',')
+        .split(['\u{1f}', ','])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .filter(|s| seen.insert((*s).to_string()))
@@ -1687,7 +1765,13 @@ fn join_strings(values: &std::collections::BTreeSet<String>) -> Option<String> {
     if values.is_empty() {
         None
     } else {
-        Some(values.iter().cloned().collect::<Vec<_>>().join(","))
+        Some(
+            values
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(MULTI_VALUE_SEPARATOR),
+        )
     }
 }
 
@@ -1713,14 +1797,6 @@ fn model_families_from_concat(raw: Option<&str>) -> Vec<String> {
         .map(|m| ModelPricing::name(Some(m.trim())).to_string())
         .filter(|f| !f.is_empty() && seen.insert(f.clone()))
         .collect()
-}
-
-fn percentile_sorted(sorted: &[i64], p: usize) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let idx = (p * sorted.len()).saturating_sub(1) / 100;
-    sorted[idx.min(sorted.len() - 1)] as f64
 }
 
 /// Parse a session file once, extracting both stats and FTS content.

@@ -44,17 +44,17 @@ Indexes: `idx_sessions_project`, `idx_sessions_timestamp`.
 One row per `(session, model)` pair. A session that switched models has
 multiple rows.
 
-| Column                                                                        | Notes                                       |
-| ----------------------------------------------------------------------------- | ------------------------------------------- |
-| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).     |
-| `model`                                                                       | Model tag.                                  |
-| `assistant_message_count`                                                     | Assistant messages contributing to the row. |
-| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                              |
-| `cost_usd`                                                                    | Pre-computed cost for this row.             |
-| `inference_geo`                                                               | Region, if reported.                        |
-| `speed`                                                                       | Tokens/sec, if reported.                    |
-| `service_tier`                                                                | `standard`, `priority`, etc.                |
-| `iterations`                                                                  | Count of messages contributing to the row.  |
+| Column                                                                        | Notes                                                      |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).                    |
+| `model`                                                                       | Model tag.                                                 |
+| `assistant_message_count`                                                     | Assistant messages contributing to the row.                |
+| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                                             |
+| `cost_usd`                                                                    | Pre-computed cost for this row.                            |
+| `inference_geo`                                                               | Region, if reported.                                       |
+| `speed`                                                                       | Average tokens/sec for the session-model row, if reported. |
+| `service_tier`                                                                | `standard`, `priority`, etc.                               |
+| `iterations`                                                                  | Count of messages contributing to the row.                 |
 
 Index: `idx_token_usage_session`.
 

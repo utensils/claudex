@@ -9,7 +9,10 @@ use crate::index::{
     IndexStore, SessionDetail, SessionModelUsageRow, StopReasonRow, ToolRow, TurnStatsRow,
 };
 use crate::parser::{ModelSessionStats, SessionStats, parse_session};
-use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
+use crate::stats::percentile_sorted;
+use crate::store::{
+    SessionStore, decode_project_name, display_project_name, find_matching_sessions, short_name,
+};
 use crate::types::ModelPricing;
 use crate::ui;
 
@@ -194,7 +197,7 @@ fn resolve_one_session(
     project_filter: Option<&str>,
 ) -> Result<(String, PathBuf)> {
     let all_files = store.all_session_files(project_filter)?;
-    let matches = find_matching(&all_files, selector);
+    let matches = find_matching_sessions(&all_files, selector);
     match matches.as_slice() {
         [] => bail!("no sessions found matching {:?}", selector),
         [single] => Ok((single.0.clone(), single.1.clone())),
@@ -219,33 +222,6 @@ fn resolve_one_session(
             )
         }
     }
-}
-
-fn find_matching<'a>(files: &'a [(String, PathBuf)], selector: &str) -> Vec<&'a (String, PathBuf)> {
-    let sel = selector.to_lowercase();
-
-    let id_matches: Vec<_> = files
-        .iter()
-        .filter(|(_, path)| {
-            let stem = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            stem.starts_with(&sel) || stem.contains(&sel)
-        })
-        .collect();
-
-    if !id_matches.is_empty() {
-        return id_matches;
-    }
-
-    files
-        .iter()
-        .filter(|(project_raw, _)| {
-            let decoded = decode_project_name(project_raw).to_lowercase();
-            project_raw.to_lowercase().contains(&sel) || decoded.contains(&sel)
-        })
-        .collect()
 }
 
 fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
@@ -425,14 +401,6 @@ fn build_turn_stats(project: &str, turns: &[(u64, String)]) -> Option<TurnStatsR
         p95_duration_ms: percentile_sorted(&durations, 95),
         max_duration_ms: *durations.last().unwrap_or(&0),
     })
-}
-
-fn percentile_sorted(sorted: &[i64], p: usize) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let idx = (p * sorted.len()).saturating_sub(1) / 100;
-    sorted[idx.min(sorted.len() - 1)] as f64
 }
 
 fn print_tokens(input: u64, output: u64, cache_write: u64, cache_read: u64) {
