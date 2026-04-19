@@ -8,10 +8,8 @@ use crate::types::SessionInfo;
 use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool, no_index: bool) -> Result<()> {
-    if !no_index {
-        if let Ok(()) = run_indexed(project, limit, json) {
-            return Ok(());
-        }
+    if !no_index && let Ok(()) = run_indexed(project, limit, json) {
+        return Ok(());
     }
     run_from_files(project, limit, json)
 }
