@@ -508,3 +508,31 @@ fn completions_fish() {
     assert!(out.status.success());
     assert!(!out.stdout.is_empty());
 }
+
+#[test]
+fn claudex_dir_env_override_creates_index_under_custom_path() {
+    // Confirms that `CLAUDEX_DIR=...` redirects index.db away from
+    // `~/.claudex/`. Documented in guide/installation.md and reference/environment.md.
+    let home = fixture_home();
+    let state = tempfile::tempdir().expect("state tempdir");
+    let out = Command::new(BIN)
+        .env("HOME", home.path())
+        .env("NO_COLOR", "1")
+        .env("CLAUDEX_DIR", state.path())
+        .args(["summary", "--json"])
+        .output()
+        .expect("spawn claudex");
+    assert!(out.status.success(), "claudex failed: {}", stderr_of(&out));
+    // Index lives under the overridden dir, not under $HOME/.claudex.
+    assert!(
+        state.path().join("index.db").is_file(),
+        "index.db should exist under CLAUDEX_DIR; got: {:?}",
+        std::fs::read_dir(state.path())
+            .map(|it| it.flatten().map(|e| e.file_name()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+    assert!(
+        !home.path().join(".claudex").exists(),
+        "$HOME/.claudex should NOT be created when CLAUDEX_DIR is set"
+    );
+}
