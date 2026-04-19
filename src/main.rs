@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::builder::ValueHint;
+use clap::{CommandFactory, Parser, Subcommand};
 
 use claudex::commands;
 
@@ -107,7 +108,7 @@ enum Commands {
         #[arg(long, default_value = "markdown")]
         format: String,
         /// Write output to a file instead of stdout
-        #[arg(short, long)]
+        #[arg(short, long, value_hint = ValueHint::FilePath)]
         output: Option<String>,
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -164,9 +165,33 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Generate shell completions
+    #[command(after_long_help = "\
+Setup instructions:
+
+  zsh (add to ~/.zshrc):
+    source <(claudex completions zsh)
+
+  bash (add to ~/.bashrc):
+    source <(claudex completions bash)
+
+  fish (persist to completions dir):
+    claudex completions fish | source
+    claudex completions fish > ~/.config/fish/completions/claudex.fish
+
+  elvish:
+    eval (claudex completions elvish | slurp)
+
+  powershell (add to $PROFILE):
+    claudex completions powershell | Out-String | Invoke-Expression")]
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, elvish, powershell)
+        shell: String,
+    },
 }
 
 fn main() {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
     let result = match cli.command {
         Commands::Sessions {
@@ -221,9 +246,105 @@ fn main() {
             json,
         } => commands::files::run(project.as_deref(), limit, json),
         Commands::Models { project, json } => commands::models::run(project.as_deref(), json),
+        Commands::Completions { shell } => generate_completions(&shell),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
+}
+
+/// Generate shell completion script.
+///
+/// For zsh: custom script that separates flags from positional candidates so
+/// `claudex <TAB>` shows subcommands while `claudex --<TAB>` shows flags, and
+/// falls back to zsh's `_files` for file-path arguments.
+/// For other shells: delegates to clap_complete's dynamic registration.
+fn generate_completions(shell: &str) -> anyhow::Result<()> {
+    if shell == "zsh" {
+        let bin = std::env::args()
+            .next()
+            .unwrap_or_else(|| "claudex".to_string());
+        print!(
+            r##"#compdef claudex
+function _clap_dynamic_completer_claudex() {{
+    local _CLAP_COMPLETE_INDEX=$(expr $CURRENT - 1)
+    local _CLAP_IFS=$'\n'
+
+    # File-path flags: fall back to zsh native _files for tilde expansion,
+    # directory traversal, and proper path completion.
+    local prev_word="${{words[$(( CURRENT - 1 ))]}}"
+    case "$prev_word" in
+        --output|-o)
+            _files
+            return
+            ;;
+    esac
+
+    local completions=("${{(@f)$( \
+        _CLAP_IFS="$_CLAP_IFS" \
+        _CLAP_COMPLETE_INDEX="$_CLAP_COMPLETE_INDEX" \
+        COMPLETE="zsh" \
+        {bin} -- "${{words[@]}}" 2>/dev/null \
+    )}}")
+
+    if [[ -n $completions ]]; then
+        local -a flags=()
+        local -a values=()
+        local completion
+        for completion in $completions; do
+            local value="${{completion%%:*}}"
+            if [[ "$value" == -* ]]; then
+                flags+=("$completion")
+            elif [[ "$value" == */ ]]; then
+                local dir_no_slash="${{value%/}}"
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${{completion#*:}}"
+                    values+=("$dir_no_slash:$desc")
+                else
+                    values+=("$dir_no_slash")
+                fi
+            else
+                values+=("$completion")
+            fi
+        done
+
+        if [[ "${{words[$CURRENT]}}" == -* ]]; then
+            [[ -n $flags ]] && _describe 'options' flags
+        else
+            [[ -n $values ]] && _describe 'values' values
+        fi
+    fi
+}}
+
+compdef _clap_dynamic_completer_claudex claudex
+"##,
+            bin = bin,
+        );
+        return Ok(());
+    }
+
+    let shells = clap_complete::env::Shells::builtins();
+    let completer = match shells.completer(shell) {
+        Some(c) => c,
+        None => {
+            let names: Vec<_> = shells.names().collect();
+            anyhow::bail!(
+                "unknown shell '{}', expected one of: {}",
+                shell,
+                names.join(", ")
+            );
+        }
+    };
+    let bin = std::env::args()
+        .next()
+        .unwrap_or_else(|| "claudex".to_string());
+    completer.write_registration(
+        "COMPLETE",
+        "claudex",
+        "claudex",
+        &bin,
+        &mut std::io::stdout(),
+    )?;
+    Ok(())
 }

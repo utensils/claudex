@@ -16,6 +16,7 @@ categories = ["command-line-utilities"]
 anyhow = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+clap_complete = { version = "4", features = ["unstable-dynamic"] }
 comfy-table = "7"
 dirs = "5"
 owo-colors = "4"
