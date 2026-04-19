@@ -33,7 +33,6 @@ export default defineConfig({
   ],
 
   lastUpdated: true,
-  cleanUrls: true,
 
   markdown: {
     theme: {

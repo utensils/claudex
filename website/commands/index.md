@@ -19,13 +19,31 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 | [`prs`](/commands/prs)           | Sessions linked to pull requests.                              |
 | [`files`](/commands/files)       | Most frequently modified files across sessions.                |
 
-All read-only reports support:
+### Flag support matrix
 
-- `--json` — stable, machine-readable output.
-- `--no-index` — bypass the SQLite index and scan JSONL directly.
-- `--project <substring>` — filter by project-path substring (where
-  applicable).
-- `--limit <n>` — cap the number of rows.
+Not every report accepts every flag. Consult the per-command page for exact
+usage; the matrix below is the quick overview.
+
+| Command    | `--project` | `--limit` | `--json` | `--no-index` |
+| ---------- | :---------: | :-------: | :------: | :----------: |
+| `summary`  |      —      |     —     |    ✓     |      ✓       |
+| `sessions` |      ✓      |     ✓     |    ✓     |      ✓       |
+| `cost`     |      ✓      |     ✓     |    ✓     |      ✓       |
+| `search`   |      ✓      |     ✓     |    —     |      ✓       |
+| `tools`    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `models`   |      ✓      |     —     |    ✓     |      —       |
+| `turns`    |      ✓      |     ✓     |    ✓     |      —       |
+| `prs`      |      ✓      |     ✓     |    ✓     |      —       |
+| `files`    |      ✓      |     ✓     |    ✓     |      —       |
+
+Notes:
+
+- `search` is output-oriented (highlighted hits); it has no `--json` shape.
+  Case-sensitive queries fall back to a file scan automatically.
+- `turns`, `prs`, `files`, and `models` derive their data from the index
+  only — there's no file-scan fallback path, so `--no-index` isn't accepted.
+- `summary` is a whole-tree dashboard; filtering by project or row limit
+  doesn't apply.
 
 ## Actions
 
