@@ -166,11 +166,31 @@ elvish, and PowerShell.
 
 ## Upgrading
 
-- **Install script:** rerun the one-liner — it always fetches the latest
-  tarball, replaces the binary in place.
-- **Cargo:** `cargo install --git … --force claudex`.
+The easiest path for any install source is to let claudex tell you:
+
+```bash
+claudex update --check      # report availability without writing anything
+claudex update              # install-script: swap binary in place
+                            # everything else: print the right upgrade command
+```
+
+`claudex update` classifies its own install path and only replaces the
+binary when it was installed by `install.sh` (or copied into any writable
+directory). For package-manager installs it exits with the right upgrade
+recipe and non-zero status, so it's safe in automation.
+
+See the [`update` command page](/commands/update) for flags
+(`--check`, `--force`, `--version <tag>`) and the full story on how the
+SHA-256 verification and atomic swap work.
+
+By install source:
+
+- **Install script:** `claudex update` — or rerun the one-liner, which also
+  fetches the latest tarball and replaces the binary.
+- **Cargo:** `cargo install --git https://github.com/utensils/claudex --tag vX.Y.Z --force claudex`.
 - **Nix profile:** `nix profile upgrade '.*claudex.*'` (or remove + reinstall).
 - **Nix flake input:** `nix flake update claudex` in your system flake.
+- **Homebrew:** `brew upgrade claudex`.
 
 The index at `~/.claudex/index.db` carries a `schema_version` — newer
 binaries rebuild the index automatically on first run if the schema bumped.

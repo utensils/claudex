@@ -115,6 +115,7 @@ export default defineConfig({
             { text: 'export', link: '/commands/export' },
             { text: 'watch', link: '/commands/watch' },
             { text: 'index', link: '/commands/index-cmd' },
+            { text: 'update', link: '/commands/update' },
             { text: 'completions', link: '/commands/completions' },
           ],
         },

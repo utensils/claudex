@@ -54,6 +54,7 @@ Notes:
 | [`export`](/commands/export)           | Dump a session transcript as Markdown or JSON.        |
 | [`watch`](/commands/watch)             | Tail Claude Code's `--debug-file` log in real time.   |
 | [`index`](/commands/index-cmd)         | Manage the SQLite index — force sync or full rebuild. |
+| [`update`](/commands/update)           | Self-update claudex, or print the right upgrade recipe for Nix / cargo / brew installs. |
 | [`completions`](/commands/completions) | Generate shell completion scripts.                    |
 
 ## Conventions
@@ -84,4 +85,5 @@ Notes:
 - [summary](/commands/summary)
 - [tools](/commands/tools)
 - [turns](/commands/turns)
+- [update](/commands/update)
 - [watch](/commands/watch)
