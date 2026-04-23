@@ -35,12 +35,12 @@ Pick one. All three paths are covered in depth in the [installation guide](https
 curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh | sh
 ```
 
-Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.2.0` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`.
+Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.3.0` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`.
 
 ### Cargo
 
 ```bash
-cargo install --git https://github.com/utensils/claudex --tag v0.2.0 claudex
+cargo install --git https://github.com/utensils/claudex --tag v0.3.0 claudex
 ```
 
 ### Nix flake
