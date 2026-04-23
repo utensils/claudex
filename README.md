@@ -76,6 +76,7 @@ Source builds require Rust 1.95+. Prebuilt binaries have no runtime dependencies
 | [`export <selector>`](https://utensils.io/claudex/commands/export)        | Export a session transcript as Markdown or JSON                      |
 | [`watch`](https://utensils.io/claudex/commands/watch)                     | Tail Claude Code's debug log in real time                            |
 | [`index`](https://utensils.io/claudex/commands/index-cmd)                 | Manage the session index (normally updated automatically)            |
+| [`update`](https://utensils.io/claudex/commands/update)                   | Self-update claudex, or print the right upgrade recipe for Nix/cargo/brew |
 | [`completions <shell>`](https://utensils.io/claudex/commands/completions) | Generate shell completions (bash, zsh, fish, elvish, powershell)     |
 
 Global flag: `--color auto|always|never` (respects `NO_COLOR`).

@@ -208,6 +208,28 @@ Custom path:
         #[arg(long)]
         json: bool,
     },
+    /// Self-update to the latest claudex release (or a specific tag)
+    #[command(after_long_help = "\
+Upgrade claudex in place when installed by install.sh. For other install
+sources the command prints the right upgrade recipe and exits:
+
+  Nix:       nix profile upgrade claudex   (or flake update)
+  cargo:     cargo install --git … --tag vX.Y.Z --force claudex
+  Homebrew:  brew upgrade claudex
+
+The latest tag is resolved by following the /releases/latest redirect, so
+this command doesn't hit api.github.com and can't be rate-limited.")]
+    Update {
+        /// Report whether an update is available without writing to disk
+        #[arg(long)]
+        check: bool,
+        /// Reinstall or downgrade even when the target matches the current version
+        #[arg(long)]
+        force: bool,
+        /// Install a specific tag (e.g. v0.2.0) instead of the latest release
+        #[arg(long)]
+        version: Option<String>,
+    },
     /// Generate shell completions
     #[command(after_long_help = "\
 Setup instructions:
@@ -322,6 +344,11 @@ fn main() {
             json,
         } => commands::files::run(project.as_deref(), path.as_deref(), limit, json),
         Commands::Models { project, json } => commands::models::run(project.as_deref(), json),
+        Commands::Update {
+            check,
+            force,
+            version,
+        } => commands::update::run(check, force, version),
         Commands::Completions { shell } => generate_completions(&shell),
     };
     if let Err(e) = result {

@@ -10,4 +10,5 @@ pub mod sessions;
 pub mod summary;
 pub mod tools;
 pub mod turns;
+pub mod update;
 pub mod watch;

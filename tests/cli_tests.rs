@@ -814,3 +814,48 @@ fn claudex_dir_env_override_creates_index_under_custom_path() {
         "$HOME/.claudex should NOT be created when CLAUDEX_DIR is set"
     );
 }
+
+#[test]
+fn update_help_mentions_supported_install_sources() {
+    // The long help is the public contract for how users discover what the
+    // update command does with non-managed installs. Keep the recipes findable.
+    let out = Command::new(BIN)
+        .args(["update", "--help"])
+        .output()
+        .expect("spawn claudex");
+    assert!(
+        out.status.success(),
+        "update --help failed: {}",
+        stderr_of(&out)
+    );
+    let help = stdout_of(&out);
+    assert!(help.contains("--check"));
+    assert!(help.contains("--force"));
+    assert!(help.contains("--version"));
+    assert!(help.contains("Nix"));
+    assert!(help.contains("cargo"));
+    assert!(help.contains("Homebrew"));
+}
+
+#[test]
+fn update_fails_gracefully_without_curl() {
+    // `update` shells out to curl for network I/O. When curl is missing the
+    // command should exit non-zero with a clear "curl is required" message —
+    // not panic, not emit a confusing rusage error. We point PATH at an
+    // empty temp dir to guarantee curl isn't resolvable without blanking
+    // PATH (which on some platforms falls back to system directories).
+    let empty = TempDir::new().unwrap();
+    let out = Command::new(BIN)
+        .env("HOME", TempDir::new().unwrap().path())
+        .env("NO_COLOR", "1")
+        .env("PATH", empty.path())
+        .args(["update", "--check"])
+        .output()
+        .expect("spawn claudex");
+    assert!(!out.status.success());
+    let stderr = stderr_of(&out);
+    assert!(
+        stderr.contains("not found in PATH"),
+        "expected curl-missing message, got: {stderr}"
+    );
+}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `claudex update` subcommand: in-place self-update for `install.sh` installs with SHA-256 verification, and source-aware upgrade hints for Nix (`nix profile upgrade claudex`), cargo (`cargo install … --tag vX.Y.Z --force claudex`), and Homebrew (`brew upgrade claudex`). Flags: `--check`, `--force`, `--version <tag>`. The latest tag is resolved via the `/releases/latest` redirect so the command never hits `api.github.com`.
 - New `claudex session <selector>` drill-down report: overview, tokens, per-model usage, turn stats, tools, files, PR links, stop reasons, attachments, permission changes. Supports `--json` and `--no-index`.
 - `claudex sessions --file <substring>` filter — only surface sessions that touched a matching file path.
 - `claudex files --path <substring>` filter — limit the file-mods report by path substring.
