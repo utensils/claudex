@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh | 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh \
-  | CLAUDEX_VERSION=v0.2.0 sh
+  | CLAUDEX_VERSION=v0.3.0 sh
 ```
 
 ### Changing the install directory
@@ -76,7 +76,7 @@ cargo install --git https://github.com/utensils/claudex claudex
 Pin to a specific tag:
 
 ```bash
-cargo install --git https://github.com/utensils/claudex --tag v0.2.0 claudex
+cargo install --git https://github.com/utensils/claudex --tag v0.3.0 claudex
 ```
 
 The binary lands in `~/.cargo/bin/claudex`. Make sure that directory is on
@@ -92,7 +92,7 @@ Flakes must be enabled (`experimental-features = nix-command flakes`).
 nix run github:utensils/claudex -- summary
 
 # Pin to a release tag
-nix run github:utensils/claudex/v0.2.0 -- summary
+nix run github:utensils/claudex/v0.3.0 -- summary
 
 # Install into the user profile
 nix profile install github:utensils/claudex

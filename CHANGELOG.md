@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-23
+
+Second tagged release. Headline: new `session` drill-down report, install-source-aware `claudex update` subcommand, per-model tracking, and a schema v3 rebuild of the index.
+
 ### Added
 
-- New `claudex update` subcommand: in-place self-update for `install.sh` installs with SHA-256 verification, and source-aware upgrade hints for Nix (`nix profile upgrade claudex`), cargo (`cargo install … --tag vX.Y.Z --force claudex`), and Homebrew (`brew upgrade claudex`). Flags: `--check`, `--force`, `--version <tag>`. The latest tag is resolved via the `/releases/latest` redirect so the command never hits `api.github.com`.
-- New `claudex session <selector>` drill-down report: overview, tokens, per-model usage, turn stats, tools, files, PR links, stop reasons, attachments, permission changes. Supports `--json` and `--no-index`.
+- New `claudex update` subcommand ([#16](https://github.com/utensils/claudex/pull/16)): in-place self-update for `install.sh` installs with SHA-256 verification, and source-aware upgrade hints for Nix (`nix profile upgrade claudex`), cargo (`cargo install … --tag vX.Y.Z --force claudex`), and Homebrew (`brew upgrade claudex`). Flags: `--check`, `--force`, `--version <tag>`. The latest tag is resolved via the `/releases/latest` redirect so the command never hits `api.github.com`.
+- New `claudex session <selector>` drill-down report ([#15](https://github.com/utensils/claudex/pull/15)): overview, tokens, per-model usage, turn stats, tools, files, PR links, stop reasons, attachments, permission changes. Supports `--json` and `--no-index`.
 - `claudex sessions --file <substring>` filter — only surface sessions that touched a matching file path.
 - `claudex files --path <substring>` filter — limit the file-mods report by path substring.
 - `claudex search --json` output with FTS5 `[[…]]` snippet markers and `bm25` rank.
@@ -67,5 +71,6 @@ First tagged release. Install paths: `install.sh`, `cargo install --git … --ta
 - Cleanup: untrack cruft, tighten `.gitignore`, sync docs, bump MSRV to 1.95 ([#11](https://github.com/utensils/claudex/pull/11)).
 - Docs align recipes and command shapes with v0.2.0 ([#14](https://github.com/utensils/claudex/pull/14)).
 
-[unreleased]: https://github.com/utensils/claudex/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/utensils/claudex/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/utensils/claudex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/utensils/claudex/releases/tag/v0.2.0
