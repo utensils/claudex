@@ -11,23 +11,23 @@ claudex update [--check] [--force] [--version <tag>]
 
 ## Flags
 
-| Flag                | Description                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `--check`           | Only report whether an update is available. Does not touch disk or require write perms. |
-| `--force`           | Reinstall or downgrade even when the target version matches the current one.            |
-| `--version <tag>`   | Install a specific tag (e.g. `v0.2.0`) instead of the latest release.                   |
+| Flag              | Description                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `--check`         | Only report whether an update is available. Does not touch disk or require write perms. |
+| `--force`         | Reinstall or downgrade even when the target version matches the current one.            |
+| `--version <tag>` | Install a specific tag (e.g. `v0.2.0`) instead of the latest release.                   |
 
 ## What it does per install source
 
 `claudex update` starts by resolving its own executable path
 (`std::env::current_exe()` → canonical) and classifying the install:
 
-| Install source | Detected by                  | Behaviour                                                             |
-| -------------- | ---------------------------- | --------------------------------------------------------------------- |
-| `install.sh`   | anything not matching below  | Downloads the release tarball, verifies SHA-256, swaps the binary.    |
-| Nix            | path contains `/nix/store/`  | Prints `nix profile upgrade claudex` / `nix flake update` and exits.  |
-| cargo          | path contains `/.cargo/bin/` | Prints `cargo install --git … --tag vX.Y.Z --force claudex` and exits. |
-| Homebrew       | path contains `/Cellar/` or `/homebrew/` | Prints `brew upgrade claudex` and exits.                  |
+| Install source | Detected by                              | Behaviour                                                              |
+| -------------- | ---------------------------------------- | ---------------------------------------------------------------------- |
+| `install.sh`   | anything not matching below              | Downloads the release tarball, verifies SHA-256, swaps the binary.     |
+| Nix            | path contains `/nix/store/`              | Prints `nix profile upgrade claudex` / `nix flake update` and exits.   |
+| cargo          | path contains `/.cargo/bin/`             | Prints `cargo install --git … --tag vX.Y.Z --force claudex` and exits. |
+| Homebrew       | path contains `/Cellar/` or `/homebrew/` | Prints `brew upgrade claudex` and exits.                               |
 
 The non-managed branches exit with a non-zero status so shell wrappers can
 tell the difference between "did the upgrade" and "you need to run a different
