@@ -10,6 +10,7 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 | Command                          | What it does                                                     |
 | -------------------------------- | ---------------------------------------------------------------- |
 | [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.       |
+| [`codex`](/commands/codex)       | Codex CLI session/state stats from `~/.codex`.                   |
 | [`sessions`](/commands/sessions) | List sessions grouped by project.                                |
 | [`session`](/commands/session)   | Drill into one session: spend, files, tools, PRs, turns.         |
 | [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session).   |
@@ -28,6 +29,7 @@ usage; the matrix below is the quick overview.
 | Command    | `--project` | `--limit` | `--json` | `--no-index` |
 | ---------- | :---------: | :-------: | :------: | :----------: |
 | `summary`  |      —      |     —     |    ✓     |      ✓       |
+| `codex`    |      —      |     —     |    ✓     |      —       |
 | `sessions` |      ✓      |     ✓     |    ✓     |      ✓       |
 | `session`  |      ✓      |     —     |    ✓     |      ✓       |
 | `cost`     |      ✓      |     ✓     |    ✓     |      ✓       |
@@ -72,6 +74,7 @@ Notes:
 
 ## Quick alphabetical index
 
+- [codex](/commands/codex)
 - [cost](/commands/cost)
 - [completions](/commands/completions)
 - [export](/commands/export)

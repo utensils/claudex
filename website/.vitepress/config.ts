@@ -107,6 +107,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/commands/' },
             { text: 'summary', link: '/commands/summary' },
+            { text: 'codex', link: '/commands/codex' },
             { text: 'sessions', link: '/commands/sessions' },
             { text: 'session', link: '/commands/session' },
             { text: 'cost', link: '/commands/cost' },

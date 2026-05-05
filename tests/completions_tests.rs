@@ -4,6 +4,36 @@ fn claudex() -> Command {
     Command::new(env!("CARGO_BIN_EXE_claudex"))
 }
 
+fn dynamic_completions(shell: &str, index: &str, words: &[&str]) -> String {
+    let output = claudex()
+        .env("COMPLETE", shell)
+        .env("_CLAP_COMPLETE_INDEX", index)
+        .args(["--"])
+        .args(words)
+        .output()
+        .expect("run dynamic completion");
+    assert!(output.status.success(), "completion failed: {output:?}");
+    String::from_utf8(output.stdout).expect("utf8 stdout")
+}
+
+#[test]
+fn dynamic_root_completions_include_codex() {
+    let stdout = dynamic_completions("bash", "1", &["claudex", ""]);
+    assert!(
+        stdout.lines().any(|line| line == "codex"),
+        "root completions should include codex, got: {stdout}"
+    );
+}
+
+#[test]
+fn dynamic_codex_completions_include_json_flag() {
+    let stdout = dynamic_completions("bash", "2", &["claudex", "codex", "--"]);
+    assert!(
+        stdout.lines().any(|line| line.starts_with("--json")),
+        "codex completions should include --json, got: {stdout}"
+    );
+}
+
 #[test]
 fn completions_bash_outputs_script() {
     let output = claudex()

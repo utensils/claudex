@@ -89,6 +89,75 @@ fn json_of(out: &std::process::Output) -> Value {
     })
 }
 
+// --- codex ---
+
+fn fixture_home_with_codex() -> TempDir {
+    let tmp = fixture_home();
+    let codex = tmp.path().join(".codex");
+    let active = codex.join("sessions").join("2026").join("05").join("05");
+    fs::create_dir_all(&active).unwrap();
+    let mut f = fs::File::create(active.join("rollout-2026-05-05T00-00-00-codex-a.jsonl")).unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:00:00Z","type":"session_meta","payload":{{"id":"codex-a","cwd":"/Users/test/project","originator":"codex_cli_rs","cli_version":"0.99.0","source":"cli"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:01:00Z","type":"response_item","payload":{{"type":"user_message","message":"hello"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:02:00Z","type":"response_item","payload":{{"type":"agent_message","message":"hi"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:03:00Z","type":"response_item","payload":{{"type":"function_call","name":"shell","arguments":"{{}}","call_id":"c"}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+
+    let archived = codex.join("archived_sessions");
+    fs::create_dir_all(&archived).unwrap();
+    let mut f =
+        fs::File::create(archived.join("rollout-2026-01-01T00-00-00-codex-b.jsonl")).unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{{"id":"codex-b","cwd":"/Users/test/archive","cli_version":"0.98.0"}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+
+    tmp
+}
+
+#[test]
+fn codex_json_reports_session_stats() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["codex", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert_eq!(v["total_sessions"].as_u64(), Some(2));
+    assert_eq!(v["archived_sessions"].as_u64(), Some(1));
+    assert_eq!(v["active_session_files"].as_u64(), Some(1));
+    assert_eq!(v["user_messages"].as_u64(), Some(1));
+    assert_eq!(v["agent_messages"].as_u64(), Some(1));
+    assert_eq!(v["tool_calls"].as_u64(), Some(1));
+    assert_eq!(v["top_tools"][0]["name"].as_str(), Some("shell"));
+}
+
+#[test]
+fn codex_text_output_renders_dashboard() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["codex"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(s.contains("Codex Sessions"), "got: {s}");
+    assert!(s.contains("Top Projects"), "got: {s}");
+}
+
 // --- sessions ---
 
 #[test]

@@ -17,7 +17,19 @@ First run indexes the whole `~/.claude/projects/` tree — the spinner shows
 progress on stderr. Subsequent runs reuse the index (5-minute staleness
 window), so they're near-instant.
 
-## 2. Cost, by project
+## 2. Codex CLI stats
+
+```bash
+claudex codex
+claudex codex --json
+```
+
+This scans `~/.codex/sessions`, `~/.codex/archived_sessions`,
+`~/.codex/session_index.jsonl`, and the optional `~/.codex/state_5.sqlite` state
+DB to summarize Codex activity: sessions, projects, tools, CLI versions, and
+state-thread token totals.
+
+## 3. Cost, by project
 
 ```bash
 claudex cost --limit 10
@@ -31,7 +43,7 @@ Add `--per-session` to break it out by individual session, or
 `--project utensils` to filter to projects whose decoded path contains
 `utensils`.
 
-## 3. Full-text search
+## 4. Full-text search
 
 ```bash
 claudex search "schema migration"
@@ -45,14 +57,14 @@ case-sensitive queries).
 Each hit shows the project, session ID prefix, date, role, and the matching
 line with the query highlighted.
 
-## 4. Tool and model usage
+## 5. Tool and model usage
 
 ```bash
 claudex tools --limit 15     # How often you reach for Bash, Edit, Read, ...
 claudex models               # Calls, token usage, cost per model
 ```
 
-## 5. Export a session
+## 6. Export a session
 
 ```bash
 # Find a recent session and grab its prefix
