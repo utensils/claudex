@@ -7,7 +7,7 @@ directly — it's an implementation detail — but a few things are worth knowin
 
 ```
 ~/.claudex/
-├── index.db          # SQLite, schema_version = 2
+├── index.db          # SQLite, schema_version = 3
 └── debug/            # only when you use `claudex watch`
     └── latest.log
 ```
@@ -49,8 +49,10 @@ claudex index --force
 
 ## Bypassing the index
 
-Every read command accepts `--no-index` to skip the index and scan JSONL files
-directly. This is the authoritative path — the index is a cache built from it.
+Most Claude Code read commands accept `--no-index` to skip the index and scan
+JSONL files directly. This is the authoritative path — the index is a cache
+built from it. `claudex codex` is separate: it reads `~/.codex` directly and
+does not use `~/.claudex/index.db`.
 
 Use `--no-index` when:
 

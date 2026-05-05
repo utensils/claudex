@@ -15,6 +15,9 @@ claudex sessions --json
 
 # Summary as JSON
 claudex summary --json
+
+# Codex CLI stats as JSON
+claudex codex --json
 ```
 
 ## Piping to jq
@@ -48,6 +51,16 @@ Single object. Keys: `total_sessions`, `sessions_today`,
 `avg_turn_duration_ms`, `pr_count`, `files_modified_count`, `top_projects`,
 `top_tools`, `top_stop_reasons`, `model_distribution`, `most_recent`. See
 [`summary`](/commands/summary) for the full shape.
+
+### `codex`
+
+Single object. Keys: `total_sessions`, `archived_sessions`,
+`active_session_files`, `sessions_today`, `sessions_this_week`,
+`user_messages`, `agent_messages`, `reasoning_items`, `tool_calls`,
+`tool_results`, `aborted_turns`, `compacted_events`, `review_events`,
+`top_projects`, `top_tools`, `cli_versions`, `originators`, `sources`,
+`most_recent`, and optional `state` with Codex state DB thread/token totals.
+See [`codex`](/commands/codex) for the full shape.
 
 ### `sessions`
 

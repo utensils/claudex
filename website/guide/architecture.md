@@ -13,7 +13,7 @@ store::SessionStore         — discover files, decode paths, canonicalize workt
         ▼
 parser::stream_records      — streaming JSONL → SessionStats (O(1) memory)
         ▼
-index::IndexStore           — rusqlite, bundled, schema_version = 2
+index::IndexStore           — rusqlite, bundled, schema_version = 3
         ▼
 commands::<name>::run       — reads the index (or falls back to file scans)
         ▼
@@ -31,9 +31,9 @@ ui::table() / palette       — comfy-table with dynamic width + owo-colors
 | `src/store.rs`      | Locates session files, decodes project-directory names (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), canonicalizes worktree paths (`…/.claude/worktrees/<branch>` aggregates to the parent project). |
 | `src/parser.rs`     | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                     |
 | `src/types.rs`      | `TokenUsage`, `ModelPricing` (Opus/Sonnet/Haiku tiers). `cost_for_model` is the single source of truth for pricing math.                                                                           |
-| `src/index.rs`      | `IndexStore` (SQLite). Ten relational tables plus an FTS5 virtual table. Incremental sync keyed on `(file_path, file_size, file_mtime)`.                                                           |
+| `src/index.rs`      | `IndexStore` (SQLite). Relational report tables plus an FTS5 virtual table. Incremental sync keyed on `(file_path, file_size, file_mtime)`.                                                        |
 | `src/ui.rs`         | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                        |
-| `src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `completions`.                                           |
+| `src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `session`, `export`, `index`, `turns`, `prs`, `files`, `models`, `codex`, `update`, `completions`.             |
 
 ## Key invariants
 
@@ -46,7 +46,7 @@ That's enough to feel fresh without re-scanning on every shell invocation.
 Force an update: `claudex index`
 Force a full rebuild: `claudex index --force`
 
-### Every read command supports `--no-index`
+### Indexed Claude Code read commands support `--no-index`
 
 The fallback path reads JSONL files directly via `parser::parse_session`. **The
 two paths must produce matching results.** If you add a metric to the index,
@@ -56,7 +56,16 @@ add it to the file-scan fallback too — the test suite exercises both.
 
 Bumping `SCHEMA_VERSION` in `src/index.rs` triggers a full rebuild on next
 open. Add new columns/tables inside the `CREATE TABLE IF NOT EXISTS` block and
-bump the version. The current version is **2**.
+bump the version. The current version is **3**.
+
+### Codex stats are read-only and separate from the Claude Code index
+
+`claudex codex` reads OpenAI Codex CLI state under `~/.codex` directly instead
+of ingesting it into `~/.claudex/index.db`. It scans rollout JSONL files under
+`~/.codex/sessions/**` and `~/.codex/archived_sessions/`, uses
+`~/.codex/session_index.jsonl` for titles when present, and optionally opens
+`~/.codex/state_5.sqlite` read-only for thread/token totals. This keeps the
+Claude Code transcript index and Codex's state model independent.
 
 ### Worktree aggregation
 

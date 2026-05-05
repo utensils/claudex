@@ -24,11 +24,11 @@ features:
     details: Scans ~/.claude/projects/ into a local SQLite database at
       ~/.claudex/index.db. Incremental sync keyed on (path, size, mtime);
       staleness window is 5 minutes.
-  - title: Ten reports out of the box
+  - title: Reports out of the box
     details:
-      summary, sessions, cost, tools, models, turns, files, prs, search, export
-      — plus a live log watcher. Every read command supports --json and
-      --no-index.
+      summary, sessions, cost, tools, models, turns, files, prs, search, export,
+      codex — plus a live log watcher. Read commands support --json; most
+      Claude Code reports also support --no-index.
   - title: Honest pricing math
     details:
       Separate Opus / Sonnet / Haiku tiers applied per-message from the model
