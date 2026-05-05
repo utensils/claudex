@@ -62,6 +62,9 @@ features:
 <div class="terminal">
 <span class="prompt">$</span> claudex summary<br>
 <br>
+<span class="comment"># Codex CLI activity from ~/.codex</span><br>
+<span class="prompt">$</span> claudex codex<br>
+<br>
 <span class="comment"># Top 5 projects by cost, last 30 days</span><br>
 <span class="prompt">$</span> claudex cost --limit 5<br>
 <br>

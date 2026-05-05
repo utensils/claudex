@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `claudex codex` report for Codex CLI session/state-file stats from `~/.codex`, with text and JSON output.
+
 ## [0.3.0] — 2026-04-23
 
 Second tagged release. Headline: new `session` drill-down report, install-source-aware `claudex update` subcommand, per-model tracking, and a schema v3 rebuild of the index.

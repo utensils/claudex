@@ -16,6 +16,7 @@ claudex reads the JSONL transcripts Claude Code writes under `~/.claude/projects
 
 ```bash
 claudex summary                  # dashboard: sessions, cost, top projects, model mix
+claudex codex                    # Codex CLI session/state stats
 claudex sessions --limit 10      # recent sessions
 claudex session 3f2a1b          # drill into one session (ID prefix or project name)
 claudex search "migration"       # full-text search across all transcripts
@@ -64,6 +65,7 @@ Source builds require Rust 1.95+. Prebuilt binaries have no runtime dependencies
 | Command                                                                   | What it does                                                         |
 | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | [`summary`](https://utensils.io/claudex/commands/summary)                 | Dashboard — sessions, cost, top projects/tools, model mix            |
+| `codex`                                                                   | Codex CLI session/state stats from `~/.codex`                        |
 | [`sessions`](https://utensils.io/claudex/commands/sessions)               | List sessions grouped by project                                     |
 | [`session <selector>`](https://utensils.io/claudex/commands/session)      | Drill into one session: cost, tools, files, PRs, turns, stop reasons |
 | [`cost`](https://utensils.io/claudex/commands/cost)                       | Token usage and approximate cost per project or per session          |
