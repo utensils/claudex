@@ -1,18 +1,19 @@
 ---
 name: claudex
-description: Query, search, and analyze Claude Code sessions using the claudex CLI. Use when asked about session history, token costs, tool usage, search past conversations, export sessions, or inspect Claude Code activity across projects.
+description: Query, search, and analyze Claude Code and Codex CLI sessions using the claudex CLI. Use when asked about session history, token costs, tool usage, search past conversations, export sessions, Codex stats, or inspect agent activity across projects.
 argument-hint: [subcommand or query]
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
 # claudex — Claude Code Session Analysis CLI
 
-claudex reads the JSONL transcripts Claude Code writes under `~/.claude/projects/`, indexes them into a local SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands.
+claudex reads the JSONL transcripts Claude Code writes under `~/.claude/projects/`, indexes them into a local SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. It can also summarize OpenAI Codex CLI session/state files under `~/.codex`.
 
 ## Quick Reference
 
 ```bash
-claudex summary                          # Dashboard: sessions, cost, tools, models
+claudex summary                          # Dashboard: Claude Code sessions, cost, tools, models
+claudex codex                            # Codex CLI session/state stats
 claudex cost                             # Token cost by project
 claudex sessions                         # List sessions grouped by project
 claudex search "schema migration"        # Full-text search across all sessions
@@ -30,22 +31,23 @@ claudex update                           # Self-update to latest release
 
 ## Global Options
 
-Every subcommand accepts:
+Common flags:
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Machine-readable JSON output (most subcommands) |
-| `--no-index` | Skip SQLite index, scan JSONL files directly |
-| `--color auto\|always\|never` | Color output control (honors `NO_COLOR`) |
+| Flag                          | Description                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `--json`                      | Machine-readable JSON output (most read subcommands)                                       |
+| `--no-index`                  | Skip the Claude Code SQLite index and scan JSONL files directly (Claude Code reports only) |
+| `--color auto\|always\|never` | Color output control (honors `NO_COLOR`)                                                   |
 
-**For agents**: always pass `--json` and pipe to `jq` for reliable parsing. The `--no-index` path produces matching results when the index hasn't been synced yet.
+**For agents**: always pass `--json` and pipe to `jq` for reliable parsing. For Claude Code reports, `--no-index` produces matching results when the index hasn't been synced yet. `claudex codex` reads `~/.codex` directly and does not use the Claude Code index.
 
 ## How to Use This Skill
 
 Parse `$ARGUMENTS` to determine the action:
 
 - If arguments look like a **question** about sessions, cost, or activity, pick the relevant subcommand(s)
-- If arguments start with a **subcommand** (`summary`, `cost`, `sessions`, `search`, `session`, `export`, `tools`, `models`, `turns`, `prs`, `files`, `index`, `update`, `completions`), run that subcommand
+- If arguments mention **Codex**, OpenAI Codex CLI, `~/.codex`, Codex threads, or Codex tools, use `claudex codex`
+- If arguments start with a **subcommand** (`summary`, `codex`, `cost`, `sessions`, `search`, `session`, `export`, `tools`, `models`, `turns`, `prs`, `files`, `index`, `update`, `completions`), run that subcommand
 - If arguments include a **query string** (e.g. "find sessions about Rust"), use `claudex search`
 - If no arguments, run `claudex summary`
 
@@ -57,6 +59,7 @@ claudex summary --json       # Machine-readable metrics
 ```
 
 JSON shape:
+
 ```json
 {
   "total_sessions": 142,
@@ -73,11 +76,64 @@ JSON shape:
   "avg_turn_duration_ms": 4823,
   "pr_count": 27,
   "files_modified_count": 1893,
-  "top_projects": [{"project": "myrepo", "sessions": 34}],
-  "top_tools": [{"tool": "Bash", "calls": 4201}],
-  "top_stop_reasons": [{"stop_reason": "end_turn", "count": 98}],
-  "model_distribution": [{"model": "claude-opus-4-7", "sessions": 55, "cost_usd": 32.10}],
-  "most_recent": {"project": "myrepo", "session_id": "abc123...", "date": "2026-04-24T..."}
+  "top_projects": [{ "project": "myrepo", "sessions": 34 }],
+  "top_tools": [{ "tool": "Bash", "calls": 4201 }],
+  "top_stop_reasons": [{ "stop_reason": "end_turn", "count": 98 }],
+  "model_distribution": [
+    { "model": "claude-opus-4-7", "sessions": 55, "cost_usd": 32.1 }
+  ],
+  "most_recent": {
+    "project": "myrepo",
+    "session_id": "abc123...",
+    "date": "2026-04-24T..."
+  }
+}
+```
+
+## Codex CLI Stats
+
+Summarize OpenAI Codex CLI sessions and state from `~/.codex`:
+
+```bash
+claudex codex              # Human-readable Codex activity report
+claudex codex --json       # Machine-readable Codex stats
+```
+
+Reads:
+
+- `~/.codex/sessions/**/rollout-*.jsonl` — active Codex session transcripts
+- `~/.codex/archived_sessions/rollout-*.jsonl` — archived Codex sessions
+- `~/.codex/session_index.jsonl` — optional thread titles
+- `~/.codex/state_5.sqlite` — optional thread/token totals, opened read-only
+
+JSON shape:
+
+```json
+{
+  "total_sessions": 1086,
+  "archived_sessions": 34,
+  "active_session_files": 1052,
+  "sessions_today": 18,
+  "sessions_this_week": 18,
+  "user_messages": 7908,
+  "agent_messages": 9977,
+  "reasoning_items": 79815,
+  "tool_calls": 52614,
+  "tool_results": 60427,
+  "aborted_turns": 218,
+  "compacted_events": 242,
+  "review_events": 810,
+  "top_projects": [{ "name": "/repo", "count": 300 }],
+  "top_tools": [{ "name": "shell", "count": 15022 }],
+  "cli_versions": [{ "name": "0.125.0", "count": 326 }],
+  "originators": [{ "name": "codex_exec", "count": 832 }],
+  "sources": [{ "name": "exec", "count": 421 }],
+  "most_recent": {
+    "session_id": "019...",
+    "project": "/repo",
+    "date": "2026-05-05T..."
+  },
+  "state": { "thread_count": 1010, "total_tokens_used": 3872293100 }
 }
 ```
 
@@ -119,8 +175,17 @@ claudex cost --json
 ```
 
 JSON shape per row:
+
 ```json
-[{"project": "myrepo", "sessions": 14, "cost_usd": 12.34, "input_tokens": 500000, "output_tokens": 200000}]
+[
+  {
+    "project": "myrepo",
+    "sessions": 14,
+    "cost_usd": 12.34,
+    "input_tokens": 500000,
+    "output_tokens": 200000
+  }
+]
 ```
 
 ## Full-Text Search
@@ -138,8 +203,17 @@ claudex search "TODO" --case-sensitive    # FTS5 is case-insensitive by default;
 Each hit shows: project, session ID prefix, date, role (user/assistant), and the matching line with the query highlighted.
 
 **For agents**: use `--json` to get structured hits:
+
 ```json
-[{"project": "...", "session_id": "...", "timestamp_ms": 1714000000000, "role": "assistant", "text": "..."}]
+[
+  {
+    "project": "...",
+    "session_id": "...",
+    "timestamp_ms": 1714000000000,
+    "role": "assistant",
+    "text": "..."
+  }
+]
 ```
 
 ## Tools
@@ -164,8 +238,17 @@ claudex models --json
 ```
 
 JSON shape:
+
 ```json
-[{"model": "claude-opus-4-7", "calls": 1234, "input_tokens": 5000000, "output_tokens": 1500000, "cost_usd": 45.67}]
+[
+  {
+    "model": "claude-opus-4-7",
+    "calls": 1234,
+    "input_tokens": 5000000,
+    "output_tokens": 1500000,
+    "cost_usd": 45.67
+  }
+]
 ```
 
 ## Turns
@@ -179,8 +262,18 @@ claudex turns --limit 10 --json
 ```
 
 JSON shape:
+
 ```json
-[{"project": "myrepo", "turn_count": 203, "avg_duration_ms": 5120, "p50_duration_ms": 3800, "p95_duration_ms": 18500, "max_duration_ms": 42100}]
+[
+  {
+    "project": "myrepo",
+    "turn_count": 203,
+    "avg_duration_ms": 5120,
+    "p50_duration_ms": 3800,
+    "p95_duration_ms": 18500,
+    "max_duration_ms": 42100
+  }
+]
 ```
 
 ## PRs
@@ -205,8 +298,9 @@ claudex files --limit 25 --json
 ```
 
 JSON shape:
+
 ```json
-[{"file": "src/main.rs", "modification_count": 47, "session_count": 12}]
+[{ "file": "src/main.rs", "modification_count": 47, "session_count": 12 }]
 ```
 
 ## Export
@@ -257,36 +351,49 @@ claudex completions powershell
 ## Agent Patterns
 
 **Get structured summary for a report:**
+
 ```bash
 claudex summary --json | jq '{sessions: .total_sessions, cost: .total_cost_usd, top_project: .top_projects[0].project}'
 ```
 
+**Get Codex CLI stats:**
+
+```bash
+claudex codex --json | jq '{sessions: .total_sessions, tools: .top_tools[0:5], tokens: .state.total_tokens_used}'
+```
+
 **Find the most expensive project this week:**
+
 ```bash
 claudex cost --json | jq 'max_by(.cost_usd) | {project, cost_usd}'
 ```
 
 **Search for past work on a topic and get session IDs:**
+
 ```bash
 claudex search "database migration" --json | jq '.[].session_id' | sort -u
 ```
 
 **Inspect a specific session by prefix:**
+
 ```bash
 claudex session e1a2f4 --json | jq '{project, cost_usd: .cost.total_usd, tools: .tool_calls | to_entries | sort_by(-.value) | .[0:5]}'
 ```
 
 **Find sessions that touched a specific file:**
+
 ```bash
 claudex sessions --file migrations/ --json | jq '.[].session_id'
 ```
 
 **p95 turn duration for one project:**
+
 ```bash
 claudex turns --project claudex --json | jq '.[0].p95_duration_ms'
 ```
 
 **Export the most recent session as Markdown:**
+
 ```bash
 claudex sessions --limit 1 --json | jq -r '.[0].session_id' | xargs -I{} claudex export {}
 ```
@@ -294,7 +401,8 @@ claudex sessions --limit 1 --json | jq -r '.[0].session_id' | xargs -I{} claudex
 ## Key Invariants for Agents
 
 - **Index staleness window is 300s** — the first read after 5 minutes triggers an incremental sync automatically. You rarely need `claudex index` explicitly.
-- **`--no-index` always matches** — if you bypass the index, results are identical; useful for freshness-critical queries.
+- **`--no-index` always matches for Claude Code reports** — if you bypass the index, results are identical; useful for freshness-critical queries.
+- **Codex stats are separate** — `claudex codex` reads `~/.codex` directly and never mutates Codex files or the Claude Code index.
 - **Session IDs are UUID prefixes** — 6+ hex chars disambiguate; if ambiguous, pass `--project` to filter candidates.
 - **Project names are path-decoded** — `/.hidden` in the filesystem shows as `--hidden` in output; `-seg` shows as `/seg`. Use the displayed name for `--project` filters.
 - **Costs are approximate** — Opus/Sonnet/Haiku tiers applied to raw token counts. Not billing-exact.
@@ -303,6 +411,7 @@ claudex sessions --limit 1 --json | jq -r '.[0].session_id' | xargs -I{} claudex
 ## Practical Tips
 
 - Use `claudex summary` for a quick health check of your Claude Code activity
+- Use `claudex codex` for OpenAI Codex CLI activity, tool usage, project counts, and state DB token totals
 - Use `claudex cost --per-session --project foo` to find expensive sessions in a specific project
 - Use `claudex search` to locate past conversations about a topic before starting a new session
 - Use `claudex files --project foo` to see what a project's "hot" files are across all sessions
