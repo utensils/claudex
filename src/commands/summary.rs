@@ -5,30 +5,33 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
+use crate::plan::Plan;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
-pub fn run(json: bool, no_index: bool) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(json) {
+pub fn run(json: bool, no_index: bool, plan: Plan) -> Result<()> {
+    if !no_index && let Ok(()) = run_indexed(json, plan) {
         return Ok(());
     }
-    run_from_files(json)
+    run_from_files(json, plan)
 }
 
-fn run_indexed(json: bool) -> Result<()> {
+fn run_indexed(json: bool, plan: Plan) -> Result<()> {
     let store = SessionStore::new()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&store)?;
     let data = idx.query_summary()?;
 
     if json {
-        let out = serde_json::json!({
+        // Plan-aware cost emission: Plan::Api preserves the historical
+        // `total_cost_usd` / `cost_this_week_usd` keys (backward-compat);
+        // Plan::FlatMonthly substitutes plan-relative fields.
+        let cost_obj = plan.cost_fields(data.total_cost, data.week_cost);
+        let mut out = serde_json::json!({
             "total_sessions": data.total_sessions,
             "sessions_today": data.sessions_today,
             "sessions_this_week": data.sessions_this_week,
-            "total_cost_usd": data.total_cost,
-            "cost_this_week_usd": data.week_cost,
             "total_input_tokens": data.total_input_tokens,
             "total_output_tokens": data.total_output_tokens,
             "total_cache_creation_tokens": data.total_cache_creation,
@@ -63,6 +66,15 @@ fn run_indexed(json: bool) -> Result<()> {
                 })
             }),
         });
+        // Merge plan-aware cost fields into the top-level object.
+        // - Plan::Api  → adds `total_cost_usd`, `cost_this_week_usd` (historical keys)
+        // - Plan::FlatMonthly → adds `actual_monthly_cost_usd`, `api_equivalent_*`,
+        //   `leverage_*_multiple` (no `total_cost_usd` to avoid ambiguity)
+        if let (Some(out_obj), Some(cost_obj)) = (out.as_object_mut(), cost_obj.as_object()) {
+            for (k, v) in cost_obj {
+                out_obj.insert(k.clone(), v.clone());
+            }
+        }
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -214,7 +226,7 @@ fn run_indexed(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_from_files(json: bool) -> Result<()> {
+fn run_from_files(json: bool, plan: Plan) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(None)?;
 
@@ -351,12 +363,11 @@ fn run_from_files(json: bool) -> Result<()> {
     };
 
     if json {
-        let out = serde_json::json!({
+        let cost_obj = plan.cost_fields(total_cost, week_cost);
+        let mut out = serde_json::json!({
             "total_sessions": total_sessions,
             "sessions_today": sessions_today,
             "sessions_this_week": sessions_this_week,
-            "total_cost_usd": total_cost,
-            "cost_this_week_usd": week_cost,
             "total_input_tokens": total_usage.input_tokens,
             "total_output_tokens": total_usage.output_tokens,
             "total_cache_creation_tokens": total_usage.cache_creation_tokens,
@@ -378,6 +389,11 @@ fn run_from_files(json: bool) -> Result<()> {
                 "message_count": r.message_count,
             })),
         });
+        if let (Some(out_obj), Some(cost_obj)) = (out.as_object_mut(), cost_obj.as_object()) {
+            for (k, v) in cost_obj {
+                out_obj.insert(k.clone(), v.clone());
+            }
+        }
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
