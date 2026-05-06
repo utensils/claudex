@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 pub mod commands;
 pub mod index;
 pub mod parser;
+pub mod plan;
 pub mod stats;
 pub mod store;
 pub mod types;
