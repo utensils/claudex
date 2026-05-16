@@ -48,6 +48,8 @@ Notes:
   only — there's no file-scan fallback path, so `--no-index` isn't accepted.
 - `summary` is a whole-tree dashboard; filtering by project or row limit
   doesn't apply.
+- `summary` also accepts `--plan <api|flat-monthly:USD>` to reframe the cost
+  section for flat-fee subscribers. See [`summary`](/commands/summary).
 
 ## Actions
 

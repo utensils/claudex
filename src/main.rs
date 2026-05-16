@@ -1,7 +1,10 @@
+use std::str::FromStr;
+
 use clap::builder::ValueHint;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use claudex::commands;
+use claudex::plan::Plan;
 use claudex::ui::{self, ColorChoice};
 
 #[derive(Parser)]
@@ -131,6 +134,17 @@ Custom path:
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
+        /// Subscription plan for cost reporting.
+        /// Accepts `api` (default — token-priced) or `flat-monthly:USD`
+        /// (e.g. `flat-monthly:250` for Claude Pro Max).
+        /// Under `flat-monthly`, the human-readable cost section gains
+        /// "Plan / Actual monthly / API equivalent / Leverage" rows, and
+        /// `--json` adds `plan`, `actual_monthly_cost_usd`,
+        /// `api_equivalent_total_usd`, `api_equivalent_week_usd`, and
+        /// `leverage_this_week_multiple` alongside the historical
+        /// `total_cost_usd` / `cost_this_week_usd` keys.
+        #[arg(long, value_parser = Plan::from_str, default_value = "api")]
+        plan: Plan,
     },
     /// Detailed report for a single session
     Session {
@@ -320,7 +334,11 @@ fn main() {
             no_index,
         } => commands::tools::run(project.as_deref(), per_session, limit, json, no_index),
         Commands::Watch { raw, follow } => commands::watch::run(raw, follow.as_deref()),
-        Commands::Summary { json, no_index } => commands::summary::run(json, no_index),
+        Commands::Summary {
+            json,
+            no_index,
+            plan,
+        } => commands::summary::run(json, no_index, plan),
         Commands::Session {
             selector,
             project,

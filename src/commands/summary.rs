@@ -5,30 +5,29 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
+use crate::plan::Plan;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
-pub fn run(json: bool, no_index: bool) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(json) {
+pub fn run(json: bool, no_index: bool, plan: Plan) -> Result<()> {
+    if !no_index && let Ok(()) = run_indexed(json, plan) {
         return Ok(());
     }
-    run_from_files(json)
+    run_from_files(json, plan)
 }
 
-fn run_indexed(json: bool) -> Result<()> {
+fn run_indexed(json: bool, plan: Plan) -> Result<()> {
     let store = SessionStore::new()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&store)?;
     let data = idx.query_summary()?;
 
     if json {
-        let out = serde_json::json!({
+        let mut out = serde_json::json!({
             "total_sessions": data.total_sessions,
             "sessions_today": data.sessions_today,
             "sessions_this_week": data.sessions_this_week,
-            "total_cost_usd": data.total_cost,
-            "cost_this_week_usd": data.week_cost,
             "total_input_tokens": data.total_input_tokens,
             "total_output_tokens": data.total_output_tokens,
             "total_cache_creation_tokens": data.total_cache_creation,
@@ -63,6 +62,9 @@ fn run_indexed(json: bool) -> Result<()> {
                 })
             }),
         });
+        out.as_object_mut()
+            .expect("json! macro produces a JSON object")
+            .extend(plan.cost_fields(data.total_cost, data.week_cost));
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -81,9 +83,7 @@ fn run_indexed(json: bool) -> Result<()> {
         ui::fmt_count(data.sessions_this_week as u64)
     );
 
-    section("Cost (estimated)");
-    println!("  All time:   {}", ui::cost(data.total_cost));
-    println!("  This week:  {}", ui::cost(data.week_cost));
+    print_cost_section(plan, data.total_cost, data.week_cost);
 
     section("Tokens");
     println!(
@@ -214,7 +214,7 @@ fn run_indexed(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_from_files(json: bool) -> Result<()> {
+fn run_from_files(json: bool, plan: Plan) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(None)?;
 
@@ -351,12 +351,10 @@ fn run_from_files(json: bool) -> Result<()> {
     };
 
     if json {
-        let out = serde_json::json!({
+        let mut out = serde_json::json!({
             "total_sessions": total_sessions,
             "sessions_today": sessions_today,
             "sessions_this_week": sessions_this_week,
-            "total_cost_usd": total_cost,
-            "cost_this_week_usd": week_cost,
             "total_input_tokens": total_usage.input_tokens,
             "total_output_tokens": total_usage.output_tokens,
             "total_cache_creation_tokens": total_usage.cache_creation_tokens,
@@ -378,6 +376,9 @@ fn run_from_files(json: bool) -> Result<()> {
                 "message_count": r.message_count,
             })),
         });
+        out.as_object_mut()
+            .expect("json! macro produces a JSON object")
+            .extend(plan.cost_fields(total_cost, week_cost));
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -390,9 +391,7 @@ fn run_from_files(json: bool) -> Result<()> {
     println!("  Today:      {}", ui::fmt_count(sessions_today as u64));
     println!("  This week:  {}", ui::fmt_count(sessions_this_week as u64));
 
-    section("Cost (estimated)");
-    println!("  All time:   {}", ui::cost(total_cost));
-    println!("  This week:  {}", ui::cost(week_cost));
+    print_cost_section(plan, total_cost, week_cost);
 
     section("Tokens");
     println!("  Input:       {}", ui::count(total_usage.input_tokens));
@@ -516,4 +515,32 @@ fn run_from_files(json: bool) -> Result<()> {
 fn section(title: &str) {
     println!("\n{}", ui::section_title(title));
     println!("{}", "─".repeat(title.len()));
+}
+
+/// Render the human-readable cost section, plan-aware. Under `Plan::Api`
+/// this is the historical "All time / This week" pair. Under
+/// `Plan::FlatMonthly` it adds the user's flat rate, the API-equivalent
+/// figures, and the calendar-week leverage multiple. Leverage math is
+/// delegated to `Plan::leverage_this_week` so the JSON output and this
+/// text output share a single source of truth.
+fn print_cost_section(plan: Plan, total_api: f64, week_api: f64) {
+    section("Cost (estimated)");
+    match plan {
+        Plan::Api => {
+            println!("  All time:   {}", ui::cost(total_api));
+            println!("  This week:  {}", ui::cost(week_api));
+        }
+        Plan::FlatMonthly { usd_per_month } => {
+            println!(
+                "  Plan:                 flat-monthly  {}/mo",
+                ui::cost(usd_per_month)
+            );
+            println!("  API equivalent (all): {}", ui::cost(total_api));
+            println!("  API equivalent (wk):  {}", ui::cost(week_api));
+            match plan.leverage_this_week(week_api) {
+                Some(lev) => println!("  Leverage this week:   {lev:.1}x"),
+                None => println!("  Leverage this week:   —  (no usage yet)"),
+            }
+        }
+    }
 }

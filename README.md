@@ -15,12 +15,13 @@ claudex reads the JSONL transcripts Claude Code writes under `~/.claude/projects
 ## Quickstart
 
 ```bash
-claudex summary                  # dashboard: sessions, cost, top projects, model mix
-claudex codex                    # Codex CLI session/state stats
-claudex sessions --limit 10      # recent sessions
-claudex session 3f2a1b          # drill into one session (ID prefix or project name)
-claudex search "migration"       # full-text search across all transcripts
-claudex cost --per-session       # token & cost breakdown
+claudex summary                              # dashboard: sessions, cost, top projects, model mix
+claudex summary --plan flat-monthly:250      # reframe cost for a flat subscription (Pro/Pro Max)
+claudex codex                                # Codex CLI session/state stats
+claudex sessions --limit 10                  # recent sessions
+claudex session 3f2a1b                       # drill into one session (ID prefix or project name)
+claudex search "migration"                   # full-text search across all transcripts
+claudex cost --per-session                   # token & cost breakdown
 claudex export 3f2a1b --format markdown > session.md
 ```
 
