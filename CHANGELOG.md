@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-15
+
+Third tagged release. Headline: a new `claudex codex` report that summarizes OpenAI Codex CLI activity from `~/.codex`, a `summary --plan flat-monthly:USD` flag that reframes the cost section for flat-fee subscribers (Pro / Pro Max / Team flat-fee), and a packaged Claude Code skill at `.claude/skills/claudex/` for end-user slash commands and autonomous-agent workflows.
+
 ### Added
 
-- New `claudex codex` report for Codex CLI session/state-file stats from `~/.codex`, with text and JSON output.
+- New `claudex codex` report ([#19](https://github.com/utensils/claudex/pull/19)): session and state-file stats for the OpenAI Codex CLI. Scans `~/.codex/sessions`, `~/.codex/archived_sessions`, the optional `~/.codex/state_5.sqlite` state DB, and `~/.codex/session_index.jsonl`. Surfaces session counts (today / week / total / archived / active files), message and tool-call totals, top projects, top tools, CLI versions, originators, sources, and optional state-DB thread/token totals. Supports `--json`. `codex` is intentionally outside the `~/.claudex/` index pipeline — it reads `~/.codex` directly on every invocation and so does not accept `--no-index`.
+- New `claudex summary --plan <api|flat-monthly:USD>` flag ([#20](https://github.com/utensils/claudex/pull/20)) for users on flat Claude subscriptions. `--plan api` is the default and is bit-identical to v0.3.0. `--plan flat-monthly:250` keeps the historical `total_cost_usd` / `cost_this_week_usd` JSON keys (existing pipelines keep working) and additively emits `plan`, `actual_monthly_cost_usd`, `api_equivalent_total_usd`, `api_equivalent_week_usd`, and `leverage_this_week_multiple`. Leverage is computed against a calendar-accurate `365.25 / 12 / 7 ≈ 4.348` weeks-per-month; it serializes as JSON `null` when there's no usage this week, rather than a misleading `0.0`. The human-readable cost section becomes plan-aware (Plan / API equivalent / Leverage this week).
+- New `src/plan.rs` module with shared `WEEKS_PER_MONTH` const and `Plan::leverage_this_week`, so the JSON output and the human-readable `summary` cost section share a single source of truth.
+- Claude Code skill at `.claude/skills/claudex/SKILL.md` ([#18](https://github.com/utensils/claudex/pull/18)): a complete `/claudex` slash-command spec covering every subcommand, JSON shape, and agent-oriented `jq` pipeline. New `website/guide/skill.md` documents three installation paths (personal, project-local, repo clone) and updates the docs sidebar with an Integrations section.
+
+### Docs
+
+- `website/commands/codex.md` and `website/commands/summary.md` documented for the new report and flag. `website/commands/index.md` flag matrix lists `codex` and notes the `summary --plan` exception.
+- `website/guide/json-output.md` documents the additive flat-monthly JSON keys explicitly, including the `null` leverage rule.
+- `website/guide/quickstart.md` and `website/index.md` updated to feature `codex` alongside the Claude Code reports.
+- `README.md` Quickstart shows `summary --plan flat-monthly:250`, and the subcommands table hyperlinks `codex`.
+- `CLAUDE.md` records that `codex` bypasses the index pipeline (reads `~/.codex` directly), and adds `src/stats.rs` / `src/plan.rs` to the module layout. Documented schema version bumped 2 → 3 to match `src/index.rs`. ([#21](https://github.com/utensils/claudex/pull/21))
+- `website/guide/architecture.md` and `website/guide/index.md` tightened so the "every read command supports `--no-index`" claim correctly carves out `codex` (reads `~/.codex` directly) and the index-only reports.
 
 ## [0.3.0] — 2026-04-23
 
@@ -75,6 +91,7 @@ First tagged release. Install paths: `install.sh`, `cargo install --git … --ta
 - Cleanup: untrack cruft, tighten `.gitignore`, sync docs, bump MSRV to 1.95 ([#11](https://github.com/utensils/claudex/pull/11)).
 - Docs align recipes and command shapes with v0.2.0 ([#14](https://github.com/utensils/claudex/pull/14)).
 
-[unreleased]: https://github.com/utensils/claudex/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/utensils/claudex/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/utensils/claudex/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/utensils/claudex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/utensils/claudex/releases/tag/v0.2.0
