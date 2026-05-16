@@ -6,7 +6,7 @@ first.
 ## Usage
 
 ```bash
-claudex summary [--json] [--no-index]
+claudex summary [--json] [--no-index] [--plan <api|flat-monthly:USD>]
 ```
 
 ## What it shows
@@ -27,10 +27,11 @@ claudex summary [--json] [--no-index]
 
 ## Flags
 
-| Flag         | Description                                       |
-| ------------ | ------------------------------------------------- |
-| `--json`     | Emit JSON (see shape below).                      |
-| `--no-index` | Scan JSONL files directly; don't touch the index. |
+| Flag                             | Description                                                                                                           |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--json`                         | Emit JSON (see shape below).                                                                                          |
+| `--no-index`                     | Scan JSONL files directly; don't touch the index.                                                                     |
+| `--plan <api\|flat-monthly:USD>` | Cost-reporting mode. `api` (default) prices tokens at API rates. `flat-monthly:250` reframes for a flat subscription. |
 
 ## Example
 
@@ -42,7 +43,13 @@ claudex summary
 claudex summary --json | jq '.total_cost_usd'
 ```
 
-## JSON shape
+```bash
+# Pro Max user: how much value am I extracting from a $250/mo plan?
+claudex summary --plan flat-monthly:250
+claudex summary --plan flat-monthly:250 --json | jq '.leverage_this_week_multiple'
+```
+
+## JSON shape (default — `--plan api`)
 
 ```json
 {
@@ -76,9 +83,44 @@ claudex summary --json | jq '.total_cost_usd'
 }
 ```
 
+## JSON shape (`--plan flat-monthly:USD`)
+
+The flat-monthly mode is **additive**. The historical `total_cost_usd` and
+`cost_this_week_usd` keys are still present (so existing pipelines keep
+working), and the following keys are added:
+
+```json
+{
+  "...": "all default fields above are also present",
+  "total_cost_usd": 18188.4,
+  "cost_this_week_usd": 3136.21,
+  "plan": "flat-monthly",
+  "actual_monthly_cost_usd": 250.0,
+  "api_equivalent_total_usd": 18188.4,
+  "api_equivalent_week_usd": 3136.21,
+  "leverage_this_week_multiple": 54.54
+}
+```
+
+| Key                           | Meaning                                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `plan`                        | Discriminator — `"flat-monthly"` when set; absent under `--plan api`.                                              |
+| `actual_monthly_cost_usd`     | The flat fee passed in, e.g. `250.0` for `flat-monthly:250`.                                                       |
+| `api_equivalent_total_usd`    | Lifetime API-rate value of all sessions. Equal to `total_cost_usd`.                                                |
+| `api_equivalent_week_usd`     | This week's API-rate value. Equal to `cost_this_week_usd`.                                                         |
+| `leverage_this_week_multiple` | `api_equivalent_week_usd ÷ (actual_monthly_cost_usd ÷ 4.348)` — this week's value vs. a week's worth of plan cost. |
+
 ## Notes
 
 - **Week boundary.** "This week" starts Monday 00:00 in the local time zone.
 - **Cost is approximate.** See [Pricing model](/reference/pricing).
 - **Missing `most_recent`.** If `~/.claude/projects/` is empty, `most_recent`
   is `null`.
+- **Plan-relative leverage is _this-week_, not lifetime.** `4.348` is the
+  calendar-accurate weeks-per-month constant (`365.25 / 12 / 7`). A lifetime
+  leverage figure would conflate accounts of different ages and is
+  intentionally not emitted; consumers can derive their own with the
+  `api_equivalent_total_usd` / `actual_monthly_cost_usd` pair plus their own
+  months-on-plan count.
+- **`--plan` only affects the cost section.** Sessions, tokens, top
+  projects/tools, model distribution, and turn metrics are unchanged.

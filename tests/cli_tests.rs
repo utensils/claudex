@@ -386,6 +386,86 @@ fn summary_text_has_sections() {
     assert!(s.contains("Top Projects"));
 }
 
+#[test]
+fn summary_json_plan_api_is_byte_compatible_with_default() {
+    // Explicitly passing `--plan api` must not change the JSON shape — that's
+    // the backward-compat contract for users who never set the flag.
+    let home = fixture_home();
+    let default = run(home.path(), &["summary", "--json"]);
+    let explicit = run(home.path(), &["summary", "--json", "--plan", "api"]);
+    assert!(default.status.success() && explicit.status.success());
+    assert_eq!(stdout_of(&default), stdout_of(&explicit));
+}
+
+#[test]
+fn summary_json_plan_flat_monthly_emits_plan_keys_and_keeps_legacy() {
+    let home = fixture_home();
+    let out = run(
+        home.path(),
+        &["summary", "--json", "--plan", "flat-monthly:250"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    // Discriminator + new keys.
+    assert_eq!(v.get("plan").and_then(Value::as_str), Some("flat-monthly"));
+    assert_eq!(
+        v.get("actual_monthly_cost_usd").and_then(Value::as_f64),
+        Some(250.0)
+    );
+    for field in [
+        "api_equivalent_total_usd",
+        "api_equivalent_week_usd",
+        "leverage_this_week_multiple",
+    ] {
+        assert!(v.get(field).is_some(), "missing {field}");
+    }
+    // Backward-compat keys are still present.
+    assert!(v.get("total_cost_usd").is_some());
+    assert!(v.get("cost_this_week_usd").is_some());
+    // The aliases agree with the legacy keys.
+    assert_eq!(v["total_cost_usd"], v["api_equivalent_total_usd"]);
+    assert_eq!(v["cost_this_week_usd"], v["api_equivalent_week_usd"]);
+}
+
+#[test]
+fn summary_text_plan_flat_monthly_renders_leverage_row() {
+    let home = fixture_home();
+    let out = run(
+        home.path(),
+        &["--color", "never", "summary", "--plan", "flat-monthly:250"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(s.contains("flat-monthly"), "missing plan label: {s}");
+    assert!(
+        s.contains("Leverage this week"),
+        "missing leverage row: {s}"
+    );
+    assert!(s.contains("API equivalent"), "missing API-equivalent: {s}");
+}
+
+#[test]
+fn summary_plan_invalid_value_is_rejected() {
+    let home = fixture_home();
+    let out = run(home.path(), &["summary", "--plan", "flat-monthly:abc"]);
+    assert!(!out.status.success(), "expected non-zero exit");
+    let err = stderr_of(&out);
+    assert!(err.contains("--plan") || err.contains("invalid"));
+}
+
+#[test]
+fn summary_plan_is_summary_scoped_not_global() {
+    // --plan is a `summary`-local flag now (not global). It must not be
+    // accepted at the top level alongside another subcommand.
+    let home = fixture_home();
+    let out = run(home.path(), &["--plan", "flat-monthly:250", "cost"]);
+    assert!(
+        !out.status.success(),
+        "expected --plan to be rejected as a global flag, got success: {}",
+        stdout_of(&out)
+    );
+}
+
 // --- models / prs / files / turns ---
 
 #[test]

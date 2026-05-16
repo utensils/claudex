@@ -52,6 +52,11 @@ Single object. Keys: `total_sessions`, `sessions_today`,
 `top_tools`, `top_stop_reasons`, `model_distribution`, `most_recent`. See
 [`summary`](/commands/summary) for the full shape.
 
+When invoked with `--plan flat-monthly:USD`, `summary --json` adds (without
+removing any of the keys above) a `plan` discriminator and the
+`actual_monthly_cost_usd`, `api_equivalent_total_usd`,
+`api_equivalent_week_usd`, and `leverage_this_week_multiple` keys.
+
 ### `codex`
 
 Single object. Keys: `total_sessions`, `archived_sessions`,

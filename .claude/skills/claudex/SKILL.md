@@ -54,11 +54,20 @@ Parse `$ARGUMENTS` to determine the action:
 ## Dashboard
 
 ```bash
-claudex summary              # Human-readable dashboard
-claudex summary --json       # Machine-readable metrics
+claudex summary                                    # Human-readable dashboard
+claudex summary --json                             # Machine-readable metrics
+claudex summary --plan flat-monthly:250            # Reframe for a flat-fee subscription
+claudex summary --plan flat-monthly:250 --json     # Same, machine-readable
 ```
 
-JSON shape:
+`--plan flat-monthly:USD` is **summary-only** (other commands reject it). It
+doesn't remove any historical JSON keys — `total_cost_usd` and
+`cost_this_week_usd` are still emitted — but it adds a `plan`
+discriminator and the `actual_monthly_cost_usd`, `api_equivalent_total_usd`,
+`api_equivalent_week_usd`, and `leverage_this_week_multiple` keys for users
+on Claude Pro / Pro Max / Team flat-fee tiers.
+
+JSON shape (default — `--plan api`):
 
 ```json
 {
@@ -89,6 +98,20 @@ JSON shape:
   }
 }
 ```
+
+When `--plan flat-monthly:250` is set, the same object additionally contains:
+
+```json
+{
+  "plan": "flat-monthly",
+  "actual_monthly_cost_usd": 250.0,
+  "api_equivalent_total_usd": 18188.4,
+  "api_equivalent_week_usd": 3136.21,
+  "leverage_this_week_multiple": 54.54
+}
+```
+
+`leverage_this_week_multiple` is `api_equivalent_week_usd ÷ (actual_monthly_cost_usd ÷ 4.348)` — this week's API value vs. one week's worth of plan cost. There is intentionally no lifetime-leverage field because that would conflate accounts of different ages.
 
 ## Codex CLI Stats
 
@@ -368,6 +391,13 @@ claudex codex --json | jq '{sessions: .total_sessions, tools: .top_tools[0:5], t
 claudex cost --json | jq 'max_by(.cost_usd) | {project, cost_usd}'
 ```
 
+**Pro Max user — am I getting my money's worth this week?**
+
+```bash
+claudex summary --plan flat-monthly:250 --json \
+  | jq '{plan_cost: .actual_monthly_cost_usd, api_value_this_week: .api_equivalent_week_usd, leverage_this_week: .leverage_this_week_multiple}'
+```
+
 **Search for past work on a topic and get session IDs:**
 
 ```bash
@@ -406,7 +436,8 @@ claudex sessions --limit 1 --json | jq -r '.[0].session_id' | xargs -I{} claudex
 - **Session IDs are UUID prefixes** — 6+ hex chars disambiguate; if ambiguous, pass `--project` to filter candidates.
 - **Project names are path-decoded** — `/.hidden` in the filesystem shows as `--hidden` in output; `-seg` shows as `/seg`. Use the displayed name for `--project` filters.
 - **Costs are approximate** — Opus/Sonnet/Haiku tiers applied to raw token counts. Not billing-exact.
-- **`--json` output shape is stable** — safe to script against; breaking changes would be a semver bump.
+- **`--json` output shape is stable** — safe to script against; breaking changes would be a semver bump. New keys may be added (e.g. `--plan flat-monthly:USD` adds plan-relative keys to `summary --json` without removing the existing `total_cost_usd` / `cost_this_week_usd`).
+- **`--plan` is summary-only** — `claudex summary --plan flat-monthly:250` works; passing `--plan` to other subcommands or as a global flag will fail. The flag affects both human-readable and `--json` output.
 
 ## Practical Tips
 

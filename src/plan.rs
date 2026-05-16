@@ -8,14 +8,23 @@
 //!
 //! `Plan::FlatMonthly { usd_per_month }` lets the user pass `--plan
 //! flat-monthly:250` and get plan-relative reporting: actual flat cost,
-//! API-equivalent value (preserved), and a leverage multiple.
+//! API-equivalent value (preserved), and a "leverage this week" multiple.
 //!
-//! The default `Plan::Api` is wire-compatible with previous claudex versions —
-//! same JSON keys, same human-readable output.
+//! Backward compat: under both `Plan::Api` (the default) and
+//! `Plan::FlatMonthly`, the historical `total_cost_usd` /
+//! `cost_this_week_usd` keys are still emitted, so existing pipelines keep
+//! working. Flat-monthly *adds* a `plan` discriminator and the new
+//! `actual_monthly_cost_usd`, `api_equivalent_*`, and
+//! `leverage_this_week_multiple` keys alongside them.
 
 use std::str::FromStr;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+
+/// Average days per month (365.25 / 12) divided by 7 days/week. Used to
+/// extrapolate "this week" API value to a monthly-cost comparison without
+/// the ~8% under-reporting bias of treating a month as exactly 4 weeks.
+const WEEKS_PER_MONTH: f64 = 365.25 / 12.0 / 7.0; // ≈ 4.348
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Plan {
@@ -23,7 +32,8 @@ pub enum Plan {
     #[default]
     Api,
     /// Flat monthly subscription. `usd_per_month` is the user's recurring fee.
-    /// Outputs reframe API-priced totals as "API-equivalent" + leverage.
+    /// Outputs add plan-relative keys alongside the historical API-priced
+    /// totals.
     FlatMonthly { usd_per_month: f64 },
 }
 
@@ -53,41 +63,47 @@ impl FromStr for Plan {
 }
 
 impl Plan {
-    /// Returns the JSON cost fields for the given plan.
+    /// JSON cost fields for the given plan. Returns a `Map` (not a `Value`)
+    /// so callers can `extend` it into a parent object without an
+    /// `as_object()` downcast that could silently drop fields on type
+    /// mismatch.
     ///
-    /// For `Plan::Api`, returns the historical two-key shape:
+    /// `Plan::Api` returns the historical two-key shape:
     ///   `{ "total_cost_usd": .., "cost_this_week_usd": .. }`
     ///
-    /// For `Plan::FlatMonthly`, returns plan-relative fields:
-    ///   `{ "actual_monthly_cost_usd": ..,
-    ///      "api_equivalent_total_usd": ..,
-    ///      "api_equivalent_week_usd": ..,
-    ///      "leverage_total_multiple": ..,
-    ///      "leverage_monthly_multiple": .. }`
-    pub fn cost_fields(self, api_total: f64, api_week: f64) -> Value {
-        match self {
-            Plan::Api => json!({
-                "total_cost_usd": api_total,
-                "cost_this_week_usd": api_week,
-            }),
-            Plan::FlatMonthly { usd_per_month } => {
-                let leverage_total = api_total / usd_per_month;
-                let leverage_monthly = (api_week * 4.0) / usd_per_month;
-                json!({
-                    "actual_monthly_cost_usd": usd_per_month,
-                    "api_equivalent_total_usd": api_total,
-                    "api_equivalent_week_usd": api_week,
-                    "leverage_total_multiple": leverage_total,
-                    "leverage_monthly_multiple": leverage_monthly,
-                })
-            }
+    /// `Plan::FlatMonthly` keeps the historical keys (so existing pipelines
+    /// don't break) and adds:
+    ///   `plan`, `actual_monthly_cost_usd`, `api_equivalent_total_usd`,
+    ///   `api_equivalent_week_usd`, `leverage_this_week_multiple`.
+    pub fn cost_fields(self, api_total: f64, api_week: f64) -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("total_cost_usd".into(), json!(api_total));
+        m.insert("cost_this_week_usd".into(), json!(api_week));
+        if let Plan::FlatMonthly { usd_per_month } = self {
+            let weekly_plan_cost = usd_per_month / WEEKS_PER_MONTH;
+            let leverage_this_week = if weekly_plan_cost > 0.0 {
+                api_week / weekly_plan_cost
+            } else {
+                0.0
+            };
+            m.insert("plan".into(), json!("flat-monthly"));
+            m.insert("actual_monthly_cost_usd".into(), json!(usd_per_month));
+            m.insert("api_equivalent_total_usd".into(), json!(api_total));
+            m.insert("api_equivalent_week_usd".into(), json!(api_week));
+            m.insert(
+                "leverage_this_week_multiple".into(),
+                json!(leverage_this_week),
+            );
         }
+        m
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Parsing ---
 
     #[test]
     fn parse_api_default() {
@@ -128,33 +144,73 @@ mod tests {
         assert!(Plan::from_str("").is_err());
     }
 
-    #[test]
-    fn cost_fields_api_default_shape() {
-        let v = Plan::Api.cost_fields(18188.40, 3136.21);
-        assert_eq!(v["total_cost_usd"], 18188.40);
-        assert_eq!(v["cost_this_week_usd"], 3136.21);
-        // Plan::Api must NOT emit flat-monthly keys (backward compat).
-        assert!(v.get("actual_monthly_cost_usd").is_none());
-        assert!(v.get("leverage_total_multiple").is_none());
-    }
+    // --- JSON shape: Plan::Api preserves historical keys ---
 
     #[test]
-    fn cost_fields_flat_monthly_shape_and_math() {
+    fn cost_fields_api_default_shape() {
+        let m = Plan::Api.cost_fields(18188.40, 3136.21);
+        assert_eq!(m["total_cost_usd"], 18188.40);
+        assert_eq!(m["cost_this_week_usd"], 3136.21);
+        // Plan::Api must NOT emit flat-monthly keys (backward compat).
+        assert!(m.get("plan").is_none());
+        assert!(m.get("actual_monthly_cost_usd").is_none());
+        assert!(m.get("leverage_this_week_multiple").is_none());
+        assert_eq!(m.len(), 2);
+    }
+
+    // --- JSON shape: Plan::FlatMonthly is additive ---
+
+    #[test]
+    fn cost_fields_flat_monthly_keeps_historical_keys() {
+        // Pipelines that grep `.total_cost_usd` must keep working when a user
+        // switches to a flat-monthly plan.
         let plan = Plan::FlatMonthly {
             usd_per_month: 250.0,
         };
-        let v = plan.cost_fields(18188.40, 3136.21);
-        assert_eq!(v["actual_monthly_cost_usd"], 250.0);
-        assert_eq!(v["api_equivalent_total_usd"], 18188.40);
-        assert_eq!(v["api_equivalent_week_usd"], 3136.21);
-        // 18188.40 / 250 = 72.7536
-        let lev_total = v["leverage_total_multiple"].as_f64().unwrap();
-        assert!((lev_total - 72.7536).abs() < 1e-9, "got {lev_total}");
-        // (3136.21 * 4) / 250 = 50.17936
-        let lev_month = v["leverage_monthly_multiple"].as_f64().unwrap();
-        assert!((lev_month - 50.17936).abs() < 1e-9, "got {lev_month}");
-        // Plan::FlatMonthly must NOT emit api-default keys (clean separation).
-        assert!(v.get("total_cost_usd").is_none());
-        assert!(v.get("cost_this_week_usd").is_none());
+        let m = plan.cost_fields(18188.40, 3136.21);
+        assert_eq!(m["total_cost_usd"], 18188.40);
+        assert_eq!(m["cost_this_week_usd"], 3136.21);
+    }
+
+    #[test]
+    fn cost_fields_flat_monthly_emits_discriminator_and_aliases() {
+        let plan = Plan::FlatMonthly {
+            usd_per_month: 250.0,
+        };
+        let m = plan.cost_fields(18188.40, 3136.21);
+        assert_eq!(m["plan"], "flat-monthly");
+        assert_eq!(m["actual_monthly_cost_usd"], 250.0);
+        assert_eq!(m["api_equivalent_total_usd"], 18188.40);
+        assert_eq!(m["api_equivalent_week_usd"], 3136.21);
+    }
+
+    #[test]
+    fn cost_fields_flat_monthly_leverage_uses_calendar_weeks() {
+        // With the calendar-accurate WEEKS_PER_MONTH = 365.25/12/7 ≈ 4.348,
+        // weekly_plan_cost(250) ≈ 57.50 and leverage = 3136.21 / 57.50 ≈ 54.54.
+        // The naive (week × 4) / monthly used previously would give ≈ 50.18 —
+        // an ~8% under-report.
+        let plan = Plan::FlatMonthly {
+            usd_per_month: 250.0,
+        };
+        let m = plan.cost_fields(18188.40, 3136.21);
+        let lev = m["leverage_this_week_multiple"].as_f64().unwrap();
+        let expected = 3136.21 / (250.0 / WEEKS_PER_MONTH);
+        assert!((lev - expected).abs() < 1e-9, "got {lev}, want {expected}");
+        // Sanity-check the rough magnitude so a future change can't silently
+        // drift back to the buggy 4-weeks-per-month math.
+        assert!(
+            (lev - 54.54).abs() < 0.05,
+            "calendar-week leverage should be ~54.54, got {lev}"
+        );
+    }
+
+    #[test]
+    fn cost_fields_flat_monthly_zero_week_yields_zero_leverage() {
+        let plan = Plan::FlatMonthly {
+            usd_per_month: 250.0,
+        };
+        let m = plan.cost_fields(18188.40, 0.0);
+        assert_eq!(m["leverage_this_week_multiple"], 0.0);
     }
 }

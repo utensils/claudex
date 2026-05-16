@@ -24,10 +24,6 @@ fn run_indexed(json: bool, plan: Plan) -> Result<()> {
     let data = idx.query_summary()?;
 
     if json {
-        // Plan-aware cost emission: Plan::Api preserves the historical
-        // `total_cost_usd` / `cost_this_week_usd` keys (backward-compat);
-        // Plan::FlatMonthly substitutes plan-relative fields.
-        let cost_obj = plan.cost_fields(data.total_cost, data.week_cost);
         let mut out = serde_json::json!({
             "total_sessions": data.total_sessions,
             "sessions_today": data.sessions_today,
@@ -66,15 +62,9 @@ fn run_indexed(json: bool, plan: Plan) -> Result<()> {
                 })
             }),
         });
-        // Merge plan-aware cost fields into the top-level object.
-        // - Plan::Api  → adds `total_cost_usd`, `cost_this_week_usd` (historical keys)
-        // - Plan::FlatMonthly → adds `actual_monthly_cost_usd`, `api_equivalent_*`,
-        //   `leverage_*_multiple` (no `total_cost_usd` to avoid ambiguity)
-        if let (Some(out_obj), Some(cost_obj)) = (out.as_object_mut(), cost_obj.as_object()) {
-            for (k, v) in cost_obj {
-                out_obj.insert(k.clone(), v.clone());
-            }
-        }
+        out.as_object_mut()
+            .expect("json! macro produces a JSON object")
+            .extend(plan.cost_fields(data.total_cost, data.week_cost));
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -93,9 +83,7 @@ fn run_indexed(json: bool, plan: Plan) -> Result<()> {
         ui::fmt_count(data.sessions_this_week as u64)
     );
 
-    section("Cost (estimated)");
-    println!("  All time:   {}", ui::cost(data.total_cost));
-    println!("  This week:  {}", ui::cost(data.week_cost));
+    print_cost_section(plan, data.total_cost, data.week_cost);
 
     section("Tokens");
     println!(
@@ -363,7 +351,6 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
     };
 
     if json {
-        let cost_obj = plan.cost_fields(total_cost, week_cost);
         let mut out = serde_json::json!({
             "total_sessions": total_sessions,
             "sessions_today": sessions_today,
@@ -389,11 +376,9 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
                 "message_count": r.message_count,
             })),
         });
-        if let (Some(out_obj), Some(cost_obj)) = (out.as_object_mut(), cost_obj.as_object()) {
-            for (k, v) in cost_obj {
-                out_obj.insert(k.clone(), v.clone());
-            }
-        }
+        out.as_object_mut()
+            .expect("json! macro produces a JSON object")
+            .extend(plan.cost_fields(total_cost, week_cost));
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -406,9 +391,7 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
     println!("  Today:      {}", ui::fmt_count(sessions_today as u64));
     println!("  This week:  {}", ui::fmt_count(sessions_this_week as u64));
 
-    section("Cost (estimated)");
-    println!("  All time:   {}", ui::cost(total_cost));
-    println!("  This week:  {}", ui::cost(week_cost));
+    print_cost_section(plan, total_cost, week_cost);
 
     section("Tokens");
     println!("  Input:       {}", ui::count(total_usage.input_tokens));
@@ -532,4 +515,36 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
 fn section(title: &str) {
     println!("\n{}", ui::section_title(title));
     println!("{}", "─".repeat(title.len()));
+}
+
+/// Render the human-readable cost section, plan-aware. Under `Plan::Api`
+/// this is the historical "All time / This week" pair. Under
+/// `Plan::FlatMonthly` it adds the user's flat rate, the API-equivalent
+/// figures, and the calendar-week leverage multiple.
+fn print_cost_section(plan: Plan, total_api: f64, week_api: f64) {
+    section("Cost (estimated)");
+    match plan {
+        Plan::Api => {
+            println!("  All time:   {}", ui::cost(total_api));
+            println!("  This week:  {}", ui::cost(week_api));
+        }
+        Plan::FlatMonthly { usd_per_month } => {
+            // Mirrors the math in `Plan::cost_fields`; constants kept in
+            // sync via shared usage.
+            const WEEKS_PER_MONTH: f64 = 365.25 / 12.0 / 7.0;
+            let weekly_plan_cost = usd_per_month / WEEKS_PER_MONTH;
+            let leverage = if weekly_plan_cost > 0.0 {
+                week_api / weekly_plan_cost
+            } else {
+                0.0
+            };
+            println!(
+                "  Plan:                 flat-monthly  {}/mo",
+                ui::cost(usd_per_month)
+            );
+            println!("  API equivalent (all): {}", ui::cost(total_api));
+            println!("  API equivalent (wk):  {}", ui::cost(week_api));
+            println!("  Leverage this week:   {leverage:.1}x");
+        }
+    }
 }
