@@ -984,6 +984,7 @@ fn update_help_mentions_supported_install_sources() {
     assert!(help.contains("Nix"));
     assert!(help.contains("cargo"));
     assert!(help.contains("Homebrew"));
+    assert!(help.contains("pacman"));
 }
 
 #[test]

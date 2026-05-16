@@ -119,6 +119,31 @@ All documented in `website/guide/installation.md`:
 | `website/.vitepress/config.ts` | nav entry `text: 'vX.Y.Z'` |
 | `README.md` | install snippets referencing `--tag vX.Y.Z` |
 | `CHANGELOG.md` | promote `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`; refresh compare links |
+| `packaging/aur/*/PKGBUILD` | nothing to hand-edit for `claudex-bin` / `claudex` — CI runs `scripts/aur/update-pkgbuild.sh` and rewrites `pkgver` + `sha256sums`. `claudex-git` is hand-bumped only (build-recipe changes). |
+
+### AUR
+
+PKGBUILDs live in [`packaging/aur/`](./packaging/aur/) as the source
+of truth. The AUR git repos (`ssh://aur@aur.archlinux.org/<pkg>.git`)
+are downstream mirrors that CI force-publishes to on every tag push,
+via the `publish-aur` matrix job in `release.yml` and the
+`KSXGitHub/github-actions-deploy-aur` action. See
+[`packaging/aur/README.md`](./packaging/aur/README.md) for the full
+release flow and one-time bootstrap.
+
+Three invariants worth knowing:
+
+- `scripts/aur/update-pkgbuild.sh` does **not** regenerate `.SRCINFO` —
+  the deploy action does that inside its own Arch container after the
+  PKGBUILD is refreshed. Local hand-bumps need
+  `makepkg --printsrcinfo > .SRCINFO` (or just let the AUR push fail
+  loudly).
+- `claudex-git` is hand-bumped only. `update-pkgbuild.sh` refuses to
+  touch it; the `publish-aur` matrix excludes it.
+- The `publish-aur` job is gated on `AUR_SSH_PRIVATE_KEY` being set
+  as a repo secret (the maintainer's primary ed25519 key,
+  registered with the AUR account). Without it, the job logs a
+  skip line and exits cleanly — no red Xs.
 
 ### Docs deploy
 

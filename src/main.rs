@@ -233,9 +233,10 @@ Custom path:
 Upgrade claudex in place when installed by install.sh. For other install
 sources the command prints the right upgrade recipe and exits:
 
-  Nix:       nix profile upgrade claudex   (or flake update)
-  cargo:     cargo install --git … --tag vX.Y.Z --force claudex
-  Homebrew:  brew upgrade claudex
+  Nix:          nix profile upgrade claudex   (or flake update)
+  cargo:        cargo install --git … --tag vX.Y.Z --force claudex
+  Homebrew:     brew upgrade claudex
+  pacman (AUR): paru -Syu claudex-bin         (or yay / vanilla pacman)
 
 The latest tag is resolved by following the /releases/latest redirect, so
 this command doesn't hit api.github.com and can't be rate-limited.")]

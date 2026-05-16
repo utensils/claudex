@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- AUR packaging: `claudex-bin`, `claudex`, and `claudex-git` packages are now maintained in-tree under [`packaging/aur/`](./packaging/aur/) as the source of truth, and auto-published to the AUR on every tagged release via a `publish-aur` matrix job in `release.yml`. PKGBUILDs install shell completions (bash, zsh, fish) into the canonical Arch dirs out of the box. `scripts/aur/update-pkgbuild.sh` refreshes `pkgver` + `sha256sums` against a release tag; `scripts/aur/test-in-docker.sh` boots a headless Arch container (`packaging/aur/test/Dockerfile`) for local PKGBUILD smoke tests on macOS / Windows / non-Arch Linux.
+- `claudex update` now detects pacman/AUR installs at `/usr/bin/claudex` (or `/usr/sbin/claudex` via Arch's usrmerge symlink) and prints the right `paru -Syu claudex-bin` recipe instead of attempting an in-place swap of a package-manager-owned file. New `InstallKind::Pacman` variant; Linux-only.
+
 ## [0.4.0] — 2026-05-15
 
 Third tagged release. Headline: a new `claudex codex` report that summarizes OpenAI Codex CLI activity from `~/.codex`, a `summary --plan flat-monthly:USD` flag that reframes the cost section for flat-fee subscribers (Pro / Pro Max / Team flat-fee), and a packaged Claude Code skill at `.claude/skills/claudex/` for end-user slash commands and autonomous-agent workflows.

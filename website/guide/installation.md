@@ -3,11 +3,12 @@
 claudex is a single Rust binary. It runs on Linux and macOS, x86_64 and
 aarch64. It needs no system dependencies at runtime — rusqlite is bundled.
 
-Three supported install paths:
+Four supported install paths:
 
 1. **One-line script** — prebuilt tarball from GitHub Releases (fastest).
 2. **Cargo** — build from source off a tag or off `main`.
-3. **Nix flake** — reproducible build via crane, with an app and a devshell.
+3. **AUR** — three Arch Linux packages: `claudex-bin`, `claudex`, `claudex-git`.
+4. **Nix flake** — reproducible build via crane, with an app and a devshell.
 
 Minimum supported Rust version (for source builds): **1.95**.
 
@@ -81,6 +82,38 @@ cargo install --git https://github.com/utensils/claudex --tag v0.4.0 claudex
 
 The binary lands in `~/.cargo/bin/claudex`. Make sure that directory is on
 your `PATH`.
+
+## AUR (Arch Linux)
+
+claudex ships three AUR packages, all maintained in-tree under
+[`packaging/aur/`](https://github.com/utensils/claudex/tree/main/packaging/aur)
+and auto-published to the AUR on every tagged release:
+
+| Package       | Source                                | Audience                                 |
+| ------------- | ------------------------------------- | ---------------------------------------- |
+| `claudex-bin` | Repackages the upstream Linux tarball | Most users — fastest install, no compile |
+| `claudex`     | Builds from the release tarball       | Users who want a local source build      |
+| `claudex-git` | Builds from `main` HEAD               | Bleeding-edge users tracking `main`      |
+
+Install via any AUR helper:
+
+```bash
+paru -S claudex-bin      # prebuilt binary (fastest)
+paru -S claudex          # build from source
+paru -S claudex-git      # track main HEAD
+```
+
+Or with `yay`, `pikaur`, etc. — same package names. Manual install
+via `makepkg`:
+
+```bash
+git clone https://aur.archlinux.org/claudex-bin.git
+cd claudex-bin && makepkg -si
+```
+
+The PKGBUILDs install shell completions for bash, zsh, and fish into
+the canonical Arch dirs (`/usr/share/{bash-completion/completions,zsh/site-functions,fish/vendor_completions.d}/`),
+so completions work out of the box without any per-user setup.
 
 ## Nix flake
 
@@ -188,6 +221,7 @@ By install source:
 - **Install script:** `claudex update` — or rerun the one-liner, which also
   fetches the latest tarball and replaces the binary.
 - **Cargo:** `cargo install --git https://github.com/utensils/claudex --tag vX.Y.Z --force claudex`.
+- **AUR:** `paru -Syu claudex-bin` (or any AUR helper) — `claudex update` exits cleanly on AUR installs and points at pacman.
 - **Nix profile:** `nix profile upgrade '.*claudex.*'` (or remove + reinstall).
 - **Nix flake input:** `nix flake update claudex` in your system flake.
 - **Homebrew:** `brew upgrade claudex`.
@@ -207,6 +241,7 @@ rm -rf ~/.claudex
 # Remove the binary
 rm ~/.local/bin/claudex       # install script
 rm ~/.cargo/bin/claudex       # cargo
+sudo pacman -R claudex-bin    # AUR (or claudex / claudex-git)
 nix profile remove claudex    # nix profile
 ```
 
