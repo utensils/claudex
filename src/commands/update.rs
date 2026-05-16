@@ -54,6 +54,12 @@ pub enum InstallKind {
     Cargo,
     /// `/opt/homebrew/...` or `/usr/local/Cellar/...`.
     Homebrew,
+    /// `/usr/bin/claudex` on Linux — installed by a system package manager
+    /// (Arch's `pacman`, e.g. via the AUR `claudex-bin` / `claudex` /
+    /// `claudex-git` packages). Self-update must not touch this path:
+    /// without sudo it would fail with EACCES; with sudo it would silently
+    /// overwrite a pacman-owned file outside the package database.
+    Pacman,
     /// Anything else — assumed to be installed by `install.sh` (or copied by
     /// hand) and therefore safe to replace in place.
     Managed,
@@ -65,6 +71,7 @@ impl InstallKind {
             Self::Nix => "Nix",
             Self::Cargo => "cargo",
             Self::Homebrew => "Homebrew",
+            Self::Pacman => "pacman (AUR)",
             Self::Managed => "install.sh",
         }
     }
@@ -78,6 +85,14 @@ pub fn detect_install_kind(exe_path: &Path) -> InstallKind {
         InstallKind::Homebrew
     } else if p.contains("/.cargo/bin/") || p.contains("/cargo/bin/") {
         InstallKind::Cargo
+    } else if cfg!(target_os = "linux")
+        && (p.starts_with("/usr/bin/") || p.starts_with("/usr/sbin/"))
+    {
+        // Arch's usrmerge symlinks /usr/sbin → /usr/bin, so `which claudex`
+        // on an AUR install can resolve to either path. /usr/local/bin is
+        // intentionally excluded — that's the conventional install.sh
+        // override target and unowned by any package manager.
+        InstallKind::Pacman
     } else {
         InstallKind::Managed
     }
@@ -98,6 +113,13 @@ fn upgrade_hint(kind: InstallKind, target_tag: &str) -> Option<String> {
             "  cargo install --git https://github.com/{GITHUB_REPO} --tag {target_tag} --force claudex"
         )),
         InstallKind::Homebrew => Some("  brew upgrade claudex".to_string()),
+        InstallKind::Pacman => Some(
+            "  paru -Syu claudex-bin   # or claudex / claudex-git, depending on which AUR package you installed\n  \
+             or with any other AUR helper / vanilla pacman:\n    \
+             yay -Syu claudex-bin\n    \
+             sudo pacman -Syu       # if upstream syncs the package"
+                .to_string(),
+        ),
         InstallKind::Managed => None,
     }
 }
@@ -439,8 +461,41 @@ mod tests {
 
     #[test]
     fn install_kind_managed_usr_local() {
+        // /usr/local/bin is the conventional install.sh override target —
+        // never auto-classified as a package-managed path.
         assert_eq!(
             detect_install_kind(Path::new("/usr/local/bin/claudex")),
+            InstallKind::Managed,
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn install_kind_pacman_usr_bin() {
+        assert_eq!(
+            detect_install_kind(Path::new("/usr/bin/claudex")),
+            InstallKind::Pacman,
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn install_kind_pacman_usr_sbin() {
+        // Arch's usrmerge symlinks /usr/sbin → /usr/bin.
+        assert_eq!(
+            detect_install_kind(Path::new("/usr/sbin/claudex")),
+            InstallKind::Pacman,
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn install_kind_usr_bin_is_managed_off_linux() {
+        // On macOS /usr/bin is system territory but pacman doesn't exist
+        // there; classify as Managed so `update` doesn't print Linux hints
+        // to a Darwin user.
+        assert_eq!(
+            detect_install_kind(Path::new("/usr/bin/claudex")),
             InstallKind::Managed,
         );
     }
@@ -460,6 +515,9 @@ mod tests {
                 .unwrap()
                 .contains("brew")
         );
+        let pacman = upgrade_hint(InstallKind::Pacman, "v1.2.3").unwrap();
+        assert!(pacman.contains("paru"));
+        assert!(pacman.contains("claudex-bin"));
         assert_eq!(upgrade_hint(InstallKind::Managed, "v1.2.3"), None);
     }
 

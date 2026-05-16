@@ -29,7 +29,7 @@ See the [flag support matrix](https://utensils.io/claudex/commands/) for per-com
 
 ## Install
 
-Pick one. All three paths are covered in depth in the [installation guide](https://utensils.io/claudex/guide/installation) — pinning, module inputs, verification.
+Pick one. All four paths are covered in depth in the [installation guide](https://utensils.io/claudex/guide/installation) — pinning, module inputs, verification.
 
 ### Install script — macOS + Linux
 
@@ -44,6 +44,16 @@ Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`
 ```bash
 cargo install --git https://github.com/utensils/claudex --tag v0.4.0 claudex
 ```
+
+### AUR — Arch Linux
+
+```bash
+paru -S claudex-bin      # prebuilt binary (fastest)
+paru -S claudex          # build from source
+paru -S claudex-git      # track main HEAD
+```
+
+Maintained in-tree at [`packaging/aur/`](./packaging/aur/) and auto-published on every release.
 
 ### Nix flake
 
