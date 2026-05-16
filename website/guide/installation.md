@@ -89,11 +89,11 @@ claudex ships three AUR packages, all maintained in-tree under
 [`packaging/aur/`](https://github.com/utensils/claudex/tree/main/packaging/aur)
 and auto-published to the AUR on every tagged release:
 
-| Package | Source | Audience |
-|---|---|---|
+| Package       | Source                                | Audience                                 |
+| ------------- | ------------------------------------- | ---------------------------------------- |
 | `claudex-bin` | Repackages the upstream Linux tarball | Most users — fastest install, no compile |
-| `claudex` | Builds from the release tarball | Users who want a local source build |
-| `claudex-git` | Builds from `main` HEAD | Bleeding-edge users tracking `main` |
+| `claudex`     | Builds from the release tarball       | Users who want a local source build      |
+| `claudex-git` | Builds from `main` HEAD               | Bleeding-edge users tracking `main`      |
 
 Install via any AUR helper:
 
