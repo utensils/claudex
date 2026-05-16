@@ -24,11 +24,19 @@ questions of_.
 
 Every read command:
 
-- Uses the index by default (incremental sync, 5-minute staleness window).
-- Supports `--no-index` to bypass the index and scan JSONL files directly — the
-  fallback path always matches the indexed path.
 - Supports `--json` to emit a stable, machine-readable shape.
 - Honors `--color auto|always|never` (and `NO_COLOR`) for color output.
+
+Most Claude Code reports also:
+
+- Use the index by default (incremental sync, 5-minute staleness window).
+- Support `--no-index` to bypass the index and scan JSONL files directly — the
+  fallback path always matches the indexed path.
+
+Two caveats: `models`, `turns`, `prs`, and `files` are derived from the index
+only and don't accept `--no-index`. And `claudex codex` is a separate reader —
+it scans `~/.codex/` directly and never touches the Claude Code index. See the
+[flag support matrix](/commands/) for the per-command breakdown.
 
 ## Who is it for?
 
