@@ -520,7 +520,9 @@ fn section(title: &str) {
 /// Render the human-readable cost section, plan-aware. Under `Plan::Api`
 /// this is the historical "All time / This week" pair. Under
 /// `Plan::FlatMonthly` it adds the user's flat rate, the API-equivalent
-/// figures, and the calendar-week leverage multiple.
+/// figures, and the calendar-week leverage multiple. Leverage math is
+/// delegated to `Plan::leverage_this_week` so the JSON output and this
+/// text output share a single source of truth.
 fn print_cost_section(plan: Plan, total_api: f64, week_api: f64) {
     section("Cost (estimated)");
     match plan {
@@ -529,22 +531,16 @@ fn print_cost_section(plan: Plan, total_api: f64, week_api: f64) {
             println!("  This week:  {}", ui::cost(week_api));
         }
         Plan::FlatMonthly { usd_per_month } => {
-            // Mirrors the math in `Plan::cost_fields`; constants kept in
-            // sync via shared usage.
-            const WEEKS_PER_MONTH: f64 = 365.25 / 12.0 / 7.0;
-            let weekly_plan_cost = usd_per_month / WEEKS_PER_MONTH;
-            let leverage = if weekly_plan_cost > 0.0 {
-                week_api / weekly_plan_cost
-            } else {
-                0.0
-            };
             println!(
                 "  Plan:                 flat-monthly  {}/mo",
                 ui::cost(usd_per_month)
             );
             println!("  API equivalent (all): {}", ui::cost(total_api));
             println!("  API equivalent (wk):  {}", ui::cost(week_api));
-            println!("  Leverage this week:   {leverage:.1}x");
+            match plan.leverage_this_week(week_api) {
+                Some(lev) => println!("  Leverage this week:   {lev:.1}x"),
+                None => println!("  Leverage this week:   —  (no usage yet)"),
+            }
         }
     }
 }

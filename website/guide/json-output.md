@@ -52,10 +52,19 @@ Single object. Keys: `total_sessions`, `sessions_today`,
 `top_tools`, `top_stop_reasons`, `model_distribution`, `most_recent`. See
 [`summary`](/commands/summary) for the full shape.
 
-When invoked with `--plan flat-monthly:USD`, `summary --json` adds (without
-removing any of the keys above) a `plan` discriminator and the
-`actual_monthly_cost_usd`, `api_equivalent_total_usd`,
-`api_equivalent_week_usd`, and `leverage_this_week_multiple` keys.
+When invoked with `--plan flat-monthly:USD`, `summary --json` is **additive**:
+the historical `total_cost_usd` and `cost_this_week_usd` keys are still
+emitted (script authors who already grep for them keep working), and the
+following keys are added alongside:
+
+- `plan` — discriminator, `"flat-monthly"` when set; absent under `--plan api`.
+- `actual_monthly_cost_usd` — the flat fee passed in.
+- `api_equivalent_total_usd` — alias of `total_cost_usd`.
+- `api_equivalent_week_usd` — alias of `cost_this_week_usd`.
+- `leverage_this_week_multiple` — `api_equivalent_week_usd ÷ weekly_plan_cost`
+  where `weekly_plan_cost = actual_monthly_cost_usd / 4.348`. Emitted as
+  `null` when there's no usage this week (a brand-new account would
+  otherwise show a misleading "0× leverage").
 
 ### `codex`
 

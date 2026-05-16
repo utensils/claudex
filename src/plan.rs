@@ -24,7 +24,9 @@ use serde_json::{Map, Value, json};
 /// Average days per month (365.25 / 12) divided by 7 days/week. Used to
 /// extrapolate "this week" API value to a monthly-cost comparison without
 /// the ~8% under-reporting bias of treating a month as exactly 4 weeks.
-const WEEKS_PER_MONTH: f64 = 365.25 / 12.0 / 7.0; // ≈ 4.348
+/// Exported so the human-readable cost section in `commands::summary` can
+/// share a single source of truth with the JSON output.
+pub const WEEKS_PER_MONTH: f64 = 365.25 / 12.0 / 7.0; // ≈ 4.348
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Plan {
@@ -63,6 +65,34 @@ impl FromStr for Plan {
 }
 
 impl Plan {
+    /// "This week's" plan-relative leverage: `api_week ÷ weekly_plan_cost`,
+    /// where `weekly_plan_cost = usd_per_month / WEEKS_PER_MONTH`.
+    ///
+    /// Returns `None` when leverage is undefined / not-yet-measurable:
+    /// - The plan is `Plan::Api` (no flat rate to compare against).
+    /// - `api_week == 0.0` (a brand-new account with no usage this week
+    ///   would otherwise show a misleading "0× leverage on a $250/mo plan",
+    ///   when the truthful answer is "we don't know yet").
+    ///
+    /// This is the single source of truth for leverage math — both the JSON
+    /// output and the human-readable `summary` cost section route through
+    /// it, so the two can't drift out of sync.
+    pub fn leverage_this_week(self, api_week: f64) -> Option<f64> {
+        match self {
+            Plan::Api => None,
+            Plan::FlatMonthly { usd_per_month } => {
+                if api_week == 0.0 {
+                    return None;
+                }
+                // `FromStr` validates `usd_per_month > 0` and finite, so the
+                // division is safe. Direct construction outside `FromStr`
+                // would skip that check, hence the debug-only assert.
+                debug_assert!(usd_per_month > 0.0 && usd_per_month.is_finite());
+                Some(api_week / (usd_per_month / WEEKS_PER_MONTH))
+            }
+        }
+    }
+
     /// JSON cost fields for the given plan. Returns a `Map` (not a `Value`)
     /// so callers can `extend` it into a parent object without an
     /// `as_object()` downcast that could silently drop fields on type
@@ -75,24 +105,21 @@ impl Plan {
     /// don't break) and adds:
     ///   `plan`, `actual_monthly_cost_usd`, `api_equivalent_total_usd`,
     ///   `api_equivalent_week_usd`, `leverage_this_week_multiple`.
+    ///
+    /// `leverage_this_week_multiple` is emitted as JSON `null` when there's
+    /// no usage this week (see `leverage_this_week`).
     pub fn cost_fields(self, api_total: f64, api_week: f64) -> Map<String, Value> {
         let mut m = Map::new();
         m.insert("total_cost_usd".into(), json!(api_total));
         m.insert("cost_this_week_usd".into(), json!(api_week));
         if let Plan::FlatMonthly { usd_per_month } = self {
-            let weekly_plan_cost = usd_per_month / WEEKS_PER_MONTH;
-            let leverage_this_week = if weekly_plan_cost > 0.0 {
-                api_week / weekly_plan_cost
-            } else {
-                0.0
-            };
             m.insert("plan".into(), json!("flat-monthly"));
             m.insert("actual_monthly_cost_usd".into(), json!(usd_per_month));
             m.insert("api_equivalent_total_usd".into(), json!(api_total));
             m.insert("api_equivalent_week_usd".into(), json!(api_week));
             m.insert(
                 "leverage_this_week_multiple".into(),
-                json!(leverage_this_week),
+                json!(self.leverage_this_week(api_week)),
             );
         }
         m
@@ -206,11 +233,43 @@ mod tests {
     }
 
     #[test]
-    fn cost_fields_flat_monthly_zero_week_yields_zero_leverage() {
+    fn cost_fields_flat_monthly_zero_week_emits_null_leverage() {
+        // "0× leverage on a $250/mo plan" misreads as "you got zero value";
+        // the honest answer when there's no usage this week is `null` =
+        // "undefined / not-yet-measurable."
         let plan = Plan::FlatMonthly {
             usd_per_month: 250.0,
         };
         let m = plan.cost_fields(18188.40, 0.0);
-        assert_eq!(m["leverage_this_week_multiple"], 0.0);
+        // Key is present so the JSON shape stays stable; value is null.
+        assert!(m.contains_key("leverage_this_week_multiple"));
+        assert!(m["leverage_this_week_multiple"].is_null());
+    }
+
+    // --- leverage_this_week (shared source of truth for JSON + text) ---
+
+    #[test]
+    fn leverage_this_week_api_plan_is_none() {
+        assert!(Plan::Api.leverage_this_week(3136.21).is_none());
+    }
+
+    #[test]
+    fn leverage_this_week_flat_monthly_matches_cost_fields() {
+        let plan = Plan::FlatMonthly {
+            usd_per_month: 250.0,
+        };
+        let direct = plan.leverage_this_week(3136.21).unwrap();
+        let via_map = plan.cost_fields(0.0, 3136.21)["leverage_this_week_multiple"]
+            .as_f64()
+            .unwrap();
+        assert!((direct - via_map).abs() < 1e-12);
+    }
+
+    #[test]
+    fn leverage_this_week_zero_usage_returns_none() {
+        let plan = Plan::FlatMonthly {
+            usd_per_month: 250.0,
+        };
+        assert!(plan.leverage_this_week(0.0).is_none());
     }
 }

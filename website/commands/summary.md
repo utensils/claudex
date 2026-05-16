@@ -102,13 +102,13 @@ working), and the following keys are added:
 }
 ```
 
-| Key                           | Meaning                                                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `plan`                        | Discriminator — `"flat-monthly"` when set; absent under `--plan api`.                                              |
-| `actual_monthly_cost_usd`     | The flat fee passed in, e.g. `250.0` for `flat-monthly:250`.                                                       |
-| `api_equivalent_total_usd`    | Lifetime API-rate value of all sessions. Equal to `total_cost_usd`.                                                |
-| `api_equivalent_week_usd`     | This week's API-rate value. Equal to `cost_this_week_usd`.                                                         |
-| `leverage_this_week_multiple` | `api_equivalent_week_usd ÷ (actual_monthly_cost_usd ÷ 4.348)` — this week's value vs. a week's worth of plan cost. |
+| Key                           | Meaning                                                                                                                                                                                                                                         |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan`                        | Discriminator — `"flat-monthly"` when set; absent under `--plan api`.                                                                                                                                                                           |
+| `actual_monthly_cost_usd`     | The flat fee passed in, e.g. `250.0` for `flat-monthly:250`.                                                                                                                                                                                    |
+| `api_equivalent_total_usd`    | Lifetime API-rate value of all sessions. Equal to `total_cost_usd`.                                                                                                                                                                             |
+| `api_equivalent_week_usd`     | This week's API-rate value. Equal to `cost_this_week_usd`.                                                                                                                                                                                      |
+| `leverage_this_week_multiple` | `api_equivalent_week_usd ÷ (actual_monthly_cost_usd ÷ 4.348)` — this week's value vs. a week's worth of plan cost. Emitted as `null` when `api_equivalent_week_usd == 0` (a brand-new account would otherwise show a misleading "0× leverage"). |
 
 ## Notes
 
