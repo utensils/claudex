@@ -122,8 +122,8 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        // $15/MTok
-        assert!((u.cost_for_model(None) - 15.0).abs() < 0.0001);
+        // $20/MTok
+        assert!((u.cost_for_model(None) - 20.0).abs() < 0.0001);
     }
 
     #[test]
@@ -154,8 +154,8 @@ mod tests {
             cache_creation_tokens: 1_000_000,
             cache_read_tokens: 1_000_000,
         };
-        // $3 + $15 + $3.75 + $0.30 = $22.05
-        assert!((u.cost_for_model(Some("claude-sonnet-4-6")) - 22.05).abs() < 0.0001);
+        // $3 + $20 + $3.75 + $0.30 = $27.05
+        assert!((u.cost_for_model(Some("claude-sonnet-4-6")) - 27.05).abs() < 0.0001);
     }
 
     // --- Opus pricing ---
@@ -387,7 +387,7 @@ mod tests {
     fn pricing_constants_sonnet() {
         let p = ModelPricing::for_model(Some("claude-sonnet-4-6"));
         assert_eq!(p.input_per_mtok, 3.0);
-        assert_eq!(p.output_per_mtok, 15.0);
+        assert_eq!(p.output_per_mtok, 20.0);
         assert_eq!(p.cache_write_per_mtok, 3.75);
         assert_eq!(p.cache_read_per_mtok, 0.30);
     }
@@ -421,10 +421,11 @@ mod tests {
     }
 
     #[test]
-    fn opus_is_5x_sonnet_output() {
+    fn opus_is_3_75x_sonnet_output() {
         let p_opus = ModelPricing::for_model(Some("opus"));
         let p_sonnet = ModelPricing::for_model(Some("sonnet"));
-        assert!((p_opus.output_per_mtok / p_sonnet.output_per_mtok - 5.0).abs() < 0.001);
+        // $75 / $20 = 3.75x
+        assert!((p_opus.output_per_mtok / p_sonnet.output_per_mtok - 3.75).abs() < 0.001);
     }
 
     #[test]
