@@ -36,7 +36,7 @@ impl ModelPricing {
             // Sonnet (default)
             Self {
                 input_per_mtok: 3.0,
-                output_per_mtok: 15.0,
+                output_per_mtok: 20.0,
                 cache_write_per_mtok: 3.75,
                 cache_read_per_mtok: 0.30,
             }
