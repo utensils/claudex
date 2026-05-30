@@ -3,9 +3,11 @@
 //! resolved into a [`ResolvedFilter`] that the index queries (and the
 //! `--no-index` fallback) apply uniformly.
 
+use std::path::PathBuf;
+
 use anyhow::{Result, bail};
 use chrono::{DateTime, Duration, NaiveTime, Utc};
-use clap::{Args, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use rusqlite::types::Value as SqlValue;
 
 use crate::parser::SessionStats;
@@ -165,6 +167,54 @@ impl ResolvedFilter {
         }
         true
     }
+}
+
+// --- `claudex skills` ---
+
+/// Generate or install the agent skill that describes claudex.
+#[derive(Subcommand, Debug)]
+pub enum SkillCommand {
+    /// Write skill files to a directory for review (default ./claudex-skills)
+    Generate(SkillArgs),
+    /// Write skill files into live harness configuration locations
+    Install(SkillArgs),
+}
+
+/// Options shared by `skills generate` and `skills install`.
+#[derive(Args, Debug, Clone)]
+pub struct SkillArgs {
+    /// Harness target(s) to write for (repeatable or comma-separated).
+    #[arg(long, value_enum, value_delimiter = ',', default_value = "all")]
+    pub target: Vec<SkillTarget>,
+    /// Output root (generate) or base directory override (install).
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+    /// Install to user-level config (~/) instead of the current project.
+    #[arg(long)]
+    pub global: bool,
+    /// Overwrite existing files.
+    #[arg(long)]
+    pub force: bool,
+    /// Output the summary as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Harness flavor a skill is generated for.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillTarget {
+    /// Claude Code — `.claude/skills/claudex/SKILL.md`
+    ClaudeCode,
+    /// OpenAI Codex — `.agents/skills/claudex/SKILL.md`
+    Codex,
+    /// Pi — `.pi/skills/claudex/SKILL.md`
+    Pi,
+    /// Idempotent block spliced into `AGENTS.md`
+    AgentsMd,
+    /// Claude Code plugin — `.claude-plugin/plugin.json` + skill
+    Plugin,
+    /// Expand to claude-code + codex + pi + agents-md
+    All,
 }
 
 /// Parse a `--since`/`--until` value into epoch milliseconds. A bare date

@@ -203,6 +203,154 @@ fn codex_cost_uses_last_cumulative_tokens_and_gpt_pricing() {
     assert!((cost - 6.025).abs() < 0.001, "expected ~$6.025, got {cost}");
 }
 
+// --- skills subcommand ---
+
+#[test]
+fn skills_generate_writes_all_targets() {
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    let out = run(
+        home.path(),
+        &[
+            "skills",
+            "generate",
+            "--dir",
+            out_dir.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    for rel in [
+        ".claude/skills/claudex/SKILL.md",
+        ".agents/skills/claudex/SKILL.md",
+        ".pi/skills/claudex/SKILL.md",
+        "AGENTS.md",
+    ] {
+        assert!(
+            out_dir.path().join(rel).exists(),
+            "{rel} should have been written"
+        );
+    }
+}
+
+#[test]
+fn skills_generate_refuses_overwrite_without_force() {
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    let args = [
+        "skills",
+        "generate",
+        "--target",
+        "claude-code",
+        "--dir",
+        out_dir.path().to_str().unwrap(),
+    ];
+    assert!(run(home.path(), &args).status.success());
+    // Second run without --force must fail.
+    let second = run(home.path(), &args);
+    assert!(!second.status.success(), "should refuse to clobber");
+    assert!(stderr_of(&second).contains("already exists"));
+    // With --force it succeeds.
+    let mut forced = args.to_vec();
+    forced.push("--force");
+    assert!(run(home.path(), &forced).status.success());
+}
+
+#[test]
+fn skills_agents_md_splice_is_idempotent() {
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    let args = [
+        "skills",
+        "generate",
+        "--target",
+        "agents-md",
+        "--dir",
+        out_dir.path().to_str().unwrap(),
+    ];
+    run(home.path(), &args);
+    run(home.path(), &args);
+    let agents = fs::read_to_string(out_dir.path().join("AGENTS.md")).unwrap();
+    assert_eq!(
+        agents.matches("<!-- claudex:start -->").count(),
+        1,
+        "splice must not duplicate the block on re-run"
+    );
+}
+
+#[test]
+fn skills_generate_json_summary_shape() {
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    let out = run(
+        home.path(),
+        &[
+            "skills",
+            "generate",
+            "--target",
+            "claude-code",
+            "--dir",
+            out_dir.path().to_str().unwrap(),
+            "--json",
+        ],
+    );
+    let v = json_of(&out);
+    assert_eq!(v["mode"], "generate");
+    assert_eq!(v["written"].as_array().unwrap().len(), 1);
+    assert!(v["hint"].is_string(), "generate nudges toward install");
+}
+
+#[test]
+fn skills_command_list_includes_skills_itself() {
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    run(
+        home.path(),
+        &[
+            "skills",
+            "generate",
+            "--target",
+            "claude-code",
+            "--dir",
+            out_dir.path().to_str().unwrap(),
+        ],
+    );
+    let md = fs::read_to_string(out_dir.path().join(".claude/skills/claudex/SKILL.md")).unwrap();
+    // The command list is clap-derived, so every subcommand appears.
+    assert!(md.contains("`claudex sessions`"));
+    assert!(md.contains("`claudex skills`"));
+    assert!(md.contains("`claudex cost`"));
+}
+
+#[test]
+fn committed_skill_matches_generator_output() {
+    // Drift guard: the checked-in .claude/skills/claudex/SKILL.md must be exactly
+    // what `claudex skills generate --target claude-code` produces. Regenerate it
+    // with `claudex skills generate --target claude-code --dir . --force`.
+    let home = fixture_home();
+    let out_dir = TempDir::new().unwrap();
+    run(
+        home.path(),
+        &[
+            "skills",
+            "generate",
+            "--target",
+            "claude-code",
+            "--dir",
+            out_dir.path().to_str().unwrap(),
+        ],
+    );
+    let generated =
+        fs::read_to_string(out_dir.path().join(".claude/skills/claudex/SKILL.md")).unwrap();
+    let committed_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(".claude/skills/claudex/SKILL.md");
+    let committed = fs::read_to_string(&committed_path).unwrap();
+    assert_eq!(
+        generated, committed,
+        "committed SKILL.md is stale — regenerate with \
+         `claudex skills generate --target claude-code --dir . --force`"
+    );
+}
+
 // --- shared filtering args ---
 
 #[test]

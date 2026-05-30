@@ -26,6 +26,24 @@ fn dynamic_root_completions_include_sessions() {
 }
 
 #[test]
+fn dynamic_root_completions_include_skills() {
+    let stdout = dynamic_completions("bash", "1", &["claudex", ""]);
+    assert!(
+        stdout.lines().any(|line| line == "skills"),
+        "root completions should include skills, got: {stdout}"
+    );
+}
+
+#[test]
+fn dynamic_cost_completions_include_provider_flag() {
+    let stdout = dynamic_completions("bash", "2", &["claudex", "cost", "--"]);
+    assert!(
+        stdout.lines().any(|line| line.starts_with("--provider")),
+        "cost completions should include --provider, got: {stdout}"
+    );
+}
+
+#[test]
 fn dynamic_cost_completions_include_json_flag() {
     let stdout = dynamic_completions("bash", "2", &["claudex", "cost", "--"]);
     assert!(

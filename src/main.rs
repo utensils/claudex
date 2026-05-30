@@ -3,9 +3,10 @@ use std::str::FromStr;
 use clap::builder::ValueHint;
 use clap::{CommandFactory, Parser, Subcommand};
 
-use claudex::cli::FilterArgs;
+use claudex::cli::{FilterArgs, SkillCommand};
 use claudex::commands;
 use claudex::plan::Plan;
+use claudex::skill;
 use claudex::ui::{self, ColorChoice};
 
 #[derive(Parser)]
@@ -285,6 +286,11 @@ Setup instructions:
         /// Shell to generate completions for (bash, zsh, fish, elvish, powershell)
         shell: String,
     },
+    /// Generate or install the claudex agent skill for Claude Code, Codex, or Pi
+    Skills {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
 }
 
 fn main() {
@@ -421,6 +427,7 @@ fn main() {
             version,
         } => commands::update::run(check, force, version),
         Commands::Completions { shell } => generate_completions(&shell),
+        Commands::Skills { command } => skill::execute(command, &Cli::command()),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");

@@ -8,6 +8,7 @@ pub mod index;
 pub mod parser;
 pub mod plan;
 pub mod providers;
+pub mod skill;
 pub mod stats;
 pub mod store;
 pub mod types;
