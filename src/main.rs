@@ -25,12 +25,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Codex CLI session and state-file statistics
-    Codex {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
     /// List sessions grouped by project
     Sessions {
         /// Filter by project name (substring match on path)
@@ -297,7 +291,6 @@ fn main() {
         }
     };
     let result = match cli.command {
-        Commands::Codex { json } => commands::codex::run(json),
         Commands::Sessions {
             project,
             file,

@@ -6,7 +6,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use claudex::providers::{ClaudeProvider, DiscoveredFile, SessionProvider};
+use claudex::providers::{
+    ClaudeProvider, CodexProvider, DiscoveredFile, PiProvider, SessionProvider,
+};
 use claudex::store::SessionStore;
 use tempfile::TempDir;
 
@@ -153,4 +155,123 @@ fn parse_extracts_tokens_tools_thinking_and_fts_content() {
     // Provider-derived fields default empty (Claude derives cost from a table).
     assert!(record.embedded_cost.is_none());
     assert!(record.extras.is_none());
+}
+
+// --- Codex provider ---
+
+fn write_lines(path: &Path, lines: &[&str]) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let mut f = fs::File::create(path).unwrap();
+    for line in lines {
+        writeln!(f, "{line}").unwrap();
+    }
+    f.flush().unwrap();
+}
+
+#[test]
+fn codex_enumerate_flags_archived_and_parse_reads_cwd_tokens_tools() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_lines(
+        &codex.join("sessions/2026/05/05/rollout-2026-05-05T00-00-00-codex-a.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-05T00:00:00Z","type":"session_meta","payload":{"id":"codex-a","cwd":"/repo","cli_version":"0.99.0"}}"#,
+            r#"{"timestamp":"2026-05-05T00:00:30Z","type":"turn_context","payload":{"model":"gpt-5-codex"}}"#,
+            r#"{"timestamp":"2026-05-05T00:01:00Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c"}}"#,
+            r#"{"timestamp":"2026-05-05T00:01:30Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"thinking"}}"#,
+            r#"{"timestamp":"2026-05-05T00:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#,
+            r#"{"timestamp":"2026-05-05T00:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500}}}}"#,
+        ],
+    );
+    write_lines(
+        &codex.join("archived_sessions/rollout-2026-01-01T00-00-00-codex-b.jsonl"),
+        &[
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"codex-b","cwd":"/old"}}"#,
+        ],
+    );
+
+    let provider = CodexProvider::at(codex);
+    assert_eq!(provider.id(), "codex");
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 2);
+
+    let active = files.iter().find(|f| !f.archived).unwrap();
+    let archived = files.iter().find(|f| f.archived).unwrap();
+    assert!(archived.archived, "archived_sessions files are flagged");
+
+    let rec = provider.parse(active).unwrap();
+    assert_eq!(rec.session_id.as_deref(), Some("codex-a"));
+    assert_eq!(rec.project_display, "/repo");
+    assert_eq!(rec.model.as_deref(), Some("gpt-5-codex"));
+    // Cumulative: last total wins; cached input becomes a cache read.
+    assert_eq!(rec.usage.input_tokens, 800);
+    assert_eq!(rec.usage.cache_read_tokens, 200);
+    assert_eq!(rec.usage.output_tokens, 500);
+    assert_eq!(rec.tool_names, vec!["shell".to_string()]);
+    assert_eq!(rec.thinking_block_count, 1);
+    assert!(rec.extras.as_deref().unwrap().contains("0.99.0"));
+
+    let arch = provider.parse(archived).unwrap();
+    assert_eq!(arch.project_display, "/old");
+}
+
+// --- Pi provider ---
+
+#[test]
+fn pi_enumerate_decodes_cwd_and_parse_uses_embedded_cost() {
+    let tmp = TempDir::new().unwrap();
+    let agent = tmp.path().join(".pi/agent");
+    write_lines(
+        &agent.join("sessions/--Users-me-Projects-foo--/2026-05-13T22-05-15-161Z_sess-pi.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-pi","timestamp":"2026-05-13T22:05:15.161Z","cwd":"/Users/me/Projects/foo"}"#,
+            r#"{"type":"model_change","provider":"anthropic","modelId":"claude-3-opus","timestamp":"2026-05-13T22:05:16Z"}"#,
+            r#"{"type":"message","id":"u1","timestamp":"2026-05-13T22:05:35Z","message":{"role":"user","content":[{"type":"text","text":"explore the repo"}]}}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-13T22:05:52Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"read"},{"type":"thinking","text":"hmm"},{"type":"text","text":"on it"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{"total":0.42}},"stopReason":"toolUse"}}"#,
+        ],
+    );
+
+    let provider = PiProvider::at(agent);
+    assert_eq!(provider.id(), "pi");
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 1);
+    // cwd decoded from the directory name as a fallback…
+    assert_eq!(files[0].project_display, "/Users/me/Projects/foo");
+
+    let rec = provider.parse(&files[0]).unwrap();
+    assert_eq!(rec.session_id.as_deref(), Some("sess-pi"));
+    // …and confirmed from the session record.
+    assert_eq!(rec.project_display, "/Users/me/Projects/foo");
+    assert_eq!(rec.tool_names, vec!["read".to_string()]);
+    assert_eq!(rec.thinking_block_count, 1);
+    // Pi supplies its own cost, which the index trusts verbatim.
+    assert_eq!(rec.embedded_cost, Some(0.42));
+    let model_stats = rec.model_usage.get("anthropic/claude-3-opus").unwrap();
+    assert_eq!(model_stats.usage.input_tokens, 100);
+    assert_eq!(model_stats.usage.cache_read_tokens, 10);
+    assert_eq!(model_stats.embedded_cost, Some(0.42));
+    assert_eq!(*rec.stop_reason_counts.get("toolUse").unwrap(), 1);
+}
+
+#[test]
+fn pi_local_ollama_session_reports_zero_cost() {
+    let tmp = TempDir::new().unwrap();
+    let agent = tmp.path().join(".pi/agent");
+    write_lines(
+        &agent.join("sessions/--repo--/2026-05-13T22-05-15-161Z_sess-ollama.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-ollama","timestamp":"2026-05-13T22:05:15Z","cwd":"/repo"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-13T22:05:52Z","message":{"role":"assistant","content":[{"type":"text","text":"local"}],"provider":"ollama","model":"qwen3","usage":{"input":6000,"output":120,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},"stopReason":"stop"}}"#,
+        ],
+    );
+    let provider = PiProvider::at(agent);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    // Local model has real tokens but zero cost — trusted verbatim, not priced.
+    assert_eq!(rec.embedded_cost, Some(0.0));
+    let stats = rec.model_usage.get("ollama/qwen3").unwrap();
+    assert_eq!(stats.usage.input_tokens, 6000);
+    assert_eq!(stats.embedded_cost, Some(0.0));
 }

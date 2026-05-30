@@ -654,11 +654,19 @@ impl IndexStore {
                 None => None,
             };
 
-            let project_display = discovered.project_display.clone();
             let parent_session_id = discovered.parent_session_id.clone();
             let mut entry = match provider.parse(discovered) {
                 Ok(e) => e,
                 Err(_) => continue,
+            };
+
+            // The enumerator's path-derived project is the default; a provider
+            // that reads the project from the transcript itself (Codex stores
+            // its cwd in `session_meta`) overrides it.
+            let project_display = if entry.project_display.is_empty() {
+                discovered.project_display.clone()
+            } else {
+                entry.project_display.clone()
             };
 
             // Fall back to file stem when the transcript lacks a session id

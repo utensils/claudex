@@ -17,8 +17,12 @@ use crate::parser::ModelSessionStats;
 use crate::types::TokenUsage;
 
 pub mod claude;
+pub mod codex;
+pub mod pi;
 
 pub use claude::ClaudeProvider;
+pub use codex::CodexProvider;
+pub use pi::PiProvider;
 
 /// A transcript file discovered by a provider, with the metadata the sync loop
 /// needs that does not come from parsing the file's contents.
@@ -67,6 +71,10 @@ pub struct ProviderRecord {
     pub speed: Option<f64>,
     pub service_tier: Option<String>,
     pub iterations: u64,
+    /// Project label derived from the transcript's contents (Codex stores its
+    /// `cwd` inside the file). When non-empty it overrides the
+    /// [`DiscoveredFile::project_display`] the enumerator guessed from the path.
+    pub project_display: String,
     /// Cost already computed by the provider (Pi reports per-message cost). When
     /// `Some`, the index trusts it instead of deriving from a pricing table.
     pub embedded_cost: Option<f64>,
@@ -96,37 +104,37 @@ pub trait SessionProvider {
 /// a variant and a match arm — no boxing, exhaustive at every call site.
 pub enum Provider {
     Claude(ClaudeProvider),
+    Codex(CodexProvider),
+    Pi(PiProvider),
 }
 
 impl Provider {
-    pub fn id(&self) -> &'static str {
+    fn inner(&self) -> &dyn SessionProvider {
         match self {
-            Provider::Claude(p) => p.id(),
+            Provider::Claude(p) => p,
+            Provider::Codex(p) => p,
+            Provider::Pi(p) => p,
         }
+    }
+
+    pub fn id(&self) -> &'static str {
+        self.inner().id()
     }
 
     pub fn root_dir(&self) -> &Path {
-        match self {
-            Provider::Claude(p) => p.root_dir(),
-        }
+        self.inner().root_dir()
     }
 
     pub fn enabled(&self) -> bool {
-        match self {
-            Provider::Claude(p) => p.enabled(),
-        }
+        self.inner().enabled()
     }
 
     pub fn enumerate(&self) -> Result<Vec<DiscoveredFile>> {
-        match self {
-            Provider::Claude(p) => p.enumerate(),
-        }
+        self.inner().enumerate()
     }
 
     pub fn parse(&self, file: &DiscoveredFile) -> Result<ProviderRecord> {
-        match self {
-            Provider::Claude(p) => p.parse(file),
-        }
+        self.inner().parse(file)
     }
 }
 
@@ -134,10 +142,10 @@ impl Provider {
 /// on disk. Spanning all available providers is intentional — claudex reports
 /// agent usage everywhere, not just Claude.
 pub fn enabled_default() -> Result<Vec<Provider>> {
-    let mut providers = Vec::new();
-    let claude = ClaudeProvider::new()?;
-    if claude.enabled() {
-        providers.push(Provider::Claude(claude));
-    }
-    Ok(providers)
+    let candidates = vec![
+        Provider::Claude(ClaudeProvider::new()?),
+        Provider::Codex(CodexProvider::new()?),
+        Provider::Pi(PiProvider::new()?),
+    ];
+    Ok(candidates.into_iter().filter(|p| p.enabled()).collect())
 }

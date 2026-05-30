@@ -96,7 +96,7 @@ fn json_of(out: &std::process::Output) -> Value {
     })
 }
 
-// --- codex ---
+// --- codex provider (unified index) ---
 
 fn fixture_home_with_codex() -> TempDir {
     let tmp = fixture_home();
@@ -106,22 +106,34 @@ fn fixture_home_with_codex() -> TempDir {
     let mut f = fs::File::create(active.join("rollout-2026-05-05T00-00-00-codex-a.jsonl")).unwrap();
     writeln!(
         f,
-        r#"{{"timestamp":"2026-05-05T00:00:00Z","type":"session_meta","payload":{{"id":"codex-a","cwd":"/Users/test/project","originator":"codex_cli_rs","cli_version":"0.99.0","source":"cli"}}}}"#
+        r#"{{"timestamp":"2026-05-05T00:00:00Z","type":"session_meta","payload":{{"id":"codex-a","cwd":"/Users/test/codexproj","originator":"codex_cli_rs","cli_version":"0.99.0","source":"cli"}}}}"#
     )
     .unwrap();
     writeln!(
         f,
-        r#"{{"timestamp":"2026-05-05T00:01:00Z","type":"response_item","payload":{{"type":"user_message","message":"hello"}}}}"#
+        r#"{{"timestamp":"2026-05-05T00:00:30Z","type":"turn_context","payload":{{"cwd":"/Users/test/codexproj","model":"gpt-5-codex"}}}}"#
     )
     .unwrap();
     writeln!(
         f,
-        r#"{{"timestamp":"2026-05-05T00:02:00Z","type":"response_item","payload":{{"type":"agent_message","message":"hi"}}}}"#
+        r#"{{"timestamp":"2026-05-05T00:01:00Z","type":"response_item","payload":{{"type":"user_message","message":"hello from codex"}}}}"#
     )
     .unwrap();
     writeln!(
         f,
         r#"{{"timestamp":"2026-05-05T00:03:00Z","type":"response_item","payload":{{"type":"function_call","name":"shell","arguments":"{{}}","call_id":"c"}}}}"#
+    )
+    .unwrap();
+    // Cumulative token counts: only the LAST must be used (1,000,000 input of
+    // which 200,000 cached, 500,000 output) → gpt-5 pricing.
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:02:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"total_tokens":15}}}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:04:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":1000000,"cached_input_tokens":200000,"output_tokens":500000,"total_tokens":1500000}}}}}}}}"#
     )
     .unwrap();
     f.flush().unwrap();
@@ -141,28 +153,116 @@ fn fixture_home_with_codex() -> TempDir {
 }
 
 #[test]
-fn codex_json_reports_session_stats() {
+fn codex_sessions_appear_in_unified_index() {
     let home = fixture_home_with_codex();
-    let out = run(home.path(), &["codex", "--json"]);
+    let out = run(home.path(), &["sessions", "--json"]);
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
-    let v = json_of(&out);
-    assert_eq!(v["total_sessions"].as_u64(), Some(2));
-    assert_eq!(v["archived_sessions"].as_u64(), Some(1));
-    assert_eq!(v["active_session_files"].as_u64(), Some(1));
-    assert_eq!(v["user_messages"].as_u64(), Some(1));
-    assert_eq!(v["agent_messages"].as_u64(), Some(1));
-    assert_eq!(v["tool_calls"].as_u64(), Some(1));
-    assert_eq!(v["top_tools"][0]["name"].as_str(), Some("shell"));
+    let rows = json_of(&out);
+    let projects: Vec<&str> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["project"].as_str())
+        .collect();
+    assert!(
+        projects.iter().any(|p| p.contains("codexproj")),
+        "codex session must surface in unified sessions, got: {projects:?}"
+    );
+    // Claude fixture sessions remain present too — the index spans providers.
+    assert!(
+        projects
+            .iter()
+            .any(|p| p.contains("alpha") || p.contains("beta")),
+        "claude sessions must still be present, got: {projects:?}"
+    );
 }
 
 #[test]
-fn codex_text_output_renders_dashboard() {
+fn codex_cost_uses_last_cumulative_tokens_and_gpt_pricing() {
     let home = fixture_home_with_codex();
-    let out = run(home.path(), &["codex"]);
+    let out = run(home.path(), &["cost", "--per-session", "--json"]);
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
-    let s = stdout_of(&out);
-    assert!(s.contains("Codex Sessions"), "got: {s}");
-    assert!(s.contains("Top Projects"), "got: {s}");
+    let rows = json_of(&out);
+    let codex = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["project"]
+                .as_str()
+                .is_some_and(|p| p.contains("codexproj"))
+        })
+        .expect("codex session present in cost");
+    // Last cumulative total: input 1,000,000 (200,000 cached → cache_read),
+    // billed input = 800,000; output 500,000.
+    assert_eq!(codex["input_tokens"].as_i64(), Some(800_000));
+    assert_eq!(codex["cache_read_tokens"].as_i64(), Some(200_000));
+    assert_eq!(codex["output_tokens"].as_i64(), Some(500_000));
+    // gpt-5: 0.8*1.25 + 0.2*0.125 + 0.5*10.0 = 1.0 + 0.025 + 5.0 = $6.025
+    let cost = codex["cost_usd"].as_f64().unwrap();
+    assert!((cost - 6.025).abs() < 0.001, "expected ~$6.025, got {cost}");
+}
+
+// --- pi provider (unified index) ---
+
+fn fixture_home_with_pi() -> TempDir {
+    let tmp = fixture_home();
+    let dir = tmp
+        .path()
+        .join(".pi")
+        .join("agent")
+        .join("sessions")
+        .join("--Users-test-Projects-piapp--");
+    fs::create_dir_all(&dir).unwrap();
+    let mut f = fs::File::create(dir.join("2026-05-13T22-05-15-161Z_sess-pi.jsonl")).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"session","version":3,"id":"sess-pi","timestamp":"2026-05-13T22:05:15Z","cwd":"/Users/test/Projects/piapp"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"u1","timestamp":"2026-05-13T22:05:35Z","message":{{"role":"user","content":[{{"type":"text","text":"do the pithing"}}]}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"a1","timestamp":"2026-05-13T22:05:52Z","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"c1","name":"read"}},{{"type":"text","text":"on it"}}],"provider":"anthropic","model":"claude-3-opus","usage":{{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{{"total":0.75}}}},"stopReason":"toolUse"}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+    tmp
+}
+
+#[test]
+fn pi_sessions_appear_in_unified_index_with_embedded_cost() {
+    let home = fixture_home_with_pi();
+    let out = run(home.path(), &["cost", "--per-session", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let pi = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["project"].as_str().is_some_and(|p| p.contains("piapp")))
+        .expect("pi session present in cost");
+    assert_eq!(pi["input_tokens"].as_i64(), Some(100));
+    assert_eq!(pi["cache_read_tokens"].as_i64(), Some(10));
+    // Pi's own per-message cost is trusted verbatim.
+    let cost = pi["cost_usd"].as_f64().unwrap();
+    assert!((cost - 0.75).abs() < 0.0001, "expected $0.75, got {cost}");
+}
+
+#[test]
+fn pi_search_finds_indexed_content() {
+    let home = fixture_home_with_pi();
+    let out = run(home.path(), &["search", "pithing", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert!(
+        !v.as_array().unwrap().is_empty(),
+        "pi transcript content should be full-text searchable, got: {v}"
+    );
 }
 
 // --- sessions ---
