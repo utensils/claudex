@@ -14,12 +14,13 @@ that CI force-publishes to on every release.
 
 ## Release flow
 
-On a tag push (`v*`), `.github/workflows/release.yml` builds the
-release artifacts as usual, then runs a `publish-aur` matrix job
+When release-please cuts a release (a merged release PR on `main`),
+`.github/workflows/release-please.yml` builds the release artifacts,
+publishes the GitHub Release, then runs a `publish-aur` matrix job
 (one entry per AUR package, currently `claudex-bin` and `claudex`).
 The job:
 
-1. Checks out the tagged commit.
+1. Checks out the released tag.
 2. Runs [`scripts/aur/update-pkgbuild.sh`](../../scripts/aur/update-pkgbuild.sh)
    which downloads the matching release artifact, computes the
    `sha256sum`, and rewrites `pkgver` + `sha256sums` in the PKGBUILD.

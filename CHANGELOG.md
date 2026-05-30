@@ -4,13 +4,8 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Added
-
-- AUR packaging: `claudex-bin`, `claudex`, and `claudex-git` packages are now maintained in-tree under [`packaging/aur/`](./packaging/aur/) as the source of truth, and auto-published to the AUR on every tagged release via a `publish-aur` matrix job in `release.yml`. PKGBUILDs install shell completions (bash, zsh, fish) into the canonical Arch dirs out of the box. `scripts/aur/update-pkgbuild.sh` refreshes `pkgver` + `sha256sums` against a release tag; `scripts/aur/test-in-docker.sh` boots a headless Arch container (`packaging/aur/test/Dockerfile`) for local PKGBUILD smoke tests on macOS / Windows / non-Arch Linux.
-- `claudex update` now detects pacman/AUR installs at `/usr/bin/claudex` (or `/usr/sbin/claudex` via Arch's usrmerge symlink) and prints the right `paru -Syu claudex-bin` recipe instead of attempting an in-place swap of a package-manager-owned file. New `InstallKind::Pacman` variant; Linux-only.
+Releases are managed by [release-please](https://github.com/googleapis/release-please),
+which prepends each new version below from the Conventional Commits landed on `main`.
 
 ## [0.4.0] — 2026-05-15
 
@@ -95,8 +90,3 @@ First tagged release. Install paths: `install.sh`, `cargo install --git … --ta
 
 - Cleanup: untrack cruft, tighten `.gitignore`, sync docs, bump MSRV to 1.95 ([#11](https://github.com/utensils/claudex/pull/11)).
 - Docs align recipes and command shapes with v0.2.0 ([#14](https://github.com/utensils/claudex/pull/14)).
-
-[unreleased]: https://github.com/utensils/claudex/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/utensils/claudex/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/utensils/claudex/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/utensils/claudex/releases/tag/v0.2.0

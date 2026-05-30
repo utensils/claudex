@@ -37,13 +37,17 @@ Pick one. All four paths are covered in depth in the [installation guide](https:
 curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh | sh
 ```
 
-Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.4.0` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`.
+Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.4.0` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`. <!-- x-release-please-version -->
 
 ### Cargo
+
+<!-- x-release-please-start-version -->
 
 ```bash
 cargo install --git https://github.com/utensils/claudex --tag v0.4.0 claudex
 ```
+
+<!-- x-release-please-end-version -->
 
 ### AUR — Arch Linux
 
