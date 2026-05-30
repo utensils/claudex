@@ -222,12 +222,12 @@ fn test_cost_for_different_models() {
     let sonnet_cost = usage.cost_for_model(Some("claude-sonnet-4-6"));
     let haiku_cost = usage.cost_for_model(Some("claude-haiku-4-5-20251001"));
 
-    // Opus: $15 input + $75 output = $90
-    assert!((opus_cost - 90.0).abs() < 0.01);
+    // Opus 4.6: $5 input + $25 output = $30
+    assert!((opus_cost - 30.0).abs() < 0.01);
     // Sonnet: $3 input + $15 output = $18
     assert!((sonnet_cost - 18.0).abs() < 0.01);
-    // Haiku: $0.80 input + $4 output = $4.80
-    assert!((haiku_cost - 4.80).abs() < 0.01);
+    // Haiku 4.5: $1 input + $5 output = $6
+    assert!((haiku_cost - 6.0).abs() < 0.01);
 
     // Verify ordering
     assert!(opus_cost > sonnet_cost);

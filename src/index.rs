@@ -22,6 +22,11 @@ fn opt_like(filter: Option<&str>) -> SqlValue {
     }
 }
 
+fn looks_like_session_id_prefix(selector: &str) -> bool {
+    let compact = selector.replace('-', "");
+    compact.len() >= 6 && compact.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 const STALE_SECS: u64 = 300;
 const SCHEMA_VERSION: i64 = 5;
 
@@ -69,6 +74,7 @@ pub struct IndexStore {
 
 // --- Public result types ---
 
+#[derive(Clone)]
 pub struct IndexedSession {
     pub provider: String,
     pub project_name: String,
@@ -979,6 +985,67 @@ impl IndexStore {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn query_session_matches(
+        &self,
+        selector: &str,
+        project_filter: Option<&str>,
+    ) -> Result<Vec<IndexedSession>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT provider, project_name, session_id, file_path, first_timestamp,
+                      message_count, duration_ms, model
+               FROM sessions
+               ORDER BY first_timestamp DESC, file_path ASC"#,
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(IndexedSession {
+                    provider: row.get(0)?,
+                    project_name: row.get(1)?,
+                    session_id: row.get(2)?,
+                    file_path: row.get(3)?,
+                    first_timestamp_ms: row.get(4)?,
+                    message_count: row.get(5)?,
+                    duration_ms: row.get(6)?,
+                    model: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let selector = selector.to_lowercase();
+        let project_filter = project_filter.map(str::to_lowercase);
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|row| {
+                project_filter
+                    .as_deref()
+                    .is_none_or(|p| row.project_name.to_lowercase().contains(p))
+            })
+            .collect();
+
+        let id_matches: Vec<_> = rows
+            .iter()
+            .filter(|row| {
+                row.session_id
+                    .as_deref()
+                    .is_some_and(|id| id.to_lowercase().starts_with(&selector))
+                    || Path::new(&row.file_path)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().to_lowercase().starts_with(&selector))
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        if !id_matches.is_empty() || looks_like_session_id_prefix(&selector) {
+            return Ok(id_matches);
+        }
+
+        Ok(rows
+            .into_iter()
+            .filter(|row| row.project_name.to_lowercase().contains(&selector))
+            .collect())
     }
 
     pub fn query_cost_by_project(

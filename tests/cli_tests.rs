@@ -203,6 +203,21 @@ fn codex_cost_uses_last_cumulative_tokens_and_gpt_pricing() {
     assert!((cost - 6.025).abs() < 0.001, "expected ~$6.025, got {cost}");
 }
 
+#[test]
+fn codex_session_drilldown_resolves_indexed_id() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["session", "codex-a", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert_eq!(v["session_id"].as_str(), Some("codex-a"));
+    assert!(
+        v["project"]
+            .as_str()
+            .is_some_and(|p| p.contains("codexproj")),
+        "expected codex project, got {v}"
+    );
+}
+
 // --- skills subcommand ---
 
 #[test]
@@ -457,12 +472,13 @@ fn on_disk_only_excludes_archived_sessions() {
         "archived codex session is present by default"
     );
 
-    let on_disk: Vec<String> = json_of(&run(home.path(), &["sessions", "--on-disk-only", "--json"]))
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|r| r["project"].as_str().map(str::to_string))
-        .collect();
+    let on_disk: Vec<String> =
+        json_of(&run(home.path(), &["sessions", "--on-disk-only", "--json"]))
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["project"].as_str().map(str::to_string))
+            .collect();
     assert!(
         !on_disk.iter().any(|p| p.contains("archive")),
         "--on-disk-only must exclude the archived session, got: {on_disk:?}"
@@ -484,7 +500,14 @@ fn no_index_search_applies_date_filter() {
 
     let filtered = run(
         home.path(),
-        &["search", "foo", "--no-index", "--since", "2027-01-01", "--json"],
+        &[
+            "search",
+            "foo",
+            "--no-index",
+            "--since",
+            "2027-01-01",
+            "--json",
+        ],
     );
     assert!(
         json_of(&filtered).as_array().unwrap().is_empty(),
@@ -578,6 +601,16 @@ fn pi_sessions_appear_in_unified_index_with_embedded_cost() {
     // Pi's own per-message cost is trusted verbatim.
     let cost = pi["cost_usd"].as_f64().unwrap();
     assert!((cost - 0.75).abs() < 0.0001, "expected $0.75, got {cost}");
+}
+
+#[test]
+fn pi_session_drilldown_resolves_indexed_id() {
+    let home = fixture_home_with_pi();
+    let out = run(home.path(), &["session", "sess-pi", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert_eq!(v["session_id"].as_str(), Some("sess-pi"));
+    assert_eq!(v["cost_usd"].as_f64(), Some(0.75));
 }
 
 #[test]
