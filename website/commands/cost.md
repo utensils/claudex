@@ -11,13 +11,13 @@ claudex cost [-p/--project <substr>] [--per-session]
 
 ## Flags
 
-| Flag                       | Default | Description                                               |
-| -------------------------- | ------- | --------------------------------------------------------- |
-| `-p`, `--project <substr>` | —       | Filter by substring match on the project path.            |
-| `--per-session`            | off     | Break down per session instead of aggregating by project. |
-| `-l`, `--limit <n>`        | `20`    | Maximum number of rows.                                   |
-| `--json`                   | off     | Emit JSON.                                                |
-| `--no-index`               | off     | Scan JSONL files directly.                                |
+| Flag                       | Default | Description                                                   |
+| -------------------------- | ------- | ------------------------------------------------------------- |
+| `-p`, `--project <substr>` | —       | Filter by substring match on the project path.                |
+| `--per-session`            | off     | Break down per session instead of aggregating by project.     |
+| `-l`, `--limit <n>`        | `20`    | Maximum number of rows shown (the `TOTAL` row is unaffected). |
+| `--json`                   | off     | Emit JSON.                                                    |
+| `--no-index`               | off     | Scan JSONL files directly.                                    |
 
 ## Example
 
@@ -31,6 +31,16 @@ claudex cost --project claudex --per-session --limit 20
 # Total cost across everything, as a single number
 claudex cost --json --limit 1000 | jq '[.[].cost_usd] | add'
 ```
+
+## The `TOTAL` row
+
+Both views end in a bold `TOTAL` row holding the **grand total across every
+matching project/session** — it is computed independently of `--limit`, so it
+always equals what [`models`](/commands/models) reports (and
+`SUM(token_usage.cost_usd)` over the same filter). When `--limit` hides some
+rows, a dim caption (`Showing top N of M …`) reconciles the visible rows with the
+full sum. `--json` is unaffected — it stays a flat per-row array with no totals
+object.
 
 ## Columns (aggregated)
 

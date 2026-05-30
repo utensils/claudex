@@ -110,6 +110,27 @@ pub struct SessionCostRow {
     pub cost_usd: f64,
 }
 
+/// Unlimited grand-total aggregate for the `cost` views, computed independently
+/// of `--limit` so the `TOTAL` row reflects every matching project/session, not
+/// just the top-N that are displayed. Matches the model totals reported by
+/// [`IndexStore::query_model_usage`] (same `SUM(token_usage.cost_usd)`).
+///
+/// The two cost views display *different* populations, so two session counts are
+/// exposed: `session_count` (every session, matching the `LEFT JOIN` in
+/// [`IndexStore::query_cost_by_project`]) drives the by-project `TOTAL`/caption,
+/// while `usage_session_count` (token-bearing sessions only, matching
+/// [`IndexStore::query_cost_per_session`]) drives the per-session caption.
+pub struct CostSummary {
+    pub session_count: i64,
+    pub usage_session_count: i64,
+    pub project_count: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cost_usd: f64,
+}
+
 pub struct ToolRow {
     pub tool_name: String,
     pub count: i64,
@@ -1154,6 +1175,53 @@ impl IndexStore {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    /// Unlimited grand totals for the `cost` views. Uses the same `LEFT JOIN`
+    /// population as [`Self::query_cost_by_project`] (no `GROUP BY`/`LIMIT`) so
+    /// the by-project `TOTAL`/caption counts line up with the displayed rows,
+    /// even for zero-usage projects. `usage_session_count` re-counts only
+    /// token-bearing sessions to match [`Self::query_cost_per_session`]. The
+    /// summed cost is population-independent (zero rows contribute nothing), so
+    /// it still equals what `models` reports.
+    pub fn query_cost_summary(
+        &self,
+        project_filter: Option<&str>,
+        filter: &ResolvedFilter,
+    ) -> Result<CostSummary> {
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let session_key =
+            "s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)";
+        let sql = format!(
+            r#"SELECT COUNT(DISTINCT {session_key}),
+                      COUNT(DISTINCT CASE WHEN (COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0) + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)) > 0 THEN {session_key} END),
+                      COUNT(DISTINCT s.project_name),
+                      COALESCE(SUM(t.input_tokens), 0),
+                      COALESCE(SUM(t.output_tokens), 0),
+                      COALESCE(SUM(t.cache_creation_tokens), 0),
+                      COALESCE(SUM(t.cache_read_tokens), 0),
+                      COALESCE(SUM(t.cost_usd), 0)
+               FROM sessions s
+               LEFT JOIN token_usage t ON t.session_id = s.id
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let summary = stmt.query_row(params_from_iter(binds), |row| {
+            Ok(CostSummary {
+                session_count: row.get(0)?,
+                usage_session_count: row.get(1)?,
+                project_count: row.get(2)?,
+                input_tokens: row.get(3)?,
+                output_tokens: row.get(4)?,
+                cache_creation_tokens: row.get(5)?,
+                cache_read_tokens: row.get(6)?,
+                cost_usd: row.get(7)?,
+            })
+        })?;
+        Ok(summary)
     }
 
     pub fn query_tools_aggregate(

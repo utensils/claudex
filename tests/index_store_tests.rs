@@ -238,6 +238,53 @@ fn query_cost_per_session_returns_rows_for_sessions_with_usage() {
 }
 
 #[test]
+fn query_cost_summary_matches_model_totals_regardless_of_limit() {
+    let (_tmp, _store, idx) = build_fixture();
+
+    // The grand total is the single source of truth for `cost`'s TOTAL row.
+    // It must equal what `models` sums (raw SUM(token_usage.cost_usd)) and be
+    // independent of any per-project display limit.
+    let summary = idx.query_cost_summary(None, &all()).unwrap();
+    let model_total: f64 = idx
+        .query_model_usage(None, &all())
+        .unwrap()
+        .iter()
+        .map(|r| r.cost_usd)
+        .sum();
+    assert!((summary.cost_usd - model_total).abs() < 1e-9);
+
+    // Population alignment (the zero-usage gamma project is the trap): the
+    // by-project caption/TOTAL counts must match the rows actually displayed by
+    // `query_cost_by_project` (LEFT JOIN — gamma's $0 row is shown), while
+    // `usage_session_count` matches the token-bearing rows of
+    // `query_cost_per_session` (gamma excluded).
+    let rows = idx.query_cost_by_project(None, &all(), 100).unwrap();
+    let per_session = idx.query_cost_per_session(None, &all(), 100).unwrap();
+    let row_sessions: i64 = rows.iter().map(|r| r.session_count).sum();
+    assert_eq!(summary.project_count as usize, rows.len()); // 3: alpha, beta, gamma
+    assert_eq!(summary.session_count, row_sessions); // 4: TOTAL Sessions == sum of rows
+    assert_eq!(summary.usage_session_count as usize, per_session.len()); // 3 token-bearing
+    assert_eq!(summary.session_count, 4);
+    assert_eq!(summary.project_count, 3);
+    assert_eq!(summary.usage_session_count, 3);
+
+    // Token columns aggregate every session, matching the unlimited by-project
+    // sums (limit=100 returns all rows here).
+    let row_input: i64 = rows.iter().map(|r| r.input_tokens).sum();
+    let row_cost: f64 = rows.iter().map(|r| r.cost_usd).sum();
+    assert_eq!(summary.input_tokens, row_input);
+    assert!((summary.cost_usd - row_cost).abs() < 1e-9);
+
+    // Limit-invariance: a limit of 1 truncates the displayed rows but the
+    // summary is unchanged.
+    let limited = idx.query_cost_by_project(None, &all(), 1).unwrap();
+    assert_eq!(limited.len(), 1);
+    assert!(
+        (idx.query_cost_summary(None, &all()).unwrap().cost_usd - summary.cost_usd).abs() < 1e-9
+    );
+}
+
+#[test]
 fn query_tools_aggregate_counts_tool_invocations() {
     let (_tmp, _store, idx) = build_fixture();
     let rows = idx.query_tools_aggregate(None, &all(), 100).unwrap();

@@ -733,6 +733,163 @@ fn cost_no_index_matches_indexed() {
     );
 }
 
+/// The `$X,XXX.XX` figure from a table's `TOTAL` line (last `$`-prefixed token).
+fn total_cost_figure(text: &str) -> String {
+    let line = text
+        .lines()
+        .find(|l| l.contains("TOTAL"))
+        .expect("a TOTAL line");
+    let dollar = line.rfind('$').expect("a $ figure in the TOTAL line");
+    line[dollar..].trim().to_string()
+}
+
+#[test]
+fn cost_total_matches_models_and_is_limit_invariant() {
+    let home = fixture_home();
+
+    let models = run(home.path(), &["models"]);
+    let cost_full = run(home.path(), &["cost"]);
+    let cost_limited = run(home.path(), &["cost", "--limit", "1"]);
+    assert!(models.status.success() && cost_full.status.success() && cost_limited.status.success());
+
+    let models_total = total_cost_figure(&stdout_of(&models));
+    let cost_total = total_cost_figure(&stdout_of(&cost_full));
+    let cost_limited_total = total_cost_figure(&stdout_of(&cost_limited));
+
+    // The headline fix: cost's TOTAL equals models' total, and a smaller
+    // `--limit` does not shrink it (it's the grand total, not a page subtotal).
+    assert_eq!(
+        cost_total, models_total,
+        "cost TOTAL must equal models total"
+    );
+    assert_eq!(
+        cost_limited_total, cost_total,
+        "TOTAL must be limit-invariant"
+    );
+
+    // Truncation caption appears only when rows are limited below the full set.
+    let limited_out = stdout_of(&cost_limited);
+    assert!(
+        limited_out.contains("Showing top 1 of 2 projects"),
+        "expected truncation caption, got:\n{limited_out}"
+    );
+    assert!(!stdout_of(&cost_full).contains("Showing top"));
+}
+
+#[test]
+fn cost_per_session_total_matches_by_project() {
+    let home = fixture_home();
+    let by_project = run(home.path(), &["cost"]);
+    let per_session = run(home.path(), &["cost", "--per-session"]);
+    assert!(by_project.status.success() && per_session.status.success());
+
+    let ps_out = stdout_of(&per_session);
+    assert!(
+        ps_out.contains("TOTAL"),
+        "per-session should carry a TOTAL row"
+    );
+    assert_eq!(
+        total_cost_figure(&ps_out),
+        total_cost_figure(&stdout_of(&by_project)),
+    );
+}
+
+#[test]
+fn cost_caption_counts_zero_usage_projects_in_the_population() {
+    // Regression: a zero-usage project still shows as a $0 row in the
+    // by-project view (LEFT JOIN), so the truncation caption must count it.
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-gamma",
+        "sess-g1",
+        // A user message only — no assistant/token usage.
+        &[
+            r#"{"type":"user","sessionId":"sess-g1","timestamp":"2026-04-13T00:00:00Z","message":{"content":"ping"}}"#,
+        ],
+    );
+
+    // Three projects (alpha, beta paid + gamma at $0); `--limit 2` hides one.
+    let out = run(home.path(), &["cost", "--limit", "2"]);
+    assert!(out.status.success());
+    let text = stdout_of(&out);
+    assert!(
+        text.contains("Showing top 2 of 3 projects"),
+        "zero-usage project must be counted in the caption population:\n{text}"
+    );
+}
+
+#[test]
+fn cost_json_has_no_totals_object() {
+    // The fix is human-table only; JSON stays a flat per-row array.
+    let home = fixture_home();
+    let out = run(home.path(), &["cost", "--limit", "1", "--json"]);
+    let arr = json_of(&out);
+    assert!(arr.is_array(), "cost --json must remain a bare array");
+    assert!(
+        arr.as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("project").is_some()),
+        "every element is a per-project row (no totals object)"
+    );
+}
+
+// --- clean, scoped CLI error rendering ---
+
+#[test]
+fn parse_error_shows_scoped_usage_and_help_hint() {
+    let home = fixture_home();
+    let out = run(home.path(), &["models", "--since"]);
+    assert_eq!(out.status.code(), Some(2), "usage errors exit 2");
+    let err = stderr_of(&out);
+    assert!(err.contains("a value is required"), "keeps clap's message");
+    assert!(
+        err.contains("Usage: claudex models"),
+        "shows scoped usage:\n{err}"
+    );
+    assert!(
+        err.contains("try 'claudex models --help'"),
+        "scoped help hint:\n{err}"
+    );
+}
+
+#[test]
+fn nested_parse_error_scopes_usage_to_subsubcommand() {
+    let home = fixture_home();
+    let out = run(home.path(), &["skills", "generate", "--nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(
+        err.contains("Usage: claudex skills generate"),
+        "scopes to nested command:\n{err}"
+    );
+    assert!(err.contains("try 'claudex skills generate --help'"));
+}
+
+#[test]
+fn unknown_subcommand_falls_back_to_top_level_usage() {
+    let home = fixture_home();
+    let out = run(home.path(), &["frobnicate"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("Usage: claudex"), "top-level usage:\n{err}");
+    assert!(err.contains("try 'claudex --help'"));
+}
+
+#[test]
+fn help_flag_still_exits_zero_on_stdout() {
+    let home = fixture_home();
+    let out = run(home.path(), &["--help"]);
+    assert!(out.status.success(), "--help exits 0");
+    assert!(stdout_of(&out).contains("Usage: claudex"));
+    assert!(
+        stderr_of(&out).is_empty(),
+        "help goes to stdout, not stderr"
+    );
+}
+
 // --- tools ---
 
 #[test]

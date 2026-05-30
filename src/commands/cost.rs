@@ -27,6 +27,20 @@ pub fn run(
     run_from_files(project, per_session, limit, json, filter)
 }
 
+/// When the displayed rows were truncated to `--limit`, print a dim caption
+/// reconciling the (full) TOTAL with the (partial) rows above it. `unit` is
+/// `"projects"` or `"sessions"`.
+fn print_truncation_note(shown: usize, total: i64, unit: &str) {
+    if total > shown as i64 {
+        println!(
+            "{}",
+            ui::note(&format!(
+                "Showing top {shown} of {total} {unit} · TOTAL is the full sum."
+            ))
+        );
+    }
+}
+
 fn run_indexed(
     project: Option<&str>,
     per_session: bool,
@@ -124,7 +138,24 @@ fn run_indexed(
             }
             table.add_row(cells);
         }
+        let summary = idx.query_cost_summary(project, filter)?;
+        let mut total_cells = vec![
+            "TOTAL".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            ui::fmt_count(summary.input_tokens as u64),
+            ui::fmt_count(summary.output_tokens as u64),
+            ui::fmt_count(summary.cache_creation_tokens as u64),
+            ui::fmt_count(summary.cache_read_tokens as u64),
+            ui::fmt_cost(summary.cost_usd),
+        ];
+        if show_provider {
+            total_cells.insert(0, String::new());
+        }
+        table.add_row(ui::total_row(total_cells));
         println!("{table}");
+        print_truncation_note(rows.len(), summary.usage_session_count, "sessions");
         return Ok(());
     }
 
@@ -168,13 +199,6 @@ fn run_indexed(
     ]));
     ui::right_align(&mut table, &[1, 2, 3, 4, 5, 7]);
 
-    let mut total_cost = 0.0f64;
-    let mut total_in = 0i64;
-    let mut total_out = 0i64;
-    let mut total_cc = 0i64;
-    let mut total_cr = 0i64;
-    let mut total_sessions = 0i64;
-
     for r in &rows {
         let model_str = if r.models.is_empty() {
             "-".to_string()
@@ -191,24 +215,22 @@ fn run_indexed(
             ui::cell_model(&model_str),
             ui::cell_cost(r.cost_usd),
         ]);
-        total_cost += r.cost_usd;
-        total_in += r.input_tokens;
-        total_out += r.output_tokens;
-        total_cc += r.cache_creation_tokens;
-        total_cr += r.cache_read_tokens;
-        total_sessions += r.session_count;
     }
+    // TOTAL is the grand total across *all* matching projects, independent of
+    // `--limit`, so it agrees with `models` (see `query_cost_summary`).
+    let summary = idx.query_cost_summary(project, filter)?;
     table.add_row(ui::total_row([
         "TOTAL".to_string(),
-        ui::fmt_count(total_sessions as u64),
-        ui::fmt_count(total_in as u64),
-        ui::fmt_count(total_out as u64),
-        ui::fmt_count(total_cc as u64),
-        ui::fmt_count(total_cr as u64),
+        ui::fmt_count(summary.session_count as u64),
+        ui::fmt_count(summary.input_tokens as u64),
+        ui::fmt_count(summary.output_tokens as u64),
+        ui::fmt_count(summary.cache_creation_tokens as u64),
+        ui::fmt_count(summary.cache_read_tokens as u64),
         String::new(),
-        ui::fmt_cost(total_cost),
+        ui::fmt_cost(summary.cost_usd),
     ]));
     println!("{table}");
+    print_truncation_note(rows.len(), summary.project_count, "projects");
     Ok(())
 }
 
@@ -278,6 +300,19 @@ fn run_by_project(
             .partial_cmp(&a.total_cost)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+
+    // Grand totals over *all* projects, computed before truncating to `--limit`
+    // so the TOTAL row reflects every project (matches the indexed path).
+    let project_count = rows.len();
+    let mut grand_cost = 0.0f64;
+    let mut grand_usage = TokenUsage::default();
+    let mut grand_sessions = 0usize;
+    for r in &rows {
+        grand_cost += r.total_cost;
+        grand_usage.add(&r.usage);
+        grand_sessions += r.session_count;
+    }
+
     rows.truncate(limit);
 
     if json {
@@ -318,10 +353,6 @@ fn run_by_project(
     ]));
     ui::right_align(&mut table, &[1, 2, 3, 4, 5, 7]);
 
-    let mut total_cost = 0.0f64;
-    let mut total_usage = TokenUsage::default();
-    let mut total_sessions = 0usize;
-
     for r in &rows {
         let model_str = if r.models.is_empty() {
             "-".to_string()
@@ -338,22 +369,20 @@ fn run_by_project(
             ui::cell_model(&model_str),
             ui::cell_cost(r.total_cost),
         ]);
-        total_cost += r.total_cost;
-        total_usage.add(&r.usage);
-        total_sessions += r.session_count;
     }
     table.add_row(ui::total_row([
         "TOTAL".to_string(),
-        ui::fmt_count(total_sessions as u64),
-        ui::fmt_count(total_usage.input_tokens),
-        ui::fmt_count(total_usage.output_tokens),
-        ui::fmt_count(total_usage.cache_creation_tokens),
-        ui::fmt_count(total_usage.cache_read_tokens),
+        ui::fmt_count(grand_sessions as u64),
+        ui::fmt_count(grand_usage.input_tokens),
+        ui::fmt_count(grand_usage.output_tokens),
+        ui::fmt_count(grand_usage.cache_creation_tokens),
+        ui::fmt_count(grand_usage.cache_read_tokens),
         String::new(),
-        ui::fmt_cost(total_cost),
+        ui::fmt_cost(grand_cost),
     ]));
 
     println!("{table}");
+    print_truncation_note(rows.len(), project_count as i64, "projects");
     Ok(())
 }
 
@@ -383,6 +412,16 @@ fn run_per_session(
         ));
     }
     rows.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Grand totals over *all* sessions, before truncating to `--limit`.
+    let session_count = rows.len();
+    let mut grand_cost = 0.0f64;
+    let mut grand_usage = TokenUsage::default();
+    for (_, stats, cost) in &rows {
+        grand_cost += cost;
+        grand_usage.add(&stats.usage);
+    }
+
     rows.truncate(limit);
 
     if json {
@@ -447,7 +486,19 @@ fn run_per_session(
             ui::cell_cost(*cost),
         ]);
     }
+    table.add_row(ui::total_row([
+        "TOTAL".to_string(),
+        String::new(),
+        String::new(),
+        String::new(),
+        ui::fmt_count(grand_usage.input_tokens),
+        ui::fmt_count(grand_usage.output_tokens),
+        ui::fmt_count(grand_usage.cache_creation_tokens),
+        ui::fmt_count(grand_usage.cache_read_tokens),
+        ui::fmt_cost(grand_cost),
+    ]));
     println!("{table}");
+    print_truncation_note(rows.len(), session_count as i64, "sessions");
     Ok(())
 }
 
