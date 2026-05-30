@@ -9,12 +9,14 @@ use rusqlite::{Connection, params};
 use crate::parser::ModelSessionStats;
 use crate::parser::stream_records;
 use crate::stats::percentile_sorted;
-use crate::store::{SessionStore, canonical_project_path, decode_project_name};
+use crate::store::{
+    SessionStore, canonical_project_path, decode_project_name, parent_session_id_for_path,
+};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 fn now_unix_secs() -> u64 {
     SystemTime::now()
@@ -207,12 +209,14 @@ pub struct SessionDetail {
     pub attachments: Vec<AttachmentRow>,
     pub permission_changes: Vec<PermissionChangeRow>,
     pub model_usage: Vec<SessionModelUsageRow>,
+    pub subagent_files: Vec<String>,
 }
 
 type SessionRow = (
     i64,
     String,
     String,
+    Option<String>,
     Option<String>,
     Option<i64>,
     Option<i64>,
@@ -223,7 +227,7 @@ type SessionRow = (
 
 #[derive(Default)]
 struct ModelUsageAccumulator {
-    session_ids: HashSet<i64>,
+    session_ids: HashSet<String>,
     input_tokens: i64,
     output_tokens: i64,
     cache_creation_tokens: i64,
@@ -337,6 +341,7 @@ impl IndexStore {
                 file_size       INTEGER NOT NULL,
                 file_mtime      INTEGER NOT NULL,
                 session_id      TEXT,
+                parent_session_id TEXT,
                 first_timestamp INTEGER,
                 last_timestamp  INTEGER,
                 duration_ms     INTEGER NOT NULL DEFAULT 0,
@@ -561,6 +566,8 @@ impl IndexStore {
 
             let decoded = decode_project_name(project_raw);
             let project_display = canonical_project_path(&decoded).to_string();
+            let project_dir = store.base_dir.join(project_raw);
+            let parent_session_id = parent_session_id_for_path(&project_dir, file_path);
             let mut entry = match parse_session_for_index(file_path) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -579,15 +586,16 @@ impl IndexStore {
 
             tx.execute(
                 r#"INSERT INTO sessions
-                   (project_name, file_path, file_size, file_mtime, session_id,
+                   (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
                     first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                 params![
                     project_display,
                     path_str,
                     size,
                     mtime,
                     entry.session_id,
+                    parent_session_id,
                     first_ts,
                     last_ts,
                     entry.duration_ms as i64,
@@ -817,7 +825,7 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT s.project_name,
-                      COUNT(DISTINCT s.id),
+                      COUNT(DISTINCT COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
                       COALESCE(SUM(t.cache_creation_tokens), 0),
@@ -871,7 +879,9 @@ impl IndexStore {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, s.first_timestamp,
+            r#"SELECT s.project_name,
+                      COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
+                      MIN(s.first_timestamp),
                       GROUP_CONCAT(DISTINCT t.model),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -882,7 +892,7 @@ impl IndexStore {
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY s.id
+               GROUP BY s.project_name, COALESCE(s.parent_session_id, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
                LIMIT ?"#,
         )?;
@@ -937,20 +947,25 @@ impl IndexStore {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT s.id, s.project_name, s.session_id, s.first_timestamp,
-                      tc.tool_name, tc.count
+            r#"SELECT COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
+                      s.project_name,
+                      COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
+                      MIN(s.first_timestamp),
+                      tc.tool_name,
+                      SUM(tc.count)
                FROM sessions s
                JOIN tool_calls tc ON tc.session_id = s.id
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY s.first_timestamp DESC"#,
+               GROUP BY group_key, s.project_name, tc.tool_name
+               ORDER BY MIN(s.first_timestamp) DESC"#,
         )?;
 
-        let mut order: Vec<i64> = Vec::new();
-        let mut map: HashMap<i64, SessionToolRow> = HashMap::new();
+        let mut order: Vec<String> = Vec::new();
+        let mut map: HashMap<String, SessionToolRow> = HashMap::new();
 
         let rows = stmt.query_map(params![fp, fp, fp], |row| {
             Ok((
-                row.get::<_, i64>(0)?,
+                row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<i64>>(3)?,
@@ -960,9 +975,9 @@ impl IndexStore {
         })?;
 
         for row in rows {
-            let (db_id, project, session_id, first_ts, tool_name, count) = row?;
-            let slot = map.entry(db_id).or_insert_with(|| {
-                order.push(db_id);
+            let (group_key, project, session_id, first_ts, tool_name, count) = row?;
+            let slot = map.entry(group_key.clone()).or_insert_with(|| {
+                order.push(group_key);
                 SessionToolRow {
                     project,
                     session_id,
@@ -1169,7 +1184,7 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT t.model,
-                      t.session_id,
+                      COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
                       COALESCE(t.cache_creation_tokens, 0),
@@ -1186,7 +1201,7 @@ impl IndexStore {
         let rows = stmt.query_map(params![fp, fp, fp], |row| {
             Ok((
                 row.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                row.get::<_, i64>(1)?,
+                row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
@@ -1284,8 +1299,8 @@ impl IndexStore {
         let session_row: Option<SessionRow> = self
             .conn
             .query_row(
-                r#"SELECT id, project_name, file_path, session_id, first_timestamp,
-                          last_timestamp, duration_ms, message_count, model
+                r#"SELECT id, project_name, file_path, session_id, parent_session_id,
+                          first_timestamp, last_timestamp, duration_ms, message_count, model
                    FROM sessions
                    WHERE file_path = ?"#,
                 params![file_path],
@@ -1300,6 +1315,7 @@ impl IndexStore {
                         row.get(6)?,
                         row.get(7)?,
                         row.get(8)?,
+                        row.get(9)?,
                     ))
                 },
             )
@@ -1310,15 +1326,54 @@ impl IndexStore {
             project,
             file_path,
             session_id,
-            first_timestamp_ms,
-            last_timestamp_ms,
-            duration_ms,
-            message_count,
+            parent_session_id,
+            _first_timestamp_ms,
+            _last_timestamp_ms,
+            _duration_ms,
+            _message_count,
             model,
         )) = session_row
         else {
             return Ok(None);
         };
+
+        let mut row_ids = vec![session_rowid];
+        let mut subagent_files = Vec::new();
+        if parent_session_id.is_none()
+            && let Some(parent) = session_id.as_deref()
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, file_path FROM sessions WHERE parent_session_id = ? ORDER BY first_timestamp, file_path",
+            )?;
+            let child_rows = stmt
+                .query_map(params![parent], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (id, path) in child_rows {
+                row_ids.push(id);
+                subagent_files.push(path);
+            }
+        }
+        let token_filter = id_filter(&row_ids, "session_id");
+        let row_filter = id_filter(&row_ids, "session_rowid");
+
+        let (first_timestamp_ms, last_timestamp_ms, duration_ms, message_count): (
+            Option<i64>,
+            Option<i64>,
+            i64,
+            i64,
+        ) = self.conn.query_row(
+            &format!(
+                r#"SELECT MIN(first_timestamp), MAX(last_timestamp),
+                          COALESCE(SUM(duration_ms), 0), COALESCE(SUM(message_count), 0)
+                   FROM sessions
+                   WHERE {}"#,
+                id_filter(&row_ids, "id")
+            ),
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
 
         let (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd): (
             i64,
@@ -1327,14 +1382,16 @@ impl IndexStore {
             i64,
             f64,
         ) = self.conn.query_row(
-            r#"SELECT COALESCE(SUM(input_tokens), 0),
-                      COALESCE(SUM(output_tokens), 0),
-                      COALESCE(SUM(cache_creation_tokens), 0),
-                      COALESCE(SUM(cache_read_tokens), 0),
-                      COALESCE(SUM(cost_usd), 0)
-               FROM token_usage
-               WHERE session_id = ?"#,
-            params![session_rowid],
+            &format!(
+                r#"SELECT COALESCE(SUM(input_tokens), 0),
+                          COALESCE(SUM(output_tokens), 0),
+                          COALESCE(SUM(cache_creation_tokens), 0),
+                          COALESCE(SUM(cache_read_tokens), 0),
+                          COALESCE(SUM(cost_usd), 0)
+                   FROM token_usage
+                   WHERE {token_filter}"#,
+            ),
+            [],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -1349,20 +1406,23 @@ impl IndexStore {
         let thinking_block_count: i64 = self
             .conn
             .query_row(
-                "SELECT COALESCE(SUM(thinking_blocks), 0) FROM thinking_usage WHERE session_rowid = ?",
-                params![session_rowid],
+                &format!(
+                    "SELECT COALESCE(SUM(thinking_blocks), 0) FROM thinking_usage WHERE {row_filter}"
+                ),
+                [],
                 |row| row.get(0),
             )
             .unwrap_or(0);
 
         let tools = {
-            let mut stmt = self.conn.prepare(
-                r#"SELECT tool_name, count
+            let mut stmt = self.conn.prepare(&format!(
+                r#"SELECT tool_name, SUM(count) AS total
                    FROM tool_calls
-                   WHERE session_id = ?
-                   ORDER BY count DESC, tool_name ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| {
+                   WHERE {token_filter}
+                   GROUP BY tool_name
+                   ORDER BY total DESC, tool_name ASC"#
+            ))?;
+            stmt.query_map([], |row| {
                 Ok(ToolRow {
                     tool_name: row.get(0)?,
                     count: row.get(1)?,
@@ -1372,48 +1432,45 @@ impl IndexStore {
         };
 
         let pr_links = {
-            let mut stmt = self.conn.prepare(
+            let mut stmt = self.conn.prepare(&format!(
                 r#"SELECT ?, ?, pr_number, pr_url, pr_repository, COALESCE(timestamp, '')
                    FROM pr_links
-                   WHERE session_rowid = ?
-                   ORDER BY timestamp DESC, pr_url ASC"#,
-            )?;
-            stmt.query_map(
-                params![project.clone(), session_id.clone(), session_rowid],
-                |row| {
-                    Ok(PrLinkRow {
-                        project: row.get(0)?,
-                        session_id: row.get(1)?,
-                        pr_number: row.get(2)?,
-                        pr_url: row.get(3)?,
-                        pr_repository: row.get(4)?,
-                        timestamp: row.get(5)?,
-                    })
-                },
-            )?
+                   WHERE {row_filter}
+                   ORDER BY timestamp DESC, pr_url ASC"#
+            ))?;
+            stmt.query_map(params![project.clone(), session_id.clone()], |row| {
+                Ok(PrLinkRow {
+                    project: row.get(0)?,
+                    session_id: row.get(1)?,
+                    pr_number: row.get(2)?,
+                    pr_url: row.get(3)?,
+                    pr_repository: row.get(4)?,
+                    timestamp: row.get(5)?,
+                })
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?
         };
 
         let files_modified = {
-            let mut stmt = self.conn.prepare(
+            let mut stmt = self.conn.prepare(&format!(
                 r#"SELECT DISTINCT file_path
                    FROM file_modifications
-                   WHERE session_rowid = ?
-                   ORDER BY file_path ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| row.get::<_, String>(0))?
+                   WHERE {row_filter}
+                   ORDER BY file_path ASC"#
+            ))?;
+            stmt.query_map([], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
 
         let turn_stats = {
-            let mut stmt = self.conn.prepare(
+            let mut stmt = self.conn.prepare(&format!(
                 r#"SELECT duration_ms
                    FROM turn_durations
-                   WHERE session_rowid = ?
-                   ORDER BY duration_ms ASC"#,
-            )?;
+                   WHERE {row_filter}
+                   ORDER BY duration_ms ASC"#
+            ))?;
             let durations = stmt
-                .query_map(params![session_rowid], |row| row.get::<_, i64>(0))?
+                .query_map([], |row| row.get::<_, i64>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             if durations.is_empty() {
                 None
@@ -1432,13 +1489,14 @@ impl IndexStore {
         };
 
         let stop_reasons = {
-            let mut stmt = self.conn.prepare(
-                r#"SELECT stop_reason, count
+            let mut stmt = self.conn.prepare(&format!(
+                r#"SELECT stop_reason, SUM(count) AS total
                    FROM stop_reasons
-                   WHERE session_rowid = ?
-                   ORDER BY count DESC, stop_reason ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| {
+                   WHERE {row_filter}
+                   GROUP BY stop_reason
+                   ORDER BY total DESC, stop_reason ASC"#
+            ))?;
+            stmt.query_map([], |row| {
                 Ok(StopReasonRow {
                     stop_reason: row.get(0)?,
                     count: row.get(1)?,
@@ -1448,13 +1506,13 @@ impl IndexStore {
         };
 
         let attachments = {
-            let mut stmt = self.conn.prepare(
+            let mut stmt = self.conn.prepare(&format!(
                 r#"SELECT filename, mime_type
                    FROM attachments
-                   WHERE session_rowid = ?
-                   ORDER BY filename ASC, mime_type ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| {
+                   WHERE {row_filter}
+                   ORDER BY filename ASC, mime_type ASC"#
+            ))?;
+            stmt.query_map([], |row| {
                 Ok(AttachmentRow {
                     filename: row.get(0)?,
                     mime_type: row.get(1)?,
@@ -1464,13 +1522,13 @@ impl IndexStore {
         };
 
         let permission_changes = {
-            let mut stmt = self.conn.prepare(
+            let mut stmt = self.conn.prepare(&format!(
                 r#"SELECT mode, COALESCE(timestamp, '')
                    FROM permission_changes
-                   WHERE session_rowid = ?
-                   ORDER BY timestamp ASC, mode ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| {
+                   WHERE {row_filter}
+                   ORDER BY timestamp ASC, mode ASC"#
+            ))?;
+            stmt.query_map([], |row| {
                 Ok(PermissionChangeRow {
                     mode: row.get(0)?,
                     timestamp: row.get(1)?,
@@ -1480,15 +1538,24 @@ impl IndexStore {
         };
 
         let model_usage = {
-            let mut stmt = self.conn.prepare(
-                r#"SELECT model, assistant_message_count, input_tokens, output_tokens,
-                          cache_creation_tokens, cache_read_tokens, cost_usd,
-                          inference_geo, service_tier, speed, iterations
+            let mut stmt = self.conn.prepare(&format!(
+                r#"SELECT model,
+                          SUM(assistant_message_count),
+                          SUM(input_tokens),
+                          SUM(output_tokens),
+                          SUM(cache_creation_tokens),
+                          SUM(cache_read_tokens),
+                          SUM(cost_usd),
+                          GROUP_CONCAT(DISTINCT inference_geo),
+                          GROUP_CONCAT(DISTINCT service_tier),
+                          AVG(speed),
+                          SUM(iterations)
                    FROM token_usage
-                   WHERE session_id = ?
-                   ORDER BY cost_usd DESC, model ASC"#,
-            )?;
-            stmt.query_map(params![session_rowid], |row| {
+                   WHERE {token_filter}
+                   GROUP BY model
+                   ORDER BY SUM(cost_usd) DESC, model ASC"#
+            ))?;
+            stmt.query_map([], |row| {
                 Ok(SessionModelUsageRow {
                     model: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
                     assistant_message_count: row.get(1)?,
@@ -1531,6 +1598,7 @@ impl IndexStore {
             attachments,
             permission_changes,
             model_usage,
+            subagent_files,
         }))
     }
 
@@ -1555,7 +1623,7 @@ impl IndexStore {
             i64,
             i64,
         ) = self.conn.query_row(
-            r#"SELECT COUNT(DISTINCT s.id),
+            r#"SELECT COUNT(DISTINCT COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -1577,13 +1645,13 @@ impl IndexStore {
         )?;
 
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![today_start_ms],
             |row| row.get(0),
         )?;
 
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -1597,7 +1665,7 @@ impl IndexStore {
         )?;
 
         let mut top_stmt = self.conn.prepare(
-            r#"SELECT project_name, COUNT(*) AS cnt
+            r#"SELECT project_name, COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) AS cnt
                FROM sessions
                GROUP BY project_name
                ORDER BY cnt DESC
@@ -1686,20 +1754,22 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT session_id, model, COALESCE(cost_usd, 0)
-               FROM token_usage"#,
+            r#"SELECT COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+               FROM token_usage t
+               JOIN sessions s ON s.id = t.session_id"#,
         )?;
         let raw_model_rows = mdist_stmt
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, f64>(2)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut family_map: HashMap<String, (std::collections::HashSet<i64>, f64)> = HashMap::new();
+        let mut family_map: HashMap<String, (std::collections::HashSet<String>, f64)> =
+            HashMap::new();
         for (session_id, model, cost) in raw_model_rows {
             let family = model
                 .as_deref()
@@ -1740,6 +1810,15 @@ impl IndexStore {
             model_distribution,
         })
     }
+}
+
+fn id_filter(row_ids: &[i64], column: &str) -> String {
+    let ids = row_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{column} IN ({ids})")
 }
 
 fn fts_escape(query: &str) -> String {

@@ -75,6 +75,12 @@ fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
             .unwrap_or_else(|| "-".to_string())
     );
     println!("  Cost:         {}", ui::cost(detail.cost_usd));
+    if !detail.subagent_files.is_empty() {
+        println!(
+            "  Subagents:    {}",
+            ui::fmt_count(detail.subagent_files.len() as u64)
+        );
+    }
 
     print_tokens(
         detail.input_tokens as u64,
@@ -102,6 +108,7 @@ fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
     print_stop_reasons(&detail.stop_reasons);
     print_attachments_indexed(&detail.attachments);
     print_permission_changes_indexed(&detail.permission_changes);
+    print_subagents(&detail.subagent_files);
 
     println!();
     Ok(())
@@ -246,6 +253,7 @@ fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
         "stop_reasons": detail.stop_reasons.iter().map(|r| serde_json::json!({"stop_reason": r.stop_reason, "count": r.count})).collect::<Vec<_>>(),
         "attachments": detail.attachments.iter().map(|a| serde_json::json!({"filename": a.filename, "mime_type": a.mime_type})).collect::<Vec<_>>(),
         "permission_changes": detail.permission_changes.iter().map(|p| serde_json::json!({"mode": p.mode, "timestamp": p.timestamp})).collect::<Vec<_>>(),
+        "subagent_files": detail.subagent_files,
     })
 }
 
@@ -485,6 +493,16 @@ fn print_tools(tools: &[ToolRow]) {
             ui::tool_name(&row.tool_name),
             ui::fmt_count(row.count as u64)
         );
+    }
+}
+
+fn print_subagents(files: &[String]) {
+    if files.is_empty() {
+        return;
+    }
+    section("Subagents");
+    for file in files {
+        println!("  {}", file);
     }
 }
 

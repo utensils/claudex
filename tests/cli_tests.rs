@@ -16,15 +16,22 @@ use tempfile::TempDir;
 const BIN: &str = env!("CARGO_BIN_EXE_claudex");
 
 fn write_session(projects: &Path, encoded_project: &str, session: &str, lines: &[&str]) -> PathBuf {
-    let dir = projects.join(encoded_project);
-    fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{session}.jsonl"));
-    let mut f = fs::File::create(&path).unwrap();
+    let path = projects
+        .join(encoded_project)
+        .join(format!("{session}.jsonl"));
+    write_jsonl(&path, lines)
+}
+
+fn write_jsonl(path: &Path, lines: &[&str]) -> PathBuf {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let mut f = fs::File::create(path).unwrap();
     for line in lines {
         writeln!(f, "{line}").unwrap();
     }
     f.flush().unwrap();
-    path
+    path.to_path_buf()
 }
 
 /// Build a tempdir set up as a fake `$HOME` with `.claude/projects/...`
@@ -324,6 +331,65 @@ fn search_json_returns_structured_hits() {
     assert!(!arr.is_empty());
     assert!(arr[0].get("message_timestamp").is_some());
     assert!(arr[0].get("snippet").is_some());
+}
+
+#[test]
+fn subagent_transcripts_are_indexed_and_scanned() {
+    let home = TempDir::new().unwrap();
+    let projects = home.path().join(".claude/projects");
+    let encoded = "-Users-test-Projects-agents";
+    write_session(
+        &projects,
+        encoded,
+        "parent-1",
+        &[
+            r#"{"type":"user","sessionId":"parent-1","timestamp":"2026-04-10T10:00:00Z","message":{"content":"delegate"}}"#,
+            r#"{"type":"assistant","sessionId":"parent-1","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":10},"content":[{"type":"text","text":"delegated"}]}}"#,
+        ],
+    );
+    write_jsonl(
+        &projects
+            .join(encoded)
+            .join("parent-1/subagents/workflows/run-1/agent-child.jsonl"),
+        &[
+            r#"{"type":"user","isSidechain":true,"sessionId":"child-1","timestamp":"2026-04-10T10:02:00Z","message":{"content":"subagent"}}"#,
+            r#"{"type":"assistant","isSidechain":true,"sessionId":"child-1","timestamp":"2026-04-10T10:03:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":900,"output_tokens":90},"content":[{"type":"tool_use","name":"Edit","id":"t2","input":{}},{"type":"text","text":"Authenticated the dev app"}]}}"#,
+        ],
+    );
+    write_jsonl(
+        &projects
+            .join(encoded)
+            .join("parent-1/subagents/workflows/run-1/journal.jsonl"),
+        &[r#"{"type":"started","agentId":"child-1"}"#],
+    );
+
+    let indexed = run(
+        home.path(),
+        &["search", "Authenticated the dev app", "--json"],
+    );
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    let indexed_hits = json_of(&indexed).as_array().unwrap().clone();
+    assert_eq!(indexed_hits.len(), 1);
+    assert_eq!(indexed_hits[0]["session_id"].as_str(), Some("child-1"));
+
+    let scanned = run(
+        home.path(),
+        &[
+            "search",
+            "Authenticated the dev app",
+            "--json",
+            "--no-index",
+        ],
+    );
+    assert!(scanned.status.success(), "stderr: {}", stderr_of(&scanned));
+    assert_eq!(json_of(&scanned).as_array().unwrap().len(), 1);
+
+    let cost = run(home.path(), &["cost", "--per-session", "--json"]);
+    assert!(cost.status.success(), "stderr: {}", stderr_of(&cost));
+    let rows = json_of(&cost).as_array().unwrap().clone();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["session_id"].as_str(), Some("parent-1"));
+    assert_eq!(rows[0]["input_tokens"].as_u64(), Some(1000));
 }
 
 #[test]
