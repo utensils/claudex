@@ -41,6 +41,44 @@ fn realistic_session_lines() -> Vec<&'static str> {
 }
 
 #[test]
+fn session_stats_merge_rolls_up_child() {
+    let dir = TempDir::new().unwrap();
+    let parent_file = setup_project(
+        dir.path(),
+        "-Users-test-Projects-x",
+        "parent-1",
+        &[
+            r#"{"type":"user","sessionId":"parent-1","timestamp":"2026-04-10T10:00:00Z","message":{"content":"go"}}"#,
+            r#"{"type":"assistant","sessionId":"parent-1","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":10},"content":[{"type":"text","text":"ok"}]}}"#,
+        ],
+    );
+    let child_file = setup_project(
+        dir.path(),
+        "-Users-test-Projects-x",
+        "agent-child",
+        &[
+            r#"{"type":"assistant","isSidechain":true,"sessionId":"child-1","timestamp":"2026-04-10T10:03:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":900,"output_tokens":90},"content":[{"type":"tool_use","name":"Edit","id":"t2","input":{}},{"type":"text","text":"done"}]}}"#,
+        ],
+    );
+
+    let mut parent = claudex::parser::parse_session(&parent_file).unwrap();
+    let child = claudex::parser::parse_session(&child_file).unwrap();
+    parent.merge(child);
+
+    // Token usage and counts sum across parent + child.
+    assert_eq!(parent.usage.input_tokens, 1000);
+    assert_eq!(parent.usage.output_tokens, 100);
+    // Per-model breakdown spans both models; identity stays the parent's.
+    assert_eq!(parent.model_usage.len(), 2);
+    assert_eq!(parent.session_id.as_deref(), Some("parent-1"));
+    // Timestamp envelope covers both.
+    assert_eq!(
+        parent.last_timestamp.map(|t| t.to_rfc3339()),
+        Some("2026-04-10T10:03:00+00:00".to_string())
+    );
+}
+
+#[test]
 fn test_parser_realistic_session() {
     let dir = TempDir::new().unwrap();
     let lines = realistic_session_lines();

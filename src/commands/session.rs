@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 
 use crate::commands::sessions::format_duration;
 use crate::index::{
@@ -12,6 +12,7 @@ use crate::parser::{ModelSessionStats, SessionStats, parse_session};
 use crate::stats::percentile_sorted;
 use crate::store::{
     SessionStore, decode_project_name, display_project_name, find_matching_sessions, short_name,
+    subagent_transcripts_for,
 };
 use crate::types::ModelPricing;
 use crate::ui;
@@ -29,8 +30,35 @@ pub fn run(selector: &str, project_filter: Option<&str>, json: bool, no_index: b
         }
     }
 
-    let stats = parse_session(&path)?;
-    render_from_file(&project, &path, stats, json)
+    let mut stats = parse_session(&path)?;
+    // Roll up subagent transcripts the way the indexed path does, so the
+    // `--no-index` drill-down reports the same Subagents / Cost / Tokens. The
+    // top-line model stays the parent's own label (captured before merging),
+    // while the per-model breakdown spans children.
+    let parent_model_label = stats.model_label();
+    let mut subagents: Vec<(Option<DateTime<Utc>>, String)> = Vec::new();
+    for child_path in subagent_transcripts_for(&path)? {
+        let child = parse_session(&child_path)?;
+        subagents.push((
+            child.first_timestamp,
+            child_path.to_string_lossy().into_owned(),
+        ));
+        stats.merge(child);
+    }
+    // Match the indexed `ORDER BY first_timestamp, file_path`.
+    subagents.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let subagent_files: Vec<String> = subagents.into_iter().map(|(_, p)| p).collect();
+    // The indexed drill-down lists modified files `ORDER BY file_path ASC`; sort
+    // here so the file-scan path renders them in the same order.
+    stats.file_paths_modified.sort();
+    render_from_file(
+        &project,
+        &path,
+        stats,
+        parent_model_label,
+        &subagent_files,
+        json,
+    )
 }
 
 fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
@@ -114,11 +142,24 @@ fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn render_from_file(project: &str, path: &Path, stats: SessionStats, json: bool) -> Result<()> {
+fn render_from_file(
+    project: &str,
+    path: &Path,
+    stats: SessionStats,
+    model_label: Option<String>,
+    subagent_files: &[String],
+    json: bool,
+) -> Result<()> {
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&file_json(project, path, &stats))?
+            serde_json::to_string_pretty(&file_json(
+                project,
+                path,
+                &stats,
+                &model_label,
+                subagent_files
+            ))?
         );
         return Ok(());
     }
@@ -151,13 +192,18 @@ fn render_from_file(project: &str, path: &Path, stats: SessionStats, json: bool)
     );
     println!(
         "  Model:        {}",
-        stats
-            .model_label()
+        model_label
             .as_deref()
             .map(display_session_model)
             .unwrap_or_else(|| "-".to_string())
     );
     println!("  Cost:         {}", ui::cost(stats.cost_usd()));
+    if !subagent_files.is_empty() {
+        println!(
+            "  Subagents:    {}",
+            ui::fmt_count(subagent_files.len() as u64)
+        );
+    }
 
     print_tokens(
         stats.usage.input_tokens,
@@ -185,6 +231,7 @@ fn render_from_file(project: &str, path: &Path, stats: SessionStats, json: bool)
     print_stop_reasons(&stop_reasons);
     print_attachments_file(&stats.attachments);
     print_permission_changes_file(&stats.permission_modes);
+    print_subagents(subagent_files);
 
     println!();
     Ok(())
@@ -257,7 +304,13 @@ fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
     })
 }
 
-fn file_json(project: &str, path: &Path, stats: &SessionStats) -> serde_json::Value {
+fn file_json(
+    project: &str,
+    path: &Path,
+    stats: &SessionStats,
+    model_label: &Option<String>,
+    subagent_files: &[String],
+) -> serde_json::Value {
     let turn_stats = build_turn_stats(project, &stats.turn_durations);
     let stop_reasons = stop_reason_rows(&stats.stop_reason_counts);
     let tools = tool_rows_from_names(&stats.tool_names);
@@ -269,7 +322,7 @@ fn file_json(project: &str, path: &Path, stats: &SessionStats) -> serde_json::Va
         "last_activity": stats.last_timestamp.map(|d| d.to_rfc3339()),
         "duration_ms": stats.total_duration_ms,
         "message_count": stats.message_count,
-        "model": stats.model_label(),
+        "model": model_label,
         "input_tokens": stats.usage.input_tokens,
         "output_tokens": stats.usage.output_tokens,
         "cache_creation_tokens": stats.usage.cache_creation_tokens,
@@ -290,6 +343,7 @@ fn file_json(project: &str, path: &Path, stats: &SessionStats) -> serde_json::Va
         "stop_reasons": stop_reasons.iter().map(|r| serde_json::json!({"stop_reason": r.stop_reason, "count": r.count})).collect::<Vec<_>>(),
         "attachments": stats.attachments.iter().map(|(filename, mime_type)| serde_json::json!({"filename": filename, "mime_type": mime_type})).collect::<Vec<_>>(),
         "permission_changes": stats.permission_modes.iter().map(|(mode, timestamp)| serde_json::json!({"mode": mode, "timestamp": timestamp})).collect::<Vec<_>>(),
+        "subagent_files": subagent_files,
     })
 }
 
@@ -341,6 +395,11 @@ fn model_stats_rows(stats: &SessionStats) -> Vec<(String, ModelSessionStats)> {
     let mut rows = stats
         .model_usage
         .iter()
+        // Skip zero-token rows to match the index, which never persists them
+        // (e.g. a `<synthetic>` model that carried no usage). Without this the
+        // `--no-index` per-model breakdown would show phantom rows the indexed
+        // drill-down omits.
+        .filter(|(_, detail)| detail.usage.total_tokens() > 0)
         .map(|(model, detail)| (model.clone(), detail.clone()))
         .collect::<Vec<_>>();
     rows.sort_by(|a, b| {

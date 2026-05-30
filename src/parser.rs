@@ -93,6 +93,59 @@ impl SessionStats {
             _ => Some("mixed".to_string()),
         }
     }
+
+    /// Fold a subagent transcript's stats into this (parent) session, matching
+    /// the index's parent/subagent rollup in `query_session_detail`: token
+    /// usage, message counts, durations, thinking blocks, and per-tool /
+    /// per-model counts are summed; list-like metrics are concatenated (files
+    /// stay de-duplicated as the single-session parser keeps them); timestamps
+    /// take the min/max envelope. `self.session_id` and `self.model` (the
+    /// parent's own label inputs) are left untouched — the rolled-up top-line
+    /// model stays the parent's, while the per-model breakdown spans children.
+    pub fn merge(&mut self, other: SessionStats) {
+        self.message_count += other.message_count;
+        self.total_duration_ms += other.total_duration_ms;
+        self.thinking_block_count += other.thinking_block_count;
+        self.usage.add(&other.usage);
+
+        self.first_timestamp = match (self.first_timestamp, other.first_timestamp) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        self.last_timestamp = match (self.last_timestamp, other.last_timestamp) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+
+        self.tool_names.extend(other.tool_names);
+        self.turn_durations.extend(other.turn_durations);
+        self.pr_links.extend(other.pr_links);
+        self.attachments.extend(other.attachments);
+        self.permission_modes.extend(other.permission_modes);
+
+        // Files are reported de-duplicated within a session (see the parser's
+        // `contains` guard); preserve that across the rollup too.
+        for path in other.file_paths_modified {
+            if !self.file_paths_modified.contains(&path) {
+                self.file_paths_modified.push(path);
+            }
+        }
+
+        for (reason, count) in other.stop_reason_counts {
+            *self.stop_reason_counts.entry(reason).or_insert(0) += count;
+        }
+
+        for (model, stats) in other.model_usage {
+            let entry = self.model_usage.entry(model).or_default();
+            entry.usage.add(&stats.usage);
+            entry.assistant_message_count += stats.assistant_message_count;
+            entry.inference_geos.extend(stats.inference_geos);
+            entry.service_tiers.extend(stats.service_tiers);
+            entry.speed_sum += stats.speed_sum;
+            entry.speed_samples += stats.speed_samples;
+            entry.iterations += stats.iterations;
+        }
+    }
 }
 
 /// Parse a JSONL session file line-by-line, accumulating stats without loading
