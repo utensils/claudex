@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.6.0](https://github.com/utensils/claudex/compare/v0.5.2...v0.6.0) (2026-05-30)
+
+
+### Features
+
+* **cost:** historical pricing accuracy + automatic in-place reprice ([#38](https://github.com/utensils/claudex/issues/38)) ([4a1971d](https://github.com/utensils/claudex/commit/4a1971de911b08fd76706f33e339b6cf3f6fba3e))
+* index Codex and Pi sessions as first-class providers ([#33](https://github.com/utensils/claudex/issues/33)) ([71a7ccc](https://github.com/utensils/claudex/commit/71a7ccc22c767047fdba1f666d1a8a05a9eea6cd))
+
+
+### Bug Fixes
+
+* **cli:** improve usage errors and examples ([#36](https://github.com/utensils/claudex/issues/36)) ([b5d76bf](https://github.com/utensils/claudex/commit/b5d76bf1279743caa224595d30f67807c6e589b6))
+* **cost:** grand-total TOTAL row + scoped CLI error usage ([#35](https://github.com/utensils/claudex/issues/35)) ([96dc7b5](https://github.com/utensils/claudex/commit/96dc7b52b54bf4df322cb38c7ee6c139256dab1e))
+
 ## [0.5.2](https://github.com/utensils/claudex/compare/v0.5.1...v0.5.2) (2026-05-30)
 
 
