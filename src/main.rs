@@ -308,10 +308,7 @@ fn main() {
         .and_then(|m| <Cli as clap::FromArgMatches>::from_arg_matches(&m));
     let cli = match cli {
         Ok(cli) => cli,
-        Err(e) => {
-            // `exit` renders styled help/errors via the configured color choice.
-            e.exit();
-        }
+        Err(e) => render_cli_error(e, choice),
     };
     let result = match cli.command {
         Commands::Sessions {
@@ -467,6 +464,79 @@ fn clap_color_choice(c: ColorChoice) -> clap::ColorChoice {
         ColorChoice::Always => clap::ColorChoice::Always,
         ColorChoice::Never => clap::ColorChoice::Never,
         ColorChoice::Auto => clap::ColorChoice::Auto,
+    }
+}
+
+/// Render a clap parse failure as a clean, scoped block: the error message, a
+/// `Usage:` line for the *invoked* (sub)command, and a help hint pointing at
+/// that same subcommand — instead of clap's default bare `try '--help'.` with
+/// no usage. Help/version "errors" pass straight through to clap (stdout, 0).
+fn render_cli_error(err: clap::Error, choice: ColorChoice) -> ! {
+    use clap::error::ErrorKind;
+
+    if matches!(
+        err.kind(),
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayVersion
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) {
+        // Not a failure: clap prints help/version to stdout and exits 0.
+        err.exit();
+    }
+
+    let code = err.exit_code();
+    let mut cmd = Cli::command().color(clap_color_choice(choice));
+    cmd.build();
+    let mut scoped = resolve_invoked_command(&cmd).clone();
+    let bin = scoped
+        .get_bin_name()
+        .unwrap_or_else(|| scoped.get_name())
+        .to_string();
+    let usage = scoped.render_usage().to_string();
+
+    // clap's rendered error carries the styled `error: <message>` line (and,
+    // for some kinds, a Usage block). Drop its trailing help footer and ensure
+    // a usage line plus a scoped help hint are present.
+    let mut out = strip_help_footer(&err.render().to_string());
+    if !out.contains("Usage:") {
+        out.push_str("\n\n");
+        out.push_str(usage.trim_end());
+    }
+    out.push_str(&format!("\n\nFor more information, try '{bin} --help'."));
+
+    eprintln!("{out}");
+    std::process::exit(code);
+}
+
+/// Walk argv to find the deepest subcommand the user actually invoked, so usage
+/// and the help hint are scoped to it (e.g. `claudex skills generate`). Skips
+/// the global `--color` flag (and its value); stops at the first token that
+/// isn't a known subcommand. Falls back to the top-level command.
+fn resolve_invoked_command(cmd: &clap::Command) -> &clap::Command {
+    let mut current = cmd;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--color" {
+            let _ = args.next();
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        match current.find_subcommand(&arg) {
+            Some(sub) => current = sub,
+            None => break,
+        }
+    }
+    current
+}
+
+/// Strip clap's trailing `For more information, try '...'.` footer (and any
+/// blank lines before it) so we can append our own scoped hint.
+fn strip_help_footer(rendered: &str) -> String {
+    match rendered.find("For more information") {
+        Some(pos) => rendered[..pos].trim_end().to_string(),
+        None => rendered.trim_end().to_string(),
     }
 }
 

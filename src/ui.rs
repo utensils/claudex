@@ -298,6 +298,15 @@ pub fn banner(s: &str) -> String {
     }
 }
 
+/// A dim, secondary caption printed beneath a table (e.g. a truncation hint).
+pub fn note(s: &str) -> String {
+    if color_on() {
+        s.dimmed().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// Colored cost for non-table contexts (summary). Green dollar figure.
 pub fn cost(usd: f64) -> String {
     if color_on() {
