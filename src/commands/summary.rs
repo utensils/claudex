@@ -6,6 +6,7 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::plan::Plan;
+use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
@@ -18,9 +19,9 @@ pub fn run(json: bool, no_index: bool, plan: Plan) -> Result<()> {
 }
 
 fn run_indexed(json: bool, plan: Plan) -> Result<()> {
-    let store = SessionStore::new()?;
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
     let data = idx.query_summary()?;
 
     if json {

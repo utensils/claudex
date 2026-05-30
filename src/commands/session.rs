@@ -9,6 +9,7 @@ use crate::index::{
     IndexStore, SessionDetail, SessionModelUsageRow, StopReasonRow, ToolRow, TurnStatsRow,
 };
 use crate::parser::{ModelSessionStats, SessionStats, parse_session};
+use crate::providers::enabled_default;
 use crate::stats::percentile_sorted;
 use crate::store::{
     SessionStore, decode_project_name, display_project_name, find_matching_sessions, short_name,
@@ -23,8 +24,9 @@ pub fn run(selector: &str, project_filter: Option<&str>, json: bool, no_index: b
     let project = display_project_name(&decode_project_name(&project_raw));
 
     if !no_index {
+        let providers = enabled_default()?;
         let mut idx = IndexStore::open()?;
-        idx.ensure_fresh(&store)?;
+        idx.ensure_fresh(&providers)?;
         if let Some(detail) = idx.query_session_detail(&path.to_string_lossy())? {
             return render_indexed(detail, json);
         }

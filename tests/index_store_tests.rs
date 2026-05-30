@@ -9,8 +9,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use claudex::index::IndexStore;
+use claudex::providers::{ClaudeProvider, Provider};
 use claudex::store::SessionStore;
 use tempfile::TempDir;
+
+/// Wrap a `projects` directory in the single-Claude-provider set the index sync
+/// methods now expect.
+fn claude_providers(projects: PathBuf) -> Vec<Provider> {
+    vec![Provider::Claude(ClaudeProvider::at(SessionStore::at(
+        projects,
+    )))]
+}
 
 /// Write a JSONL session file under `<projects>/<encoded_project>/<session>.jsonl`.
 fn write_session(projects: &Path, encoded_project: &str, session: &str, lines: &[&str]) -> PathBuf {
@@ -34,7 +43,7 @@ fn write_jsonl(path: &Path, lines: &[&str]) -> PathBuf {
 
 /// Build a fixture with three projects and two sessions each, exercising
 /// usage/thinking/turn-duration/tool-use/pr-link/file-history records.
-fn build_fixture() -> (TempDir, SessionStore, IndexStore) {
+fn build_fixture() -> (TempDir, Vec<Provider>, IndexStore) {
     let tmp = TempDir::new().unwrap();
     let projects = tmp.path().join("projects");
 
@@ -85,10 +94,10 @@ fn build_fixture() -> (TempDir, SessionStore, IndexStore) {
         ],
     );
 
-    let store = SessionStore::at(projects);
+    let providers = claude_providers(projects);
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
-    idx.sync_now(&store).unwrap();
-    (tmp, store, idx)
+    idx.sync_now(&providers).unwrap();
+    (tmp, providers, idx)
 }
 
 #[test]
@@ -136,7 +145,8 @@ fn sync_indexes_subagent_transcripts_and_rolls_up_parent_reports() {
     assert_eq!(files.len(), 2, "journal.jsonl must not be discovered");
 
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
-    idx.sync_now(&store).unwrap();
+    let providers = vec![Provider::Claude(ClaudeProvider::at(store))];
+    idx.sync_now(&providers).unwrap();
 
     let indexed_sessions = idx.query_sessions(None, None, 10).unwrap();
     assert_eq!(indexed_sessions.len(), 2);
@@ -333,20 +343,20 @@ fn query_summary_reports_totals() {
 
 #[test]
 fn ensure_fresh_is_noop_within_staleness_window() {
-    let (_tmp, store, mut idx) = build_fixture();
+    let (_tmp, providers, mut idx) = build_fixture();
     // fixture already synced; ensure_fresh should return immediately without
     // changing anything.
     let before = idx.query_sessions(None, None, 100).unwrap().len();
-    idx.ensure_fresh(&store).unwrap();
+    idx.ensure_fresh(&providers).unwrap();
     let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn force_rebuild_wipes_and_reindexes() {
-    let (_tmp, store, mut idx) = build_fixture();
+    let (_tmp, providers, mut idx) = build_fixture();
     let before = idx.query_sessions(None, None, 100).unwrap().len();
-    let indexed = idx.force_rebuild(&store).unwrap();
+    let indexed = idx.force_rebuild(&providers).unwrap();
     let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
     assert!(indexed >= before);
@@ -354,17 +364,17 @@ fn force_rebuild_wipes_and_reindexes() {
 
 #[test]
 fn sync_now_is_idempotent() {
-    let (_tmp, store, mut idx) = build_fixture();
+    let (_tmp, providers, mut idx) = build_fixture();
     let before = idx.query_sessions(None, None, 100).unwrap().len();
-    idx.sync_now(&store).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
+    idx.sync_now(&providers).unwrap();
     let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn sync_picks_up_new_sessions() {
-    let (tmp, store, mut idx) = build_fixture();
+    let (tmp, providers, mut idx) = build_fixture();
     let before = idx.query_sessions(None, None, 100).unwrap().len();
 
     // Add a fresh session to an existing project.
@@ -377,7 +387,7 @@ fn sync_picks_up_new_sessions() {
         ],
     );
 
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
     let after = idx.query_sessions(None, None, 100).unwrap().len();
     assert_eq!(after, before + 1);
 }
@@ -428,9 +438,9 @@ fn mixed_model_sessions_are_split_in_token_usage_and_aggregated_per_session() {
         ],
     );
 
-    let store = SessionStore::at(projects);
+    let providers = claude_providers(projects);
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     let rows = idx.query_cost_per_session(None, 10).unwrap();
     assert_eq!(rows.len(), 1);
@@ -464,9 +474,9 @@ fn zero_token_model_rows_are_skipped() {
         ],
     );
 
-    let store = SessionStore::at(projects);
+    let providers = claude_providers(projects);
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     let models = idx.query_model_usage(None).unwrap();
     assert_eq!(models.len(), 1);

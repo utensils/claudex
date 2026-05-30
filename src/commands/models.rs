@@ -1,14 +1,14 @@
 use anyhow::Result;
 
 use crate::index::IndexStore;
-use crate::store::SessionStore;
+use crate::providers::enabled_default;
 use crate::types::ModelPricing;
 use crate::ui;
 
 pub fn run(project: Option<&str>, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     let rows = idx.query_model_usage(project)?;
 

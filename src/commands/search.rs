@@ -3,6 +3,7 @@ use chrono::DateTime;
 
 use crate::index::IndexStore;
 use crate::parser::stream_records;
+use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, short_name};
 use crate::ui;
 
@@ -25,9 +26,9 @@ pub fn run(
 }
 
 fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     let hits = idx.search_fts(query, project, limit)?;
 

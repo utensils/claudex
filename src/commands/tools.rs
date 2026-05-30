@@ -6,6 +6,7 @@ use chrono::DateTime;
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
+use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::ui;
 
@@ -23,9 +24,9 @@ pub fn run(
 }
 
 fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     if per_session {
         let rows = idx.query_tools_per_session(project, limit)?;

@@ -1,13 +1,14 @@
 use anyhow::Result;
 
 use crate::index::IndexStore;
-use crate::store::{SessionStore, short_name};
+use crate::providers::enabled_default;
+use crate::store::short_name;
 use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     let rows = idx.query_pr_links(project, limit)?;
 

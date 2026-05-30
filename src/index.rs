@@ -3,16 +3,13 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
+use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
 use rusqlite::{Connection, params};
 
 use crate::parser::ModelSessionStats;
-use crate::parser::stream_records;
+use crate::providers::Provider;
 use crate::stats::percentile_sorted;
-use crate::store::{
-    SessionStore, canonical_project_path, decode_project_name, parent_session_id_for_path,
-};
-use crate::types::{ModelPricing, TokenUsage};
+use crate::types::ModelPricing;
 use crate::ui;
 
 const STALE_SECS: u64 = 300;
@@ -271,13 +268,7 @@ struct ModelUsageAccumulator {
     total_iterations: i64,
 }
 
-// --- Internal parse types ---
-
-struct MessageForFts {
-    msg_type: String,
-    content: String,
-    timestamp_ms: Option<i64>,
-}
+// --- Internal sync types ---
 
 /// A `sessions` row's identity and on-disk fingerprint, loaded at the start of
 /// a sync so changed/unchanged/missing files can be reconciled in one pass.
@@ -286,31 +277,6 @@ struct KnownFile {
     size: i64,
     mtime: i64,
     present: i64,
-}
-
-struct ParseEntry {
-    session_id: Option<String>,
-    first_timestamp: Option<DateTime<Utc>>,
-    last_timestamp: Option<DateTime<Utc>>,
-    duration_ms: u64,
-    message_count: usize,
-    model: Option<String>,
-    usage: TokenUsage,
-    model_usage: BTreeMap<String, ModelSessionStats>,
-    tool_names: Vec<String>,
-    messages: Vec<MessageForFts>,
-    // Extended metric fields
-    turn_durations: Vec<(u64, String)>, // (duration_ms, timestamp)
-    pr_links: Vec<(i64, String, String, String)>, // (pr_number, url, repo, timestamp)
-    file_paths_modified: Vec<String>,
-    thinking_block_count: u64,
-    stop_reason_counts: HashMap<String, u64>,
-    attachments: Vec<(String, String)>, // (filename, mime_type)
-    permission_modes: Vec<(String, String)>, // (mode, timestamp)
-    inference_geo: Option<String>,
-    speed: Option<f64>,
-    service_tier: Option<String>,
-    iterations: u64,
 }
 
 impl IndexStore {
@@ -516,82 +482,114 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Check staleness and sync if needed. Shows a spinner on stderr while
-    /// syncing (TTY-gated) so the user doesn't think the command has hung.
-    ///
-    /// Staleness is bypassed when the sessions root on disk differs from the
-    /// one stamped in `meta` by the last sync — otherwise a shared
-    /// `CLAUDEX_DIR` across different `$HOME` values could serve cached rows
-    /// from a previous home for up to `STALE_SECS` seconds.
-    pub fn ensure_fresh(&mut self, store: &SessionStore) -> Result<()> {
-        let last_sync: Option<u64> = self
-            .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'last_sync'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|s| s.parse().ok());
-
-        let sessions_root = store.base_dir.to_string_lossy().into_owned();
-        let stored_root: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'sessions_root'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-        let root_changed = stored_root.as_deref() != Some(sessions_root.as_str());
-
-        if let Some(ls) = last_sync
-            && now_unix_secs().saturating_sub(ls) < STALE_SECS
-            && !root_changed
-        {
+    /// Sync any provider whose index is stale, showing a spinner on stderr
+    /// while it runs (TTY-gated). Each provider has its own staleness window and
+    /// data-root stamp, so they sync independently.
+    pub fn ensure_fresh(&mut self, providers: &[Provider]) -> Result<()> {
+        let stale: Vec<&Provider> = providers
+            .iter()
+            .filter(|p| self.provider_is_stale(p))
+            .collect();
+        if stale.is_empty() {
             return Ok(());
         }
 
-        let message = if last_sync.is_none() {
-            "Building index..."
-        } else {
+        let message = if self.any_provider_synced() {
             "Syncing index..."
+        } else {
+            "Building index..."
         };
         let spinner = ui::Spinner::start(message);
-        let result = self.sync(store);
+        let mut result = Ok(());
+        for provider in stale {
+            if let Err(e) = self.sync_provider(provider) {
+                result = Err(e);
+                break;
+            }
+        }
         spinner.finish();
-        result.map(|_| ())
+        result
     }
 
-    /// Force a full rebuild regardless of staleness.
-    pub fn force_rebuild(&mut self, store: &SessionStore) -> Result<usize> {
+    /// A provider is stale when it has never synced, its staleness window has
+    /// elapsed, or its data root changed since the last sync — the last guards a
+    /// `CLAUDEX_DIR` shared across different `$HOME` values from serving rows
+    /// indexed under a previous home.
+    fn provider_is_stale(&self, provider: &Provider) -> bool {
+        let id = provider.id();
+        let last_sync: Option<u64> = self
+            .meta_get(&format!("last_sync:{id}"))
+            .and_then(|s| s.parse().ok());
+        let root = provider.root_dir().to_string_lossy().into_owned();
+        let root_changed =
+            self.meta_get(&format!("sessions_root:{id}")).as_deref() != Some(root.as_str());
+        match last_sync {
+            Some(ls) => now_unix_secs().saturating_sub(ls) >= STALE_SECS || root_changed,
+            None => true,
+        }
+    }
+
+    /// Whether any provider has ever completed a sync (controls spinner copy).
+    fn any_provider_synced(&self) -> bool {
         self.conn
-            .execute_batch("DELETE FROM messages_fts; DELETE FROM sessions; DELETE FROM meta;")?;
-        // Restore schema version after clearing meta
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key LIKE 'last_sync:%'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    }
+
+    fn meta_get(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM meta WHERE key = ?", params![key], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+    }
+
+    /// Force a full rebuild of every provider. This is the ONE destructive path
+    /// — it discards retained/archived data — and only `claudex index --force`
+    /// calls it.
+    pub fn force_rebuild(&mut self, providers: &[Provider]) -> Result<usize> {
+        self.conn
+            .execute_batch("DELETE FROM messages_fts; DELETE FROM sessions;")?;
         self.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
-            params![SCHEMA_VERSION.to_string()],
+            "DELETE FROM meta WHERE key LIKE 'last_sync:%' OR key LIKE 'sessions_root:%'",
+            [],
         )?;
-        self.sync(store)
+        self.sync(providers)
     }
 
-    /// Run an incremental sync now (bypass staleness check).
-    pub fn sync_now(&mut self, store: &SessionStore) -> Result<usize> {
-        self.sync(store)
+    /// Run an incremental sync of every provider now (bypass staleness check).
+    pub fn sync_now(&mut self, providers: &[Provider]) -> Result<usize> {
+        self.sync(providers)
     }
 
-    fn sync(&mut self, store: &SessionStore) -> Result<usize> {
-        // Load known file states. Scope to the Claude provider so a future
-        // per-provider sync never treats another provider's rows as "missing"
-        // (which would archive them). `id`/`present_on_disk` let us re-index in
-        // place and un-archive a file that reappears unchanged.
+    fn sync(&mut self, providers: &[Provider]) -> Result<usize> {
+        let mut total = 0;
+        for provider in providers {
+            total += self.sync_provider(provider)?;
+        }
+        Ok(total)
+    }
+
+    /// Incrementally sync one provider's transcripts. Every reconciliation query
+    /// is scoped to `provider.id()` so a provider's sync never archives another
+    /// provider's rows just because they aren't in this provider's enumeration.
+    fn sync_provider(&mut self, provider: &Provider) -> Result<usize> {
+        let provider_id = provider.id();
+
+        // Load known file states for THIS provider only. `id`/`present_on_disk`
+        // let us re-index in place and un-archive a file that reappears.
         let mut known: HashMap<String, KnownFile> = HashMap::new();
         {
             let mut stmt = self.conn.prepare(
                 "SELECT file_path, id, file_size, file_mtime, present_on_disk
-                 FROM sessions WHERE provider = 'claude'",
+                 FROM sessions WHERE provider = ?",
             )?;
-            let rows = stmt.query_map([], |row| {
+            let rows = stmt.query_map(params![provider_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     KnownFile {
@@ -608,14 +606,15 @@ impl IndexStore {
             }
         }
 
-        let all_files = store.all_session_files(None)?;
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let files = provider.enumerate()?;
+        let mut seen: HashSet<String> = HashSet::new();
         let now_secs = now_unix_secs() as i64;
         let mut indexed_count = 0usize;
 
         let tx = self.conn.transaction()?;
 
-        for (project_raw, file_path) in &all_files {
+        for discovered in &files {
+            let file_path = &discovered.path;
             let path_str = file_path.to_string_lossy().into_owned();
             seen.insert(path_str.clone());
 
@@ -655,21 +654,27 @@ impl IndexStore {
                 None => None,
             };
 
-            let decoded = decode_project_name(project_raw);
-            let project_display = canonical_project_path(&decoded).to_string();
-            let project_dir = store.base_dir.join(project_raw);
-            let parent_session_id = parent_session_id_for_path(&project_dir, file_path);
-            let mut entry = match parse_session_for_index(file_path) {
+            let project_display = discovered.project_display.clone();
+            let parent_session_id = discovered.parent_session_id.clone();
+            let mut entry = match provider.parse(discovered) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
 
-            // Fall back to file stem when session JSON lacks a sessionId field
+            // Fall back to file stem when the transcript lacks a session id
             if entry.session_id.is_none() {
                 entry.session_id = file_path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned());
             }
+
+            // A transcript living in the provider's archive location is indexed
+            // but stamped archived from the start.
+            let archived_at: Option<i64> = if discovered.archived {
+                Some(now_secs)
+            } else {
+                None
+            };
 
             let first_ts = entry.first_timestamp.map(|d| d.timestamp_millis());
             let last_ts = entry.last_timestamp.map(|d| d.timestamp_millis());
@@ -681,7 +686,7 @@ impl IndexStore {
                            project_name = ?, file_size = ?, file_mtime = ?, session_id = ?,
                            parent_session_id = ?, first_timestamp = ?, last_timestamp = ?,
                            duration_ms = ?, message_count = ?, model = ?, indexed_at = ?,
-                           provider = 'claude', present_on_disk = 1, archived_at = NULL, last_seen = ?
+                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?
                        WHERE id = ?"#,
                     params![
                         project_display,
@@ -695,6 +700,8 @@ impl IndexStore {
                         entry.message_count as i64,
                         session_model,
                         now_secs,
+                        provider_id,
+                        archived_at,
                         now_secs,
                         old_id,
                     ],
@@ -705,8 +712,8 @@ impl IndexStore {
                     r#"INSERT INTO sessions
                        (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
                         first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at,
-                        provider, present_on_disk, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'claude', 1, ?)"#,
+                        provider, present_on_disk, archived_at, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"#,
                     params![
                         project_display,
                         path_str,
@@ -720,6 +727,8 @@ impl IndexStore {
                         entry.message_count as i64,
                         session_model,
                         now_secs,
+                        provider_id,
+                        archived_at,
                         now_secs,
                     ],
                 )?;
@@ -871,15 +880,21 @@ impl IndexStore {
         }
 
         tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync', ?)",
-            params![now_unix_secs().to_string()],
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            params![
+                format!("last_sync:{provider_id}"),
+                now_unix_secs().to_string()
+            ],
         )?;
-        // Stamp the sessions root so `ensure_fresh` can invalidate the
-        // staleness shortcut when the root changes (different $HOME or a
-        // moved `.claude/projects/` directory sharing one `CLAUDEX_DIR`).
+        // Stamp the provider's data root so `provider_is_stale` can invalidate
+        // the staleness shortcut when the root changes (e.g. a different $HOME
+        // sharing one `CLAUDEX_DIR`).
         tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('sessions_root', ?)",
-            params![store.base_dir.to_string_lossy().into_owned()],
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            params![
+                format!("sessions_root:{provider_id}"),
+                provider.root_dir().to_string_lossy().into_owned()
+            ],
         )?;
         tx.commit()?;
 
@@ -2000,227 +2015,4 @@ fn model_families_from_concat(raw: Option<&str>) -> Vec<String> {
         .map(|m| ModelPricing::name(Some(m.trim())).to_string())
         .filter(|f| !f.is_empty() && seen.insert(f.clone()))
         .collect()
-}
-
-/// Parse a session file once, extracting both stats and FTS content.
-fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
-    let mut entry = ParseEntry {
-        session_id: None,
-        first_timestamp: None,
-        last_timestamp: None,
-        duration_ms: 0,
-        message_count: 0,
-        model: None,
-        usage: TokenUsage::default(),
-        model_usage: BTreeMap::new(),
-        tool_names: Vec::new(),
-        messages: Vec::new(),
-        turn_durations: Vec::new(),
-        pr_links: Vec::new(),
-        file_paths_modified: Vec::new(),
-        thinking_block_count: 0,
-        stop_reason_counts: HashMap::new(),
-        attachments: Vec::new(),
-        permission_modes: Vec::new(),
-        inference_geo: None,
-        speed: None,
-        service_tier: None,
-        iterations: 0,
-    };
-
-    stream_records(path, |record| {
-        if entry.session_id.is_none()
-            && let Some(sid) = record["sessionId"].as_str()
-        {
-            entry.session_id = Some(sid.to_string());
-        }
-
-        let timestamp_str = record["timestamp"].as_str();
-        let timestamp_ms = timestamp_str.and_then(|ts| {
-            DateTime::parse_from_rfc3339(ts)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
-
-        if let Some(ts_str) = timestamp_str
-            && let Ok(dt) = DateTime::parse_from_rfc3339(ts_str)
-        {
-            let dt = dt.with_timezone(&Utc);
-            if entry.first_timestamp.is_none_or(|prev| dt < prev) {
-                entry.first_timestamp = Some(dt);
-            }
-            if entry.last_timestamp.is_none_or(|prev| dt > prev) {
-                entry.last_timestamp = Some(dt);
-            }
-        }
-
-        match record["type"].as_str().unwrap_or("") {
-            "assistant" => {
-                entry.message_count += 1;
-                let msg = &record["message"];
-
-                if entry.model.is_none()
-                    && let Some(m) = msg["model"].as_str()
-                {
-                    entry.model = Some(m.to_string());
-                }
-
-                let usage = &msg["usage"];
-                let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-                let cache_creation_tokens =
-                    usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                let cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-
-                entry.usage.input_tokens += input_tokens;
-                entry.usage.output_tokens += output_tokens;
-                entry.usage.cache_creation_tokens += cache_creation_tokens;
-                entry.usage.cache_read_tokens += cache_read_tokens;
-
-                if entry.inference_geo.is_none() {
-                    entry.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
-                }
-                if entry.speed.is_none() {
-                    entry.speed = usage["speed"].as_f64();
-                }
-                if entry.service_tier.is_none() {
-                    entry.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
-                }
-                entry.iterations += usage["iterations"].as_u64().unwrap_or(0);
-
-                let model_key = msg["model"].as_str().unwrap_or("").to_string();
-                let model_stats = entry.model_usage.entry(model_key).or_default();
-                model_stats.usage.input_tokens += input_tokens;
-                model_stats.usage.output_tokens += output_tokens;
-                model_stats.usage.cache_creation_tokens += cache_creation_tokens;
-                model_stats.usage.cache_read_tokens += cache_read_tokens;
-                model_stats.assistant_message_count += 1;
-                if let Some(geo) = usage["inference_geo"].as_str()
-                    && !geo.is_empty()
-                {
-                    model_stats.inference_geos.insert(geo.to_string());
-                }
-                if let Some(tier) = usage["service_tier"].as_str()
-                    && !tier.is_empty()
-                {
-                    model_stats.service_tiers.insert(tier.to_string());
-                }
-                if let Some(speed) = usage["speed"].as_f64() {
-                    model_stats.speed_sum += speed;
-                    model_stats.speed_samples += 1;
-                }
-                model_stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
-
-                if let Some(stop) = msg["stop_reason"].as_str() {
-                    *entry
-                        .stop_reason_counts
-                        .entry(stop.to_string())
-                        .or_insert(0) += 1;
-                }
-
-                let mut text_parts: Vec<String> = Vec::new();
-                if let Some(content) = msg["content"].as_array() {
-                    for block in content {
-                        match block["type"].as_str() {
-                            Some("tool_use") => {
-                                if let Some(name) = block["name"].as_str() {
-                                    entry.tool_names.push(name.to_string());
-                                }
-                            }
-                            Some("text") => {
-                                if let Some(t) = block["text"].as_str()
-                                    && !t.is_empty()
-                                {
-                                    text_parts.push(t.to_string());
-                                }
-                            }
-                            Some("thinking") => {
-                                entry.thinking_block_count += 1;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if !text_parts.is_empty() {
-                    entry.messages.push(MessageForFts {
-                        msg_type: "assistant".to_string(),
-                        content: text_parts.join(" "),
-                        timestamp_ms,
-                    });
-                }
-            }
-            "user" => {
-                entry.message_count += 1;
-                let content_val = &record["message"]["content"];
-                let content = if let Some(s) = content_val.as_str() {
-                    s.to_string()
-                } else if let Some(arr) = content_val.as_array() {
-                    arr.iter()
-                        .filter(|b| b["type"].as_str() == Some("text"))
-                        .filter_map(|b| b["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else {
-                    String::new()
-                };
-                if !content.is_empty() {
-                    entry.messages.push(MessageForFts {
-                        msg_type: "user".to_string(),
-                        content,
-                        timestamp_ms,
-                    });
-                }
-            }
-            "system" => {
-                if let Some(dur) = record["durationMs"].as_u64() {
-                    entry.duration_ms += dur;
-                    if record["subtype"].as_str() == Some("turn_duration") {
-                        let ts = timestamp_str.unwrap_or("").to_string();
-                        entry.turn_durations.push((dur, ts));
-                    }
-                }
-            }
-            "pr-link" => {
-                let number = record["prNumber"].as_i64().unwrap_or(0);
-                let url = record["prUrl"].as_str().unwrap_or("").to_string();
-                let repo = record["prRepository"].as_str().unwrap_or("").to_string();
-                let ts = timestamp_str.unwrap_or("").to_string();
-                entry.pr_links.push((number, url, repo, ts));
-            }
-            "file-history-snapshot" => {
-                if let Some(backups) = record["snapshot"]["trackedFileBackups"].as_object() {
-                    for key in backups.keys() {
-                        if !entry.file_paths_modified.contains(key) {
-                            entry.file_paths_modified.push(key.clone());
-                        }
-                    }
-                }
-            }
-            "attachment" => {
-                let filename = record["filename"].as_str().unwrap_or("").to_string();
-                let mime = record["mimeType"].as_str().unwrap_or("").to_string();
-                if !filename.is_empty() {
-                    entry.attachments.push((filename, mime));
-                }
-            }
-            "permission-mode" => {
-                let mode = record["mode"].as_str().unwrap_or("").to_string();
-                let ts = timestamp_str.unwrap_or("").to_string();
-                if !mode.is_empty() {
-                    entry.permission_modes.push((mode, ts));
-                }
-            }
-            _ => {}
-        }
-        true
-    })?;
-
-    // Fallback duration from timestamp range
-    if entry.duration_ms == 0
-        && let (Some(first), Some(last)) = (entry.first_timestamp, entry.last_timestamp)
-    {
-        entry.duration_ms = last.signed_duration_since(first).num_milliseconds().max(0) as u64;
-    }
-
-    Ok(entry)
 }

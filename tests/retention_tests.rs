@@ -7,9 +7,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use claudex::index::IndexStore;
+use claudex::providers::{ClaudeProvider, Provider};
 use claudex::store::SessionStore;
 use rusqlite::Connection;
 use tempfile::TempDir;
+
+/// Wrap a `projects` directory in the single-Claude-provider set the sync
+/// methods expect.
+fn claude_providers(projects: PathBuf) -> Vec<Provider> {
+    vec![Provider::Claude(ClaudeProvider::at(SessionStore::at(
+        projects,
+    )))]
+}
 
 fn write_session(
     projects: &Path,
@@ -189,9 +198,9 @@ fn deleted_file_is_retained_and_archived() {
         ],
     );
 
-    let store = SessionStore::at(projects.clone());
+    let providers = claude_providers(projects.clone());
     let mut idx = IndexStore::open_at(&db).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     let before = retention(&db, "sess-gone").expect("gone session indexed");
     assert_eq!(before.1, 1, "freshly indexed file is present");
@@ -199,7 +208,7 @@ fn deleted_file_is_retained_and_archived() {
 
     // Delete one transcript from disk and re-sync.
     fs::remove_file(&gone).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     // The vanished session is RETAINED, flagged not-present and archived.
     let after = retention(&db, "sess-gone").expect("gone session must be retained, not purged");
@@ -252,9 +261,9 @@ fn changed_file_reuses_rowid_without_orphan_fts() {
         ],
     );
 
-    let store = SessionStore::at(projects.clone());
+    let providers = claude_providers(projects.clone());
     let mut idx = IndexStore::open_at(&db).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
     let original_rowid = retention(&db, "sess-edit").unwrap().0;
 
     // Rewrite the file with new content and a bumped mtime.
@@ -270,7 +279,7 @@ fn changed_file_reuses_rowid_without_orphan_fts() {
     drop(f);
     // Ensure mtime differs even on coarse-resolution filesystems.
     filetime_bump(&path);
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     // Same rowid (in-place re-index), fresh content, no stale FTS rows.
     let after = retention(&db, "sess-edit").unwrap();
@@ -317,9 +326,9 @@ fn restored_identical_file_is_unarchived() {
     ];
     let path = write_session(&projects, "-Users-test-Projects-rt", "sess-rt", &lines);
 
-    let store = SessionStore::at(projects.clone());
+    let providers = claude_providers(projects.clone());
     let mut idx = IndexStore::open_at(&db).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
 
     // Capture exact bytes + mtime so the restored file is byte-and-stat identical.
     let bytes = fs::read(&path).unwrap();
@@ -327,7 +336,7 @@ fn restored_identical_file_is_unarchived() {
     let mtime = filetime_of(&meta);
 
     fs::remove_file(&path).unwrap();
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
     assert_eq!(
         retention(&db, "sess-rt").unwrap().1,
         0,
@@ -337,7 +346,7 @@ fn restored_identical_file_is_unarchived() {
     // Restore identical content + mtime; sync must un-archive it.
     fs::write(&path, &bytes).unwrap();
     set_mtime(&path, mtime);
-    idx.sync_now(&store).unwrap();
+    idx.sync_now(&providers).unwrap();
     let restored = retention(&db, "sess-rt").unwrap();
     assert_eq!(restored.1, 1, "restored file flagged present_on_disk = 1");
     assert!(restored.2.is_none(), "restored file clears archived_at");
