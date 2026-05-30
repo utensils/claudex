@@ -87,6 +87,9 @@ impl ModelPricing {
             openai_pricing(0.10, 0.025, 0.40)
         } else if has_any(&m, &["gpt-4.1"]) {
             openai_pricing(2.0, 0.50, 8.0)
+        } else if has_any(&m, &["gpt-4.5"]) {
+            // GPT-4.5 preview ("Orion") — premium research-preview pricing.
+            openai_pricing(75.0, 37.50, 150.0)
         } else if has_any(&m, &["gpt-4o-mini"]) {
             openai_pricing(0.15, 0.075, 0.60)
         } else if has_any(&m, &["gpt-4o-2024-05-13"]) {
@@ -160,12 +163,15 @@ fn is_claude_haiku_3(m: &str) -> bool {
 
 fn is_gpt4_classic(m: &str) -> bool {
     // Original GPT-4 family (gpt-4, gpt-4-0613, gpt-4-8k) — but NOT the far
-    // cheaper gpt-4o or the gpt-4.1 family, which carry their own tiers.
+    // cheaper gpt-4o, the gpt-4.1 family, or the premium gpt-4.5 preview, each
+    // of which carries its own tier.
     (m.contains("gpt-4") || m.contains("gpt4"))
         && !m.contains("gpt-4o")
         && !m.contains("gpt4o")
         && !m.contains("gpt-4.1")
         && !m.contains("gpt4.1")
+        && !m.contains("gpt-4.5")
+        && !m.contains("gpt4.5")
 }
 
 fn has_any(m: &str, needles: &[&str]) -> bool {
@@ -705,6 +711,24 @@ mod tests {
         assert!(
             (input_1m("gpt-4.1-mini") - 0.40).abs() < 0.0001,
             "gpt-4.1-mini"
+        );
+    }
+
+    #[test]
+    fn gpt4_5_preview_is_premium_not_classic() {
+        // `gpt-4.5-preview` must NOT fall into the classic GPT-4 8k tier ($30/$60);
+        // it has its own premium rate ($75/$150).
+        assert!(
+            (input_1m("gpt-4.5-preview") - 75.0).abs() < 0.0001,
+            "gpt-4.5 input"
+        );
+        assert!(
+            (output_1m("gpt-4.5-preview") - 150.0).abs() < 0.0001,
+            "gpt-4.5 output"
+        );
+        assert!(
+            !is_gpt4_classic("gpt-4.5-preview"),
+            "4.5 excluded from classic"
         );
     }
 }

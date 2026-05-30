@@ -43,6 +43,7 @@ posted "cached input" rate.
 | `gpt-4.1`                                   | $2.00 / MTok  | $8.00 / MTok   | $0.50 / MTok  |
 | `gpt-4.1-mini`                              | $0.40 / MTok  | $1.60 / MTok   | $0.10 / MTok  |
 | `gpt-4.1-nano`                              | $0.10 / MTok  | $0.40 / MTok   | $0.025 / MTok |
+| `gpt-4.5-preview`                           | $75.00 / MTok | $150.00 / MTok | $37.50 / MTok |
 | `gpt-4o-mini`                               | $0.15 / MTok  | $0.60 / MTok   | $0.075 / MTok |
 | `gpt-4o-2024-05-13`                         | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok  |
 | `gpt-4-turbo`, `gpt-4-1106`, `gpt-4-0125`   | $10.00 / MTok | $30.00 / MTok  | $10.00 / MTok |
