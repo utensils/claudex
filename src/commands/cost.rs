@@ -155,7 +155,7 @@ fn run_indexed(
         }
         table.add_row(ui::total_row(total_cells));
         println!("{table}");
-        print_truncation_note(rows.len(), summary.session_count, "sessions");
+        print_truncation_note(rows.len(), summary.usage_session_count, "sessions");
         return Ok(());
     }
 

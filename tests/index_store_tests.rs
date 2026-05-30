@@ -253,13 +253,23 @@ fn query_cost_summary_matches_model_totals_regardless_of_limit() {
         .sum();
     assert!((summary.cost_usd - model_total).abs() < 1e-9);
 
-    // Three token-bearing sessions across two projects (gamma has no usage).
-    assert_eq!(summary.session_count, 3);
-    assert_eq!(summary.project_count, 2);
+    // Population alignment (the zero-usage gamma project is the trap): the
+    // by-project caption/TOTAL counts must match the rows actually displayed by
+    // `query_cost_by_project` (LEFT JOIN — gamma's $0 row is shown), while
+    // `usage_session_count` matches the token-bearing rows of
+    // `query_cost_per_session` (gamma excluded).
+    let rows = idx.query_cost_by_project(None, &all(), 100).unwrap();
+    let per_session = idx.query_cost_per_session(None, &all(), 100).unwrap();
+    let row_sessions: i64 = rows.iter().map(|r| r.session_count).sum();
+    assert_eq!(summary.project_count as usize, rows.len()); // 3: alpha, beta, gamma
+    assert_eq!(summary.session_count, row_sessions); // 4: TOTAL Sessions == sum of rows
+    assert_eq!(summary.usage_session_count as usize, per_session.len()); // 3 token-bearing
+    assert_eq!(summary.session_count, 4);
+    assert_eq!(summary.project_count, 3);
+    assert_eq!(summary.usage_session_count, 3);
 
     // Token columns aggregate every session, matching the unlimited by-project
     // sums (limit=100 returns all rows here).
-    let rows = idx.query_cost_by_project(None, &all(), 100).unwrap();
     let row_input: i64 = rows.iter().map(|r| r.input_tokens).sum();
     let row_cost: f64 = rows.iter().map(|r| r.cost_usd).sum();
     assert_eq!(summary.input_tokens, row_input);

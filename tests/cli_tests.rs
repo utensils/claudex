@@ -795,6 +795,32 @@ fn cost_per_session_total_matches_by_project() {
 }
 
 #[test]
+fn cost_caption_counts_zero_usage_projects_in_the_population() {
+    // Regression: a zero-usage project still shows as a $0 row in the
+    // by-project view (LEFT JOIN), so the truncation caption must count it.
+    let home = fixture_home();
+    let projects = home.path().join(".claude").join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-gamma",
+        "sess-g1",
+        // A user message only — no assistant/token usage.
+        &[
+            r#"{"type":"user","sessionId":"sess-g1","timestamp":"2026-04-13T00:00:00Z","message":{"content":"ping"}}"#,
+        ],
+    );
+
+    // Three projects (alpha, beta paid + gamma at $0); `--limit 2` hides one.
+    let out = run(home.path(), &["cost", "--limit", "2"]);
+    assert!(out.status.success());
+    let text = stdout_of(&out);
+    assert!(
+        text.contains("Showing top 2 of 3 projects"),
+        "zero-usage project must be counted in the caption population:\n{text}"
+    );
+}
+
+#[test]
 fn cost_json_has_no_totals_object() {
     // The fix is human-table only; JSON stays a flat per-row array.
     let home = fixture_home();
