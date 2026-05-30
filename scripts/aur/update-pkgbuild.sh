@@ -67,7 +67,14 @@ rewrite() {
   local tmp
   tmp="$(mktemp)"
   sed -E "${pattern}" "${file}" > "${tmp}"
-  mv "${tmp}" "${file}"
+  # Write the contents back into the original file rather than `mv`-ing
+  # the tempfile over it. `mktemp` creates mode 0600, and `mv` would
+  # carry that over — leaving the PKGBUILD unreadable to the differently
+  # -UID'd user inside the AUR deploy action's Arch container
+  # (`cp: … Permission denied`). Truncate-and-write preserves the
+  # original file's permissions.
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
 }
 
 case "${pkgname}" in
