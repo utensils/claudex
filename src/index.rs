@@ -686,7 +686,7 @@ impl IndexStore {
                            project_name = ?, file_size = ?, file_mtime = ?, session_id = ?,
                            parent_session_id = ?, first_timestamp = ?, last_timestamp = ?,
                            duration_ms = ?, message_count = ?, model = ?, indexed_at = ?,
-                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?
+                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?, extras = ?
                        WHERE id = ?"#,
                     params![
                         project_display,
@@ -703,6 +703,7 @@ impl IndexStore {
                         provider_id,
                         archived_at,
                         now_secs,
+                        entry.extras,
                         old_id,
                     ],
                 )?;
@@ -712,8 +713,8 @@ impl IndexStore {
                     r#"INSERT INTO sessions
                        (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
                         first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at,
-                        provider, present_on_disk, archived_at, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"#,
+                        provider, present_on_disk, archived_at, last_seen, extras)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#,
                     params![
                         project_display,
                         path_str,
@@ -730,13 +731,16 @@ impl IndexStore {
                         provider_id,
                         archived_at,
                         now_secs,
+                        entry.extras,
                     ],
                 )?;
                 tx.last_insert_rowid()
             };
 
             if entry.model_usage.is_empty() && entry.usage.total_tokens() > 0 {
-                let cost = entry.usage.cost_for_model(entry.model.as_deref());
+                let cost = entry
+                    .embedded_cost
+                    .unwrap_or_else(|| entry.usage.cost_for_model(entry.model.as_deref()));
                 tx.execute(
                     r#"INSERT INTO token_usage
                        (session_id, model, assistant_message_count, input_tokens, output_tokens,
@@ -768,7 +772,9 @@ impl IndexStore {
                     } else {
                         Some(model.as_str())
                     };
-                    let cost = usage.usage.cost_for_model(model_opt);
+                    let cost = usage
+                        .embedded_cost
+                        .unwrap_or_else(|| usage.usage.cost_for_model(model_opt));
                     tx.execute(
                         r#"INSERT INTO token_usage
                            (session_id, model, assistant_message_count, input_tokens, output_tokens,
@@ -961,7 +967,7 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT s.project_name,
-                      COUNT(DISTINCT COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+                      COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
                       COALESCE(SUM(t.cache_creation_tokens), 0),
@@ -1028,7 +1034,7 @@ impl IndexStore {
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY s.project_name, COALESCE(s.parent_session_id, s.session_id, s.file_path)
+               GROUP BY s.project_name, s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
                LIMIT ?"#,
         )?;
@@ -1083,7 +1089,7 @@ impl IndexStore {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
+            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
                       s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
@@ -1320,7 +1326,7 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT t.model,
-                      s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
+                      s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
                       COALESCE(t.cache_creation_tokens, 0),
@@ -1759,7 +1765,7 @@ impl IndexStore {
             i64,
             i64,
         ) = self.conn.query_row(
-            r#"SELECT COUNT(DISTINCT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+            r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -1781,13 +1787,13 @@ impl IndexStore {
         )?;
 
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![today_start_ms],
             |row| row.get(0),
         )?;
 
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -1801,7 +1807,7 @@ impl IndexStore {
         )?;
 
         let mut top_stmt = self.conn.prepare(
-            r#"SELECT project_name, COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) AS cnt
+            r#"SELECT project_name, COUNT(DISTINCT provider || char(31) || COALESCE(parent_session_id, session_id, file_path)) AS cnt
                FROM sessions
                GROUP BY project_name
                ORDER BY cnt DESC
@@ -1890,7 +1896,7 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id"#,
         )?;

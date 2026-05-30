@@ -16,6 +16,11 @@ pub struct ModelPricing {
 }
 
 impl ModelPricing {
+    /// Per-million-token pricing for a model id. Claude tiers are exact; the
+    /// OpenAI (`gpt-*`) tiers use published list rates and are approximate.
+    /// Unknown models fall back to Claude Sonnet — Pi's local/free models never
+    /// reach this path because they carry a provider-supplied cost instead (see
+    /// `ModelSessionStats::embedded_cost`).
     pub fn for_model(model: Option<&str>) -> Self {
         let m = model.unwrap_or("").to_lowercase();
         if m.contains("opus") {
@@ -32,8 +37,24 @@ impl ModelPricing {
                 cache_write_per_mtok: 1.00,
                 cache_read_per_mtok: 0.08,
             }
+        } else if is_gpt5(&m) {
+            // OpenAI GPT-5 family (gpt-5, gpt-5.x, gpt-5-codex) — list rates.
+            Self {
+                input_per_mtok: 1.25,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 1.25,
+                cache_read_per_mtok: 0.125,
+            }
+        } else if is_gpt4(&m) {
+            // OpenAI GPT-4 family (gpt-4, gpt-4o, gpt-4.1) — list rates.
+            Self {
+                input_per_mtok: 2.50,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 2.50,
+                cache_read_per_mtok: 1.25,
+            }
         } else {
-            // Sonnet (default)
+            // Claude Sonnet — also the default for an unspecified model.
             Self {
                 input_per_mtok: 3.0,
                 output_per_mtok: 15.0,
@@ -43,16 +64,29 @@ impl ModelPricing {
         }
     }
 
+    /// Short display label for a model's family.
     pub fn name(model: Option<&str>) -> &'static str {
         let m = model.unwrap_or("").to_lowercase();
         if m.contains("opus") {
             "Opus"
         } else if m.contains("haiku") {
             "Haiku"
+        } else if is_gpt5(&m) {
+            "GPT-5"
+        } else if is_gpt4(&m) {
+            "GPT-4"
         } else {
             "Sonnet"
         }
     }
+}
+
+fn is_gpt5(m: &str) -> bool {
+    m.contains("gpt-5") || m.contains("gpt5")
+}
+
+fn is_gpt4(m: &str) -> bool {
+    m.contains("gpt-4") || m.contains("gpt4")
 }
 
 impl TokenUsage {
@@ -264,6 +298,59 @@ mod tests {
         };
         // $0.80 + $4.00 + $1.00 + $0.08 = $5.88
         assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 5.88).abs() < 0.0001);
+    }
+
+    // --- OpenAI GPT pricing (Codex) ---
+
+    #[test]
+    fn gpt5_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $1.25 + $10.00 + $1.25 + $0.125 = $12.625
+        assert!((u.cost_for_model(Some("gpt-5.5")) - 12.625).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("gpt-5-codex")) - 12.625).abs() < 0.0001);
+    }
+
+    #[test]
+    fn gpt4_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $2.50 + $10.00 + $2.50 + $1.25 = $16.25
+        assert!((u.cost_for_model(Some("gpt-4o")) - 16.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn gpt_models_are_not_priced_as_sonnet() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // Sonnet output is $15/MTok; GPT-5 is $10/MTok — they must differ.
+        let gpt = u.cost_for_model(Some("gpt-5.5"));
+        let sonnet = u.cost_for_model(Some("claude-sonnet-4-6"));
+        assert!(
+            (gpt - 10.0).abs() < 0.0001,
+            "gpt-5 output should be $10/MTok"
+        );
+        assert!(
+            gpt < sonnet,
+            "gpt-5 ({gpt}) must not be priced as sonnet ({sonnet})"
+        );
+    }
+
+    #[test]
+    fn gpt_name_labels() {
+        assert_eq!(ModelPricing::name(Some("gpt-5.5")), "GPT-5");
+        assert_eq!(ModelPricing::name(Some("gpt-5-codex")), "GPT-5");
+        assert_eq!(ModelPricing::name(Some("gpt-4o")), "GPT-4");
     }
 
     // --- Cross-model ordering ---

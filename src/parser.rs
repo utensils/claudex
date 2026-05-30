@@ -18,6 +18,10 @@ pub struct ModelSessionStats {
     pub speed_sum: f64,
     pub speed_samples: u64,
     pub iterations: u64,
+    /// Cost already reported by the provider for this model (Pi computes a
+    /// per-message cost). When set, the index trusts it instead of deriving
+    /// from a pricing table — which also lets local/free models report $0.
+    pub embedded_cost: Option<f64>,
 }
 
 impl ModelSessionStats {
