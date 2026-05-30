@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.5.2](https://github.com/utensils/claudex/compare/v0.5.1...v0.5.2) (2026-05-30)
+
+
+### Bug Fixes
+
+* **session:** roll up subagents in the --no-index drill-down ([#31](https://github.com/utensils/claudex/issues/31)) ([1259c19](https://github.com/utensils/claudex/commit/1259c19817a43a6984359c9d35b73e8ecf3de371))
+
 ## [0.5.1](https://github.com/utensils/claudex/compare/v0.5.0...v0.5.1) (2026-05-30)
 
 
