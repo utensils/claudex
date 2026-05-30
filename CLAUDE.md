@@ -47,48 +47,86 @@ Three workflows:
 |----------|---------|---------|
 | `ci.yml` | push to `main`, pull_request to `main` | `docs` (bun fmt:check + build), `fmt`, `check`, `clippy -D warnings`, `test`, `build --release`. Plus non-blocking `coverage` (cargo llvm-cov → Codecov). |
 | `pages.yml` | push to `main` touching `website/**` | Builds VitePress and deploys to GitHub Pages via `actions/deploy-pages@v4`. Base path `/claudex/`. |
-| `release.yml` | tag push `v*`, or manual `workflow_dispatch` with required `tag` input | Matrix build of prebuilt binaries (4 targets), publishes a GitHub Release. |
+| `release-please.yml` | push to `main`, or manual `workflow_dispatch` with required `tag` input | Maintains the release PR; on merge cuts the tag, builds prebuilt binaries (4 targets), publishes the GitHub Release, and pushes to the AUR. See [Release process](#release-process). |
 
 Run `ci-local` (devshell) before pushing — mirrors the Rust-side checks
 exactly.
 
 ## Release process
 
+Releases are driven by [release-please](https://github.com/googleapis/release-please)
+(`.github/workflows/release-please.yml`). **There is no manual version
+bump and no `release/vX.Y.Z` branch** — the version surfaces and the
+CHANGELOG are maintained for you. `release-please-config.json` +
+`.release-please-manifest.json` (repo root) hold the config and the
+current version.
+
 ### Cutting a release
 
-The `release.yml` workflow is the source of truth. To cut a new release:
+1. Land PRs to `main` using Conventional Commits (`feat:`, `fix:`,
+   `feat!:`/`BREAKING CHANGE:` for major). release-please derives the next
+   semver and changelog from those commit messages.
+2. release-please keeps a standing **release PR** open against `main`. It
+   bumps every version surface (below) and updates `CHANGELOG.md`. Review
+   it like any PR.
+3. **Merge the release PR.** release-please then tags `vX.Y.Z`, creates the
+   GitHub Release (changelog body), and the same workflow builds the four
+   target binaries, attaches them + `SHA256SUMS`, and publishes to the AUR.
 
-1. **Bump version in all four surfaces** — `Cargo.toml` is authoritative;
-   the flake re-reads it via `fromTOML`, so flake stays in sync
-   automatically. Remaining touch-points:
-   - `Cargo.toml` — `[package].version`
-   - `Cargo.lock` — the `[[package]]` block named `claudex`
-   - `website/.vitepress/config.ts` — the `text: 'vX.Y.Z'` nav entry
-2. Update `README.md` install snippets if the tag is user-facing.
-3. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new
-   `## [X.Y.Z] — YYYY-MM-DD` heading and refresh the compare links at the
-   bottom.
-4. Commit on a `release/vX.Y.Z` branch, open a PR, land it.
-5. `git tag vX.Y.Z && git push origin vX.Y.Z` — this fires `release.yml`.
+`bump-minor-pre-major` is set, so pre-1.0 a `feat:` bumps the minor and a
+breaking change bumps the minor (not major).
 
-### What `release.yml` does
+To **re-build/re-publish an existing tag** (e.g. a flaked runner), use the
+workflow's `workflow_dispatch` with the `tag` input (`vX.Y.Z`). That path
+rebuilds assets and refreshes the release but — like the old `make_latest`
+guard — deliberately **does not republish to the AUR**.
 
-Matrix targets (4):
+### Version bump — where it lands (all automatic)
+
+release-please rewrites these inside the release PR; do not hand-edit for a
+release:
+
+| Surface | Field | How |
+|---------|-------|-----|
+| `Cargo.toml` | `[package].version` | `rust` release-type (native) |
+| `Cargo.lock` | the `claudex` `[[package]]` block | `rust` release-type (native) |
+| `CHANGELOG.md` | new `## [X.Y.Z]` section prepended | release-please (native) |
+| `flake.nix` | nothing — re-reads `Cargo.toml` via `fromTOML` | n/a |
+| `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | `extra-files` + `// x-release-please-version` marker |
+| `README.md` | `CLAUDEX_VERSION=vX.Y.Z` + `--tag vX.Y.Z` snippets | `extra-files` + `<!-- x-release-please-version -->` / start-end block markers |
+| `packaging/aur/*/PKGBUILD` | `pkgver` + `sha256sums` | CI runs `scripts/aur/update-pkgbuild.sh` (`claudex-bin`/`claudex`); `claudex-git` hand-bumped only |
+
+**The markers in `README.md` and `config.ts` are load-bearing** — if you
+remove them, those surfaces silently stop tracking the version. The
+`config.ts` marker is a trailing line comment that must survive
+`bun run fmt:check` (prettier keeps it).
+
+### What `release-please.yml` does
+
+Jobs run in order: `release-please` (maintains the release PR / cuts the
+tag + draft release on push to `main`) → `resolve-tag` (emits the tag, or
+mints one from the `workflow_dispatch` input) → `build` → `publish-release`
+→ `publish-aur`.
+
+Build matrix targets (4):
 
 - `aarch64-apple-darwin` on `macos-14`
-- `x86_64-apple-darwin`  on `macos-13`
+- `x86_64-apple-darwin`  on `macos-14` (cross-compile from Apple Silicon)
 - `x86_64-unknown-linux-gnu`  on `ubuntu-22.04`
 - `aarch64-unknown-linux-gnu` on `ubuntu-22.04-arm`
 
-Per-target: `cargo build --release --target <t> --locked`, ad-hoc codesign
-on macOS, strip, tar. Linux runners are pinned to `ubuntu-22.04` so the
-glibc ABI floor stays stable across runner image upgrades. Release job
-aggregates artifacts, generates `SHA256SUMS`, publishes via
-`softprops/action-gh-release@v2`.
+Per-target: `cargo build --release --target <t> --locked`, strip, ad-hoc
+codesign on macOS (strip first — it invalidates the signature; unsigned
+Apple Silicon binaries get SIGKILLed at launch), tar. Linux runners are
+pinned to `ubuntu-22.04` so the glibc ABI floor stays stable across runner
+image upgrades.
 
-`make_latest` is **conditional on an actual tag push**
-(`startsWith(github.ref, 'refs/tags/v')`). Manual `workflow_dispatch`
-rebuilds of historical tags won't demote newer releases.
+`release-please` drafts the release immediately so users never see an
+asset-less release; `publish-release` aggregates artifacts, generates
+`SHA256SUMS`, sets the notes to the **release-please changelog body plus a
+curated Install template** (idempotent via a `<!-- claudex-install-instructions -->`
+marker), uploads assets, then lifts the draft — which makes it "latest"
+(what `install.sh` / `claudex update` resolve via `/releases/latest`).
 
 ### The install script
 
@@ -109,24 +147,12 @@ All documented in `website/guide/installation.md`:
    `packages.default` and `apps.default` both carry populated `meta`
    sourced from `Cargo.toml` via `fromTOML`.
 
-### Version bump — where it lands
-
-| Surface | Field |
-|---------|-------|
-| `Cargo.toml` | `version`, `description`, `homepage`, `documentation` |
-| `Cargo.lock` | auto on next `cargo` invocation; commit the update |
-| `flake.nix` | nothing to edit — re-reads `Cargo.toml` |
-| `website/.vitepress/config.ts` | nav entry `text: 'vX.Y.Z'` |
-| `README.md` | install snippets referencing `--tag vX.Y.Z` |
-| `CHANGELOG.md` | promote `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`; refresh compare links |
-| `packaging/aur/*/PKGBUILD` | nothing to hand-edit for `claudex-bin` / `claudex` — CI runs `scripts/aur/update-pkgbuild.sh` and rewrites `pkgver` + `sha256sums`. `claudex-git` is hand-bumped only (build-recipe changes). |
-
 ### AUR
 
 PKGBUILDs live in [`packaging/aur/`](./packaging/aur/) as the source
 of truth. The AUR git repos (`ssh://aur@aur.archlinux.org/<pkg>.git`)
-are downstream mirrors that CI force-publishes to on every tag push,
-via the `publish-aur` matrix job in `release.yml` and the
+are downstream mirrors that CI force-publishes to on every release,
+via the `publish-aur` matrix job in `release-please.yml` and the
 `KSXGitHub/github-actions-deploy-aur` action. See
 [`packaging/aur/README.md`](./packaging/aur/README.md) for the full
 release flow and one-time bootstrap.

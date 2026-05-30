@@ -1,0 +1,330 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and (re)publish, creating it from this ref if needed (for example v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  # Never cancel a release mid-flight — a half-published release (assets
+  # uploaded but draft never lifted) is worse than waiting.
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-please:
+    name: Release Please
+    # Only the push-to-main path maintains the release PR / cuts the tag.
+    # workflow_dispatch is the manual-rebuild escape hatch and skips straight
+    # to resolve-tag.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      # Single root package ("." in the manifest) → unprefixed outputs.
+      releases_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+
+      # release-please creates the GitHub Release itself (body = changelog) the
+      # moment the release PR merges. Draft it immediately so users never see an
+      # asset-less release; publish-release lifts the draft after assets upload.
+      - name: Mark release as draft
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ steps.release.outputs.tag_name }}" --draft --repo "${{ github.repository }}"
+
+  resolve-tag:
+    name: Resolve Tag
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: >-
+      always() && (
+        (github.event_name == 'push' && needs.release-please.outputs.releases_created == 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+
+      - id: resolve
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="$TAG_INPUT"
+            if ! printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::Release tag must look like vX.Y.Z; got '$TAG'"
+              exit 1
+            fi
+
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "Using existing tag $TAG"
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag "$TAG" "$GITHUB_SHA"
+              git push origin "refs/tags/$TAG"
+              echo "Created tag $TAG at $GITHUB_SHA"
+            fi
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ needs.release-please.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: resolve-tag
+    if: always() && needs.resolve-tag.result == 'success'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Both macOS targets run on macos-14 (Apple Silicon). The x86_64
+          # build is a cross-compile from aarch64 — Apple's toolchain ships
+          # both arches, so `rustup target add` is all we need. `macos-13`
+          # (Intel runner) was retired by GitHub; hanging waits are the
+          # symptom when `runs-on: macos-13` is requested.
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: claudex-aarch64-apple-darwin.tar.gz
+          - os: macos-14
+            target: x86_64-apple-darwin
+            asset: claudex-x86_64-apple-darwin.tar.gz
+          # Pin to ubuntu-22.04 so the glibc floor of our Linux binaries stays
+          # put across GitHub runner image upgrades. Prebuilt assets should
+          # keep running on distros that ship older glibc.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: claudex-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: claudex-aarch64-unknown-linux-gnu.tar.gz
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Belt-and-braces: ensure the cross target's std is actually present.
+      # On cross-target macOS builds we've seen `rustup toolchain install
+      # --target` not materialize std (E0463: can't find crate for `core`),
+      # so force-add it explicitly.
+      - name: Add cross target
+        run: rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      # Order matters on macOS: `strip` invalidates any codesignature, so
+      # strip first and sign afterward. On Apple Silicon, an unsigned
+      # binary gets SIGKILL at launch (taskgated); without the re-sign,
+      # `install.sh` users see `Killed: 9`.
+      - name: Strip binary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            strip target/${{ matrix.target }}/release/claudex
+          else
+            strip --strip-all target/${{ matrix.target }}/release/claudex
+          fi
+
+      - name: Ad-hoc code sign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - target/${{ matrix.target }}/release/claudex
+
+      - name: Package
+        run: tar -czf ${{ matrix.asset }} -C target/${{ matrix.target }}/release claudex
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.asset }}
+
+  publish-release:
+    name: Publish GitHub release
+    needs: [resolve-tag, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd artifacts && sha256sum -- *.tar.gz > SHA256SUMS
+
+      # Combine notes: keep the release-please changelog body (auto notes) and
+      # append the curated Install template. The marker makes this idempotent —
+      # re-running (e.g. via workflow_dispatch) strips the prior Install block
+      # before re-appending rather than duplicating it.
+      - name: Publish release with combined notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Ensure a draft release exists. release-please already created one on
+          # the push path; workflow_dispatch rebuilds of an untagged-release need
+          # one minted with generated notes.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
+
+          MARKER="<!-- claudex-install-instructions -->"
+          INSTALL_TEMPLATE=$(cat <<EOF
+          ## Install
+
+          ### One-liner (macOS + Linux)
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh | sh
+          \`\`\`
+
+          ### Manual download
+
+          Grab the tarball for your platform, verify the SHA256, and drop the binary on your \`PATH\`.
+
+          | Platform | File |
+          |----------|------|
+          | macOS Apple Silicon | \`claudex-aarch64-apple-darwin.tar.gz\` |
+          | macOS Intel | \`claudex-x86_64-apple-darwin.tar.gz\` |
+          | Linux x86_64 | \`claudex-x86_64-unknown-linux-gnu.tar.gz\` |
+          | Linux aarch64 | \`claudex-aarch64-unknown-linux-gnu.tar.gz\` |
+
+          \`\`\`bash
+          tar xzf claudex-<target>.tar.gz
+          ./claudex --version
+          \`\`\`
+
+          ### Cargo
+
+          \`\`\`bash
+          cargo install --git https://github.com/utensils/claudex --tag ${TAG}
+          \`\`\`
+
+          ### Nix flake
+
+          \`\`\`bash
+          nix run github:utensils/claudex -- --help
+          nix profile install github:utensils/claudex
+          \`\`\`
+          EOF
+          )
+
+          BODY=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body || true)
+          # Drop any previously appended Install block so re-runs stay idempotent.
+          HEAD="${BODY%%"$MARKER"*}"
+          # Trim trailing blank lines from the changelog head before re-appending.
+          HEAD="${HEAD%$'\n'}"
+          NOTES=$(printf '%s\n\n%s\n%s\n' "$HEAD" "$MARKER" "$INSTALL_TEMPLATE")
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
+          gh release upload "$TAG" artifacts/*.tar.gz artifacts/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+          # Lift the draft → this becomes "latest", which install.sh and
+          # `claudex update` resolve via /releases/latest.
+          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
+  publish-aur:
+    name: Publish AUR (${{ matrix.pkgname }})
+    needs: [release-please, resolve-tag, publish-release]
+    # Only the genuine push-release path republishes to the AUR.
+    # workflow_dispatch rebuilds of historical tags must not republish
+    # (matches the "latest" invariant — they must not bump the AUR either).
+    if: >-
+      always() && needs.publish-release.result == 'success'
+      && github.event_name == 'push'
+      && needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # claudex-git tracks main HEAD and is hand-bumped only —
+        # update-pkgbuild.sh refuses to touch it.
+        pkgname: [claudex-bin, claudex]
+    steps:
+      # Bail out cleanly when AUR_SSH_PRIVATE_KEY hasn't been set.
+      # The one-time bootstrap (registering the AUR account's SSH
+      # key + seeding each pkgname's AUR git repo) happens outside
+      # CI; until that's done, the deploy action would fail with a
+      # confusing "Permission denied (publickey)" and turn the
+      # whole release workflow red.
+      - name: Gate on AUR_SSH_PRIVATE_KEY
+        id: gate-secret
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "${AUR_SSH_PRIVATE_KEY}" ]; then
+            echo "AUR_SSH_PRIVATE_KEY secret is not set — skipping AUR publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate-secret.outputs.skip != 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - name: Refresh PKGBUILD with release checksums
+        if: steps.gate-secret.outputs.skip != 'true'
+        env:
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          scripts/aur/update-pkgbuild.sh "${{ matrix.pkgname }}" "$VERSION"
+
+      # The deploy action runs in an Arch container, regenerates
+      # .SRCINFO with `makepkg --printsrcinfo`, commits, and pushes
+      # over SSH. We pass `allow_empty_commits: false` so a re-run
+      # against an unchanged PKGBUILD doesn't spam the AUR git log.
+      - name: Publish to AUR
+        if: steps.gate-secret.outputs.skip != 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: ${{ matrix.pkgname }}
+          pkgbuild: packaging/aur/${{ matrix.pkgname }}/PKGBUILD
+          commit_username: "claudex Release Bot"
+          commit_email: "dev.urandom.io@gmail.com"
+          commit_message: "Update to ${{ needs.resolve-tag.outputs.tag }}"
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          # AUR's git server presents RSA + ed25519 host keys; scan
+          # both so we are resilient if either rotates.
+          ssh_keyscan_types: "rsa,ed25519"
+          allow_empty_commits: false
