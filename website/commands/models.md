@@ -15,6 +15,12 @@ claudex models [-p/--project <substr>] [--json]
 | `-p`, `--project <substr>` | Filter by substring match on the project path. |
 | `--json`                   | Emit JSON.                                     |
 
+### Shared filters
+
+Also accepts the cross-cutting [filter flags](/guide/providers) that every
+report shares: `--provider`, `--model`, `--since`, `--until`, and
+`--on-disk-only`.
+
 ## Example
 
 ```bash
@@ -36,7 +42,7 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 | Column      | Source                                                                         |
 | ----------- | ------------------------------------------------------------------------------ |
 | Model       | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
-| Family      | Opus / Sonnet / Haiku (derived from the name).                                 |
+| Family      | Opus / Sonnet / Haiku / GPT-5 / GPT-4 (derived from the name).                 |
 | Sessions    | Distinct sessions that used the model.                                         |
 | Input       | Total input tokens.                                                            |
 | Output      | Total output tokens.                                                           |
@@ -72,8 +78,8 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 ## Notes
 
 - **Family detection.** `model_family` is a substring match on the model tag:
-  anything containing `opus` is `Opus`, `haiku` is `Haiku`, anything else is
-  `Sonnet`. See [Pricing model](/reference/pricing).
+  `opus` → `Opus`, `haiku` → `Haiku`, `gpt-5`/`gpt5` → `GPT-5`, `gpt-4`/`gpt4`
+  → `GPT-4`, anything else → `Sonnet`. See [Pricing model](/reference/pricing).
 - **Mixed-model sessions.** A session that switched models appears under
   every model it used; `session_count` counts each model-session pair once.
 - **Runtime metadata.** `service_tiers`, `inference_geos`, `avg_speed`, and

@@ -6,8 +6,9 @@ flags, examples, and the JSON shape.
 Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
 Reports span Claude Code, OpenAI Codex, and Pi by default. Every report accepts
-the shared [filtering flags](/guide/providers) — `--provider`, `--project`,
-`--model`, `--since`/`--until`, `--on-disk-only`.
+the shared [filter flags](/guide/providers) — `--provider`, `--model`,
+`--since`/`--until`, `--on-disk-only`. `--project` is a separate per-command
+filter (it has its own column in the matrix below).
 
 ## Read-only reports
 

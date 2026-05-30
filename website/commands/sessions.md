@@ -19,6 +19,12 @@ claudex sessions [-p/--project <substr>] [--file <substr>]
 | `--json`                   | off     | Emit JSON.                                        |
 | `--no-index`               | off     | Scan JSONL files directly; don't touch the index. |
 
+### Shared filters
+
+Also accepts the cross-cutting [filter flags](/guide/providers) that every
+report shares: `--provider`, `--model`, `--since`, `--until`, and
+`--on-disk-only`.
+
 ## Example
 
 ```bash

@@ -8,8 +8,20 @@ Environment variables and paths claudex reads.
 | ---------------- | ----------------------------------------------------------------------------- |
 | `CLAUDEX_DIR`    | Override the location of `~/.claudex/` (index, debug logs).                   |
 | `NO_COLOR`       | Disable color when `--color` is `auto`. [no-color.org](https://no-color.org). |
-| `COLUMNS`        | Override terminal width for table rendering. Useful in CI and multiplexers.   |
 | `RUST_BACKTRACE` | Rust panic behavior. `1` for a backtrace, `full` for a symbol-rich one.       |
+
+Table width is detected automatically from the terminal (via the
+`terminal_size` crate); claudex does not read `$COLUMNS`.
+
+### Install script (`install.sh`) only
+
+These are read by the [install script](/guide/installation#install-script), not
+by the `claudex` binary:
+
+| Var                   | Effect                                                              |
+| --------------------- | ------------------------------------------------------------------- |
+| `CLAUDEX_VERSION`     | Release tag to install (default: `latest`), e.g. `v0.5.2`.          |
+| `CLAUDEX_INSTALL_DIR` | Install directory (default: `~/.local/bin`), e.g. `/usr/local/bin`. |
 
 ## Paths
 

@@ -96,7 +96,7 @@ Source builds require Rust 1.95+. Prebuilt binaries have no runtime dependencies
 | [`completions <shell>`](https://utensils.io/claudex/commands/completions) | Generate shell completions (bash, zsh, fish, elvish, powershell)          |
 | [`skills`](https://utensils.io/claudex/commands/skills)                   | Generate or install the agent skill for Claude Code, Codex, or Pi         |
 
-Global flag: `--color auto|always|never` (respects `NO_COLOR`). Every report accepts the shared `--provider` / `--project` / `--model` / `--since` / `--until` / `--on-disk-only` [filters](https://utensils.io/claudex/guide/providers).
+Global flag: `--color auto|always|never` (respects `NO_COLOR`). Every report accepts the shared `--provider` / `--model` / `--since` / `--until` / `--on-disk-only` [filters](https://utensils.io/claudex/guide/providers); `--project` is a separate per-command filter.
 
 ## Documentation
 
