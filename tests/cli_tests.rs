@@ -390,6 +390,43 @@ fn subagent_transcripts_are_indexed_and_scanned() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["session_id"].as_str(), Some("parent-1"));
     assert_eq!(rows[0]["input_tokens"].as_u64(), Some(1000));
+
+    // The `session` drill-down must roll the subagent up on BOTH paths. The
+    // indexed path reads `parent_session_id`; the `--no-index` path discovers
+    // and merges the child transcript directly. Their output must match.
+    let detail_indexed = run(home.path(), &["session", "parent-1", "--json"]);
+    assert!(
+        detail_indexed.status.success(),
+        "stderr: {}",
+        stderr_of(&detail_indexed)
+    );
+    let detail_scanned = run(
+        home.path(),
+        &["session", "parent-1", "--json", "--no-index"],
+    );
+    assert!(
+        detail_scanned.status.success(),
+        "stderr: {}",
+        stderr_of(&detail_scanned)
+    );
+    let di = json_of(&detail_indexed);
+    let ds = json_of(&detail_scanned);
+    for v in [&di, &ds] {
+        assert_eq!(v["subagent_files"].as_array().unwrap().len(), 1);
+        assert!(
+            v["subagent_files"][0]
+                .as_str()
+                .unwrap()
+                .ends_with("agent-child.jsonl")
+        );
+        // Parent (100) + child (900) input tokens rolled up.
+        assert_eq!(v["input_tokens"].as_u64(), Some(1000));
+        assert_eq!(v["output_tokens"].as_u64(), Some(100));
+        // Both models appear in the per-model breakdown.
+        assert_eq!(v["models"].as_array().unwrap().len(), 2);
+    }
+    assert_eq!(di["cost_usd"], ds["cost_usd"]);
+    assert_eq!(di["total_tokens"], ds["total_tokens"]);
 }
 
 #[test]

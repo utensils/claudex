@@ -195,6 +195,28 @@ fn collect_subagent_transcripts(dir: &Path, files: &mut Vec<PathBuf>) -> Result<
     Ok(())
 }
 
+/// Collect the subagent transcript files belonging to a top-level session.
+///
+/// Claude Code nests them at `<project>/<parent-session>/subagents/**/agent-*.jsonl`,
+/// so for a parent transcript `<project>/<parent-session>.jsonl` the directory
+/// is the file's stem joined with `subagents`. Returns an empty vec when
+/// `session_file` is itself a subagent transcript (children don't nest further)
+/// or when no `subagents/` directory exists. Workflow `journal.jsonl` files and
+/// `agent-*.meta.json` sidecars are skipped by [`collect_subagent_transcripts`],
+/// matching index-time discovery.
+pub fn subagent_transcripts_for(session_file: &Path) -> Result<Vec<PathBuf>> {
+    if is_subagent_transcript_file(session_file) {
+        return Ok(Vec::new());
+    }
+    let (Some(parent), Some(stem)) = (session_file.parent(), session_file.file_stem()) else {
+        return Ok(Vec::new());
+    };
+    let dir = parent.join(stem).join("subagents");
+    let mut files = Vec::new();
+    collect_subagent_transcripts(&dir, &mut files)?;
+    Ok(files)
+}
+
 fn is_subagent_transcript_file(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "jsonl")
         && path
@@ -336,5 +358,33 @@ mod tests {
 
         let journal = project.join("parent-123/subagents/workflows/run-1/journal.jsonl");
         assert_eq!(parent_session_id_for_path(&project, &journal), None);
+    }
+
+    #[test]
+    fn subagent_transcripts_for_finds_children_and_skips_leaves() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().join("-Users-test-Projects-x");
+        let subdir = proj.join("parent-1/subagents/workflows/run-1");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let parent = proj.join("parent-1.jsonl");
+        std::fs::write(&parent, "{}\n").unwrap();
+        let child = subdir.join("agent-abc.jsonl");
+        std::fs::write(&child, "{}\n").unwrap();
+        // These must be ignored.
+        std::fs::write(subdir.join("journal.jsonl"), "{}\n").unwrap();
+        std::fs::write(subdir.join("agent-abc.meta.json"), "{}\n").unwrap();
+
+        let found = subagent_transcripts_for(&parent).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("agent-abc.jsonl"));
+
+        // A leaf subagent transcript rolls nothing up further.
+        assert!(subagent_transcripts_for(&child).unwrap().is_empty());
+
+        // A top-level session with no subagents/ dir → empty.
+        let lonely = proj.join("parent-2.jsonl");
+        std::fs::write(&lonely, "{}\n").unwrap();
+        assert!(subagent_transcripts_for(&lonely).unwrap().is_empty());
     }
 }
