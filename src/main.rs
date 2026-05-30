@@ -1,9 +1,10 @@
 use std::str::FromStr;
 
 use clap::builder::ValueHint;
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 use claudex::cli::{FilterArgs, SkillCommand};
+use claudex::cli_help;
 use claudex::commands;
 use claudex::plan::Plan;
 use claudex::skill;
@@ -28,6 +29,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// List sessions grouped by project
+    #[command(after_long_help = cli_help::SESSIONS_EXAMPLES)]
     Sessions {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -48,6 +50,7 @@ enum Commands {
         filter: FilterArgs,
     },
     /// Token usage and approximate cost report
+    #[command(after_long_help = cli_help::COST_EXAMPLES)]
     Cost {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -68,6 +71,7 @@ enum Commands {
         filter: FilterArgs,
     },
     /// Full-text search across session messages
+    #[command(after_long_help = cli_help::SEARCH_EXAMPLES)]
     Search {
         /// Text to search for
         query: String,
@@ -90,6 +94,7 @@ enum Commands {
         filter: FilterArgs,
     },
     /// Tool usage frequency report
+    #[command(after_long_help = cli_help::TOOLS_EXAMPLES)]
     Tools {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -110,18 +115,7 @@ enum Commands {
         filter: FilterArgs,
     },
     /// Tail Claude Code's debug log in real time with formatted output
-    #[command(after_long_help = "\
-By default watches ~/.claudex/debug/latest.log. Claude Code does not
-write to that path on its own — point it there per invocation:
-
-  claude --debug-file ~/.claudex/debug/latest.log
-
-Each new `claude` invocation truncates the file; watch detects this
-and prints a new-session separator. The directory is created on first
-run, so you can start `claudex watch` before launching claude.
-
-Custom path:
-  claudex watch --follow /tmp/my-claude.log")]
+    #[command(after_long_help = cli_help::WATCH_HELP)]
     Watch {
         /// Disable formatting, show raw output
         #[arg(long)]
@@ -131,6 +125,7 @@ Custom path:
         follow: Option<String>,
     },
     /// Dashboard overview of sessions, cost, and tool usage
+    #[command(after_long_help = cli_help::SUMMARY_EXAMPLES)]
     Summary {
         /// Output as JSON
         #[arg(long)]
@@ -151,6 +146,7 @@ Custom path:
         plan: Plan,
     },
     /// Detailed report for a single session
+    #[command(after_long_help = cli_help::SESSION_EXAMPLES)]
     Session {
         /// Session ID prefix or project name to inspect
         selector: String,
@@ -165,12 +161,13 @@ Custom path:
         no_index: bool,
     },
     /// Export session transcripts to markdown or JSON
+    #[command(after_long_help = cli_help::EXPORT_EXAMPLES)]
     Export {
         /// Session ID prefix or project name to export
         selector: String,
         /// Output format: markdown or json
-        #[arg(long, default_value = "markdown")]
-        format: String,
+        #[arg(long, value_enum, default_value_t = ExportFormat::Markdown)]
+        format: ExportFormat,
         /// Write output to a file instead of stdout
         #[arg(short, long, value_hint = ValueHint::FilePath)]
         output: Option<String>,
@@ -179,12 +176,14 @@ Custom path:
         project: Option<String>,
     },
     /// Manage the session index (normally updated automatically)
+    #[command(after_long_help = cli_help::INDEX_EXAMPLES)]
     Index {
         /// Force a full rebuild instead of an incremental update
         #[arg(long)]
         force: bool,
     },
     /// Per-turn timing analysis (avg, p50, p95, max duration)
+    #[command(after_long_help = cli_help::TURNS_EXAMPLES)]
     Turns {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -199,6 +198,7 @@ Custom path:
         filter: FilterArgs,
     },
     /// PR linkage report — sessions linked to pull requests
+    #[command(after_long_help = cli_help::PRS_EXAMPLES)]
     Prs {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -213,6 +213,7 @@ Custom path:
         filter: FilterArgs,
     },
     /// Most frequently modified files across sessions
+    #[command(after_long_help = cli_help::FILES_EXAMPLES)]
     Files {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -230,6 +231,7 @@ Custom path:
         filter: FilterArgs,
     },
     /// Model usage breakdown — call counts, token usage, cost per model
+    #[command(after_long_help = cli_help::MODELS_EXAMPLES)]
     Models {
         /// Filter by project name (substring match on path)
         #[arg(short, long)]
@@ -241,17 +243,7 @@ Custom path:
         filter: FilterArgs,
     },
     /// Self-update to the latest claudex release (or a specific tag)
-    #[command(after_long_help = "\
-Upgrade claudex in place when installed by install.sh. For other install
-sources the command prints the right upgrade recipe and exits:
-
-  Nix:          nix profile upgrade claudex   (or flake update)
-  cargo:        cargo install --git … --tag vX.Y.Z --force claudex
-  Homebrew:     brew upgrade claudex
-  pacman (AUR): paru -Syu claudex-bin         (or yay / vanilla pacman)
-
-The latest tag is resolved by following the /releases/latest redirect, so
-this command doesn't hit api.github.com and can't be rate-limited.")]
+    #[command(after_long_help = cli_help::UPDATE_HELP)]
     Update {
         /// Report whether an update is available without writing to disk
         #[arg(long)]
@@ -264,33 +256,60 @@ this command doesn't hit api.github.com and can't be rate-limited.")]
         version: Option<String>,
     },
     /// Generate shell completions
-    #[command(after_long_help = "\
-Setup instructions:
-
-  zsh (add to ~/.zshrc):
-    source <(claudex completions zsh)
-
-  bash (add to ~/.bashrc):
-    source <(claudex completions bash)
-
-  fish (persist to completions dir):
-    claudex completions fish | source
-    claudex completions fish > ~/.config/fish/completions/claudex.fish
-
-  elvish:
-    eval (claudex completions elvish | slurp)
-
-  powershell (add to $PROFILE):
-    claudex completions powershell | Out-String | Invoke-Expression")]
+    #[command(after_long_help = cli_help::COMPLETIONS_HELP)]
     Completions {
         /// Shell to generate completions for (bash, zsh, fish, elvish, powershell)
-        shell: String,
+        #[arg(value_enum)]
+        shell: CompletionShell,
     },
     /// Generate or install the claudex agent skill for Claude Code, Codex, or Pi
+    #[command(after_long_help = cli_help::SKILLS_EXAMPLES)]
     Skills {
         #[command(subcommand)]
         command: SkillCommand,
     },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ExportFormat {
+    Markdown,
+    Json,
+}
+
+impl ExportFormat {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ExportFormat::Markdown => "markdown",
+            ExportFormat::Json => "json",
+        }
+    }
+}
+
+impl std::fmt::Display for ExportFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Elvish,
+    Powershell,
+}
+
+impl CompletionShell {
+    fn as_str(&self) -> &'static str {
+        match self {
+            CompletionShell::Bash => "bash",
+            CompletionShell::Zsh => "zsh",
+            CompletionShell::Fish => "fish",
+            CompletionShell::Elvish => "elvish",
+            CompletionShell::Powershell => "powershell",
+        }
+    }
 }
 
 fn main() {
@@ -384,7 +403,12 @@ fn main() {
             format,
             output,
             project,
-        } => commands::export::run(&selector, &format, output.as_deref(), project.as_deref()),
+        } => commands::export::run(
+            &selector,
+            format.as_str(),
+            output.as_deref(),
+            project.as_deref(),
+        ),
         Commands::Index { force } => commands::index::run(force),
         Commands::Turns {
             project,
@@ -423,7 +447,7 @@ fn main() {
             force,
             version,
         } => commands::update::run(check, force, version),
-        Commands::Completions { shell } => generate_completions(&shell),
+        Commands::Completions { shell } => generate_completions(shell.as_str()),
         Commands::Skills { command } => skill::execute(command, &Cli::command()),
     };
     if let Err(e) = result {
@@ -502,6 +526,7 @@ fn render_cli_error(err: clap::Error, choice: ColorChoice) -> ! {
         out.push_str("\n\n");
         out.push_str(usage.trim_end());
     }
+    out.push_str(&cli_help::error_help_for(&bin));
     out.push_str(&format!("\n\nFor more information, try '{bin} --help'."));
 
     eprintln!("{out}");
