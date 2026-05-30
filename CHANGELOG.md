@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.5.0](https://github.com/utensils/claudex/compare/v0.4.0...v0.5.0) (2026-05-30)
+
+
+### Features
+
+* **aur:** add AUR packaging with auto-publish on release ([#23](https://github.com/utensils/claudex/issues/23)) ([2b76be2](https://github.com/utensils/claudex/commit/2b76be2433f7755aba7bf62317683d1a7c8b0c51))
+
+
+### Bug Fixes
+
+* **index:** include subagent transcripts in session accounting ([#26](https://github.com/utensils/claudex/issues/26)) ([219ed09](https://github.com/utensils/claudex/commit/219ed09bf7f6289efaf487539c5da8a6eb103df2))
+
 ## [0.4.0] — 2026-05-15
 
 Third tagged release. Headline: a new `claudex codex` report that summarizes OpenAI Codex CLI activity from `~/.codex`, a `summary --plan flat-monthly:USD` flag that reframes the cost section for flat-fee subscribers (Pro / Pro Max / Team flat-fee), and a packaged Claude Code skill at `.claude/skills/claudex/` for end-user slash commands and autonomous-agent workflows.
