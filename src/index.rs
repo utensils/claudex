@@ -351,6 +351,7 @@ impl IndexStore {
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_project   ON sessions(project_name);
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(first_timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_sessions_parent    ON sessions(parent_session_id);
             CREATE TABLE IF NOT EXISTS token_usage (
                 session_id            INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
                 model                 TEXT,
@@ -947,7 +948,7 @@ impl IndexStore {
         let filter = project_filter.map(|f| format!("%{f}%"));
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
-            r#"SELECT COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
+            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
                       s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
@@ -956,7 +957,7 @@ impl IndexStore {
                FROM sessions s
                JOIN tool_calls tc ON tc.session_id = s.id
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY group_key, s.project_name, tc.tool_name
+               GROUP BY group_key, s.project_name, display_session_id, tc.tool_name
                ORDER BY MIN(s.first_timestamp) DESC"#,
         )?;
 
@@ -1184,7 +1185,7 @@ impl IndexStore {
         let fp = filter.as_deref();
         let mut stmt = self.conn.prepare(
             r#"SELECT t.model,
-                      COALESCE(s.parent_session_id, s.session_id, s.file_path),
+                      s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
                       COALESCE(t.cache_creation_tokens, 0),
@@ -1623,7 +1624,7 @@ impl IndexStore {
             i64,
             i64,
         ) = self.conn.query_row(
-            r#"SELECT COUNT(DISTINCT COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+            r#"SELECT COUNT(DISTINCT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -1645,13 +1646,13 @@ impl IndexStore {
         )?;
 
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![today_start_ms],
             |row| row.get(0),
         )?;
 
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -1754,7 +1755,7 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id"#,
         )?;
