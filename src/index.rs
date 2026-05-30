@@ -28,7 +28,13 @@ fn looks_like_session_id_prefix(selector: &str) -> bool {
 }
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
+
+/// Pricing-table revision. Bump this in any change that alters
+/// `ModelPricing::for_model`; on the next open, every `cost_source = 'computed'`
+/// row is repriced in place (see `maybe_reprice`). Independent of
+/// `SCHEMA_VERSION`, which tracks table shape rather than cost values.
+const PRICING_REVISION: i64 = 1;
 
 /// Child tables whose rows hang off a single `sessions` row, paired with the
 /// column that references `sessions(id)`. `messages_fts` is a virtual table
@@ -401,7 +407,8 @@ impl IndexStore {
                 inference_geo         TEXT,
                 speed                 REAL,
                 service_tier          TEXT,
-                iterations            INTEGER NOT NULL DEFAULT 0
+                iterations            INTEGER NOT NULL DEFAULT 0,
+                cost_source           TEXT    NOT NULL DEFAULT 'computed'
             );
             CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
             CREATE TABLE IF NOT EXISTS tool_calls (
@@ -476,6 +483,11 @@ impl IndexStore {
             params![SCHEMA_VERSION.to_string()],
         )?;
 
+        // Reprice retained rows in place if the pricing table advanced. Runs
+        // after the v6 migration has populated `cost_source`, so provider costs
+        // are already protected. No-op for a fresh DB (no rows yet).
+        self.maybe_reprice()?;
+
         Ok(())
     }
 
@@ -518,6 +530,22 @@ impl IndexStore {
             self.conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider);
                  CREATE INDEX IF NOT EXISTS idx_sessions_present  ON sessions(present_on_disk);",
+            )?;
+        }
+        // v5 → v6: record where each cost came from so the automatic reprice
+        // (see `maybe_reprice`) never overwrites a provider-supplied cost. Pi is
+        // the only provider that reports its own cost today, so flag its rows
+        // best-effort; everything else defaults to 'computed' and is repriceable.
+        if from.unwrap_or(0) < 6 {
+            self.add_column_if_missing(
+                "token_usage",
+                "cost_source",
+                "TEXT NOT NULL DEFAULT 'computed'",
+            )?;
+            self.conn.execute(
+                "UPDATE token_usage SET cost_source = 'provider'
+                 WHERE session_id IN (SELECT id FROM sessions WHERE provider = 'pi')",
+                [],
             )?;
         }
         Ok(())
@@ -588,6 +616,71 @@ impl IndexStore {
                 r.get::<_, String>(0)
             })
             .ok()
+    }
+
+    /// One-off, idempotent reprice keyed on `pricing_revision`. When the binary's
+    /// pricing table has advanced past what this DB was last priced at, recompute
+    /// every `cost_source = 'computed'` row, then stamp the new revision so it
+    /// runs at most once per bump. Cheap no-op on every subsequent open.
+    fn maybe_reprice(&self) -> Result<()> {
+        let stored: i64 = self
+            .meta_get("pricing_revision")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if stored >= PRICING_REVISION {
+            return Ok(());
+        }
+        self.reprice_computed_costs()?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('pricing_revision', ?)",
+            params![PRICING_REVISION.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Recompute `cost_usd` in place for every `cost_source = 'computed'` row
+    /// using the current `ModelPricing` tiers, in a single transaction. Provider-
+    /// supplied costs (`'provider'`) are left untouched. This is the
+    /// non-destructive counterpart to `force_rebuild`: it reprices retained and
+    /// archived rows too, without re-reading source transcripts (which may be
+    /// gone). Returns the number of rows updated.
+    fn reprice_computed_costs(&self) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let rows: Vec<(i64, Option<String>, i64, i64, i64, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT rowid, model, input_tokens, output_tokens,
+                        cache_creation_tokens, cache_read_tokens
+                 FROM token_usage WHERE cost_source = 'computed'",
+            )?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })?;
+            mapped.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let mut updated = 0usize;
+        {
+            let mut upd = tx.prepare("UPDATE token_usage SET cost_usd = ? WHERE rowid = ?")?;
+            for (rowid, model, input, output, cache_w, cache_r) in &rows {
+                let usage = crate::types::TokenUsage {
+                    input_tokens: *input as u64,
+                    output_tokens: *output as u64,
+                    cache_creation_tokens: *cache_w as u64,
+                    cache_read_tokens: *cache_r as u64,
+                };
+                let cost = usage.cost_for_model(model.as_deref());
+                upd.execute(params![cost, rowid])?;
+                updated += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(updated)
     }
 
     /// Force a full rebuild of every provider. This is the ONE destructive path
@@ -787,15 +880,19 @@ impl IndexStore {
             };
 
             if entry.model_usage.is_empty() && entry.usage.total_tokens() > 0 {
-                let cost = entry
-                    .embedded_cost
-                    .unwrap_or_else(|| entry.usage.cost_for_model(entry.model.as_deref()));
+                let (cost, cost_source) = match entry.embedded_cost {
+                    Some(c) => (c, "provider"),
+                    None => (
+                        entry.usage.cost_for_model(entry.model.as_deref()),
+                        "computed",
+                    ),
+                };
                 tx.execute(
                     r#"INSERT INTO token_usage
                        (session_id, model, assistant_message_count, input_tokens, output_tokens,
                         cache_creation_tokens, cache_read_tokens, cost_usd,
-                        inference_geo, speed, service_tier, iterations)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                        inference_geo, speed, service_tier, iterations, cost_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                     params![
                         row_id,
                         entry.model,
@@ -809,6 +906,7 @@ impl IndexStore {
                         entry.speed,
                         entry.service_tier,
                         entry.iterations as i64,
+                        cost_source,
                     ],
                 )?;
             } else if !entry.model_usage.is_empty() {
@@ -821,15 +919,16 @@ impl IndexStore {
                     } else {
                         Some(model.as_str())
                     };
-                    let cost = usage
-                        .embedded_cost
-                        .unwrap_or_else(|| usage.usage.cost_for_model(model_opt));
+                    let (cost, cost_source) = match usage.embedded_cost {
+                        Some(c) => (c, "provider"),
+                        None => (usage.usage.cost_for_model(model_opt), "computed"),
+                    };
                     tx.execute(
                         r#"INSERT INTO token_usage
                            (session_id, model, assistant_message_count, input_tokens, output_tokens,
                             cache_creation_tokens, cache_read_tokens, cost_usd,
-                            inference_geo, speed, service_tier, iterations)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                            inference_geo, speed, service_tier, iterations, cost_source)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                         params![
                             row_id,
                             model_opt,
@@ -843,6 +942,7 @@ impl IndexStore {
                             usage.avg_speed(),
                             join_strings(&usage.service_tiers),
                             usage.iterations as i64,
+                            cost_source,
                         ],
                     )?;
                 }

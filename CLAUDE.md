@@ -189,7 +189,7 @@ Three invariants worth knowing:
         │
         ▼   providers::{claude,codex,pi} (SessionProvider: enumerate + parse → ProviderRecord)
         ▼
-~/.claudex/index.db  (SQLite, schema_version=5, created on demand)
+~/.claudex/index.db  (SQLite, schema_version=6, created on demand)
         │   additive/retentive: archived or deleted sessions are RETAINED (present_on_disk=0),
         │   non-destructive ALTER-TABLE migrations, per-provider incremental sync.
         ▼   index::IndexStore::ensure_fresh / sync_now / force_rebuild (take &[Provider])
@@ -210,7 +210,7 @@ commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palette via ui, JS
 - `src/types.rs` — `TokenUsage` and `ModelPricing` (Opus/Sonnet/Haiku + OpenAI `gpt-5`/`gpt-4` tiers; default is Sonnet). `cost_for_model` is the single source of truth for pricing math; providers that report their own cost set `ModelSessionStats::embedded_cost`, which the index trusts over the table.
 - `src/stats.rs` — small numeric helpers shared across commands (e.g. `percentile_sorted` used by `turns` and the session drill-down).
 - `src/plan.rs` — `Plan` enum (`Api` / `FlatMonthly { usd_per_month }`), `FromStr` parser for the `--plan` value, and `cost_fields` returning a `serde_json::Map` of plan-aware cost keys. Consumed only by the `summary` subcommand today; if you wire it into another command, add `--plan` to that command's clap definition (not as a global) so the flag never silently no-ops.
-- `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions` (now carries `provider`, `present_on_disk`, `archived_at`, `last_seen`, `extras`), `token_usage`, `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`, scoped per provider. `IndexStore::open_at(path)` is a test-only constructor.
+- `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions` (now carries `provider`, `present_on_disk`, `archived_at`, `last_seen`, `extras`), `token_usage` (carries `cost_source` — `computed` vs `provider`), `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`, scoped per provider. `IndexStore::open_at(path)` is a test-only constructor.
 - `src/ui.rs` — **single home for every presentation concern**: palette (semantic helpers like `project`, `cost`, `cell_project`, `cell_cost`), `table()` builder (minimal style, dynamic width via `terminal_size`), `Spinner` (TTY-gated, stderr), number formatters (`fmt_cost` → `$12,345.67` with sub-cent fallback to 4 decimals, `fmt_count` → `326,297`), and `ColorChoice` / `apply_color_choice`.
 - `src/commands/*.rs` — one module per subcommand: `sessions`, `session`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs` to helpers/`skill::execute`, not modules here. The old scan-only `codex` subcommand was removed — Codex is now a first-class indexed provider reached via `--provider codex`.)
 - `tests/index_tests.rs` — unit-style tests against parser/types/store.
@@ -230,7 +230,8 @@ commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palette via ui, JS
 - **Every Claude read command still supports `--no-index`**, falling back to `parser::parse_session` with `ResolvedFilter::matches` applied in memory. The indexed path is the multi-provider one; `--no-index` is a Claude-only escape hatch.
 - **Filtering is centralized in `src/cli.rs`.** Reporting commands flatten `FilterArgs` and pass `&ResolvedFilter` to the query methods, which append `sql_predicates(alias)`. Don't hand-roll provider/date predicates in a command.
 - **Worktree aggregation**: always key on `canonical_project_path(&decoded)` when grouping by project, and use `display_project_name` for user-facing labels (renders worktree sessions as `"projectname (worktree)"`).
-- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers). Providers reporting their own cost set `embedded_cost`, which the insert loop uses instead.
+- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers, latest vs legacy). Providers reporting their own cost set `embedded_cost`, which the insert loop stores with `cost_source='provider'` (everything else is `'computed'`).
+- **Stored costs are repriced automatically.** `cost_usd` is materialized at ingest, so changing `cost_for_model` would leave old rows stale. When you change the rate card, bump `PRICING_REVISION` (`index.rs`): the next open reprices every `cost_source='computed'` row in place via `reprice_computed_costs` (keyed on the `pricing_revision` meta value, runs once per bump). `'provider'` rows are never touched. This is the non-destructive way to refresh retained/archived rows — unlike `index --force`, which drops them.
 
 ### Adding a new subcommand
 

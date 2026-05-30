@@ -42,7 +42,16 @@ impl ModelPricing {
                 cache_write_per_mtok: 1.25,
                 cache_read_per_mtok: 0.10,
             }
+        } else if is_claude_haiku_3(&m) {
+            // Claude 3 Haiku — the cheapest legacy Haiku tier ($0.25/$1.25).
+            Self {
+                input_per_mtok: 0.25,
+                output_per_mtok: 1.25,
+                cache_write_per_mtok: 0.3125,
+                cache_read_per_mtok: 0.025,
+            }
         } else if m.contains("haiku") {
+            // Claude 3.5 Haiku (revised Dec 2024) and any other legacy Haiku.
             Self {
                 input_per_mtok: 0.80,
                 output_per_mtok: 4.0,
@@ -82,7 +91,16 @@ impl ModelPricing {
             openai_pricing(0.15, 0.075, 0.60)
         } else if has_any(&m, &["gpt-4o-2024-05-13"]) {
             openai_pricing(5.0, 5.0, 15.0)
+        } else if has_any(&m, &["gpt-4-turbo", "gpt-4-1106", "gpt-4-0125"]) {
+            // GPT-4 Turbo — predates prompt caching, so cache rates = input.
+            openai_pricing(10.0, 10.0, 30.0)
+        } else if has_any(&m, &["gpt-4-32k"]) {
+            openai_pricing(60.0, 60.0, 120.0)
+        } else if is_gpt4_classic(&m) {
+            // Original GPT-4 (8k) — far pricier than GPT-4o / GPT-4.1.
+            openai_pricing(30.0, 30.0, 60.0)
         } else if is_gpt4(&m) {
+            // GPT-4o (base) and anything else in the gpt-4 family.
             openai_pricing(2.50, 1.25, 10.0)
         } else {
             // Claude Sonnet — also the default for an unspecified model.
@@ -132,6 +150,22 @@ fn is_claude_opus_latest(m: &str) -> bool {
 
 fn is_claude_haiku_latest(m: &str) -> bool {
     has_any(m, &["haiku-4-5", "haiku-4.5"])
+}
+
+fn is_claude_haiku_3(m: &str) -> bool {
+    // Claude 3 Haiku ids look like `claude-3-haiku-20240307`. Exclude the 3.5
+    // Haiku ids (`claude-3-5-haiku-*`), which keep the legacy $0.80/$4 rate.
+    m.contains("3-haiku") && !m.contains("3-5-haiku")
+}
+
+fn is_gpt4_classic(m: &str) -> bool {
+    // Original GPT-4 family (gpt-4, gpt-4-0613, gpt-4-8k) — but NOT the far
+    // cheaper gpt-4o or the gpt-4.1 family, which carry their own tiers.
+    (m.contains("gpt-4") || m.contains("gpt4"))
+        && !m.contains("gpt-4o")
+        && !m.contains("gpt4o")
+        && !m.contains("gpt-4.1")
+        && !m.contains("gpt4.1")
 }
 
 fn has_any(m: &str, needles: &[&str]) -> bool {
@@ -578,5 +612,99 @@ mod tests {
         let p_opus = ModelPricing::for_model(Some("opus"));
         let p_sonnet = ModelPricing::for_model(Some("sonnet"));
         assert!((p_opus.cache_read_per_mtok / p_sonnet.cache_read_per_mtok - 5.0).abs() < 0.001);
+    }
+
+    // --- Historical / legacy tiers ---
+
+    fn input_1m(model: &str) -> f64 {
+        TokenUsage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        }
+        .cost_for_model(Some(model))
+    }
+
+    fn output_1m(model: &str) -> f64 {
+        TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        }
+        .cost_for_model(Some(model))
+    }
+
+    #[test]
+    fn legacy_opus_3_is_full_price() {
+        // Claude 3 / Opus 4 / 4.1 predate the 4.5+ price cut.
+        let p = ModelPricing::for_model(Some("claude-3-opus-20240229"));
+        assert_eq!(p.input_per_mtok, 15.0);
+        assert_eq!(p.output_per_mtok, 75.0);
+        assert_eq!(p.cache_write_per_mtok, 18.75);
+        assert_eq!(p.cache_read_per_mtok, 1.50);
+        assert_eq!(
+            ModelPricing::for_model(Some("claude-opus-4-1")).input_per_mtok,
+            15.0
+        );
+    }
+
+    #[test]
+    fn claude_3_haiku_is_cheapest_tier() {
+        let p = ModelPricing::for_model(Some("claude-3-haiku-20240307"));
+        assert_eq!(p.input_per_mtok, 0.25);
+        assert_eq!(p.output_per_mtok, 1.25);
+        assert_eq!(p.cache_write_per_mtok, 0.3125);
+        assert_eq!(p.cache_read_per_mtok, 0.025);
+        assert!((input_1m("claude-3-haiku-20240307") - 0.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn claude_3_5_haiku_stays_legacy_not_claude_3() {
+        // `claude-3-5-haiku-*` must NOT match the Claude 3 Haiku tier.
+        let p = ModelPricing::for_model(Some("claude-3-5-haiku-20241022"));
+        assert_eq!(
+            p.input_per_mtok, 0.80,
+            "3.5 Haiku keeps the $0.80 legacy rate"
+        );
+        assert_eq!(p.output_per_mtok, 4.0);
+    }
+
+    #[test]
+    fn gpt4_turbo_pricing() {
+        for id in [
+            "gpt-4-turbo",
+            "gpt-4-turbo-2024-04-09",
+            "gpt-4-1106-preview",
+        ] {
+            assert!((input_1m(id) - 10.0).abs() < 0.0001, "{id} input");
+            assert!((output_1m(id) - 30.0).abs() < 0.0001, "{id} output");
+        }
+    }
+
+    #[test]
+    fn gpt4_32k_pricing() {
+        assert!((input_1m("gpt-4-32k") - 60.0).abs() < 0.0001);
+        assert!((output_1m("gpt-4-32k") - 120.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn gpt4_classic_8k_pricing() {
+        for id in ["gpt-4", "gpt-4-0613", "gpt-4-0314"] {
+            assert!((input_1m(id) - 30.0).abs() < 0.0001, "{id} input");
+            assert!((output_1m(id) - 60.0).abs() < 0.0001, "{id} output");
+        }
+    }
+
+    #[test]
+    fn gpt4_family_disambiguation_unaffected() {
+        // The new classic-GPT-4 tier must not steal gpt-4o / gpt-4.1 ids.
+        assert!((input_1m("gpt-4o") - 2.50).abs() < 0.0001, "gpt-4o base");
+        assert!(
+            (input_1m("gpt-4o-mini") - 0.15).abs() < 0.0001,
+            "gpt-4o-mini"
+        );
+        assert!((input_1m("gpt-4.1") - 2.0).abs() < 0.0001, "gpt-4.1");
+        assert!(
+            (input_1m("gpt-4.1-mini") - 0.40).abs() < 0.0001,
+            "gpt-4.1-mini"
+        );
     }
 }

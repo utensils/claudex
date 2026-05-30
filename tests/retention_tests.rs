@@ -133,7 +133,7 @@ fn migration_from_v4_preserves_data() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(version, "5", "schema version should be migrated to 5");
+    assert_eq!(version, "6", "schema version should be migrated to 6");
 
     // The retained row survives, with the new columns defaulted.
     let row = retention(&db, "sess-old").expect("legacy session must survive migration");
@@ -166,6 +166,16 @@ fn migration_from_v4_preserves_data() {
             "legacy"
         ),
         1
+    );
+
+    // The v6 migration adds `cost_source` and the automatic reprice corrects the
+    // stale stored cost (seeded at $1.50) using current Opus 4.6 rates:
+    // (1234*5 + 567*25) / 1e6 = $0.020345.
+    let (cost, source) = token_cost(&db, "sess-old");
+    assert_eq!(source, "computed", "claude rows are repriceable");
+    assert!(
+        (cost - 0.020345).abs() < 1e-9,
+        "stale cost should be repriced, got {cost}"
     );
 }
 
@@ -367,4 +377,182 @@ fn filetime_bump(path: &Path) {
     let meta = fs::metadata(path).unwrap();
     let bumped = meta.modified().unwrap() + std::time::Duration::from_secs(5);
     set_mtime(path, bumped);
+}
+
+// --- v5 → v6 automatic reprice (Layer B/C) ---
+
+/// The v5 (pre-cost_source) schema, hand-built so we can stamp stale costs and
+/// assert the migration + automatic reprice corrects them.
+const V5_SCHEMA: &str = r#"
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE sessions (
+        id INTEGER PRIMARY KEY, project_name TEXT NOT NULL,
+        file_path TEXT NOT NULL UNIQUE, file_size INTEGER NOT NULL,
+        file_mtime INTEGER NOT NULL, session_id TEXT, parent_session_id TEXT,
+        first_timestamp INTEGER, last_timestamp INTEGER,
+        duration_ms INTEGER NOT NULL DEFAULT 0, message_count INTEGER NOT NULL DEFAULT 0,
+        model TEXT, indexed_at INTEGER NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'claude', present_on_disk INTEGER NOT NULL DEFAULT 1,
+        archived_at INTEGER, last_seen INTEGER, extras TEXT
+    );
+    CREATE TABLE token_usage (
+        session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        model TEXT, assistant_message_count INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0.0, inference_geo TEXT, speed REAL,
+        service_tier TEXT, iterations INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE VIRTUAL TABLE messages_fts USING fts5(
+        session_id UNINDEXED, message_type, content, timestamp UNINDEXED,
+        tokenize = 'porter unicode61'
+    );
+    INSERT INTO meta (key, value) VALUES ('schema_version', '5');
+"#;
+
+/// Seed a v5 DB with one session + one token_usage row each.
+/// Row tuple: `(session_id, provider, model, input_tokens, output_tokens, cost_usd)`.
+fn seed_v5_db(db: &Path, rows: &[(&str, &str, &str, i64, i64, f64)]) {
+    let conn = Connection::open(db).unwrap();
+    conn.execute_batch(V5_SCHEMA).unwrap();
+    for (i, (sid, provider, model, input, output, cost)) in rows.iter().enumerate() {
+        let id = (i + 1) as i64;
+        conn.execute(
+            "INSERT INTO sessions
+             (id, project_name, file_path, file_size, file_mtime, session_id, indexed_at, provider)
+             VALUES (?, ?, ?, 1, 1, ?, 1, ?)",
+            rusqlite::params![
+                id,
+                format!("/p/{sid}"),
+                format!("/tmp/{sid}.jsonl"),
+                sid,
+                provider
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO token_usage (session_id, model, input_tokens, output_tokens, cost_usd)
+             VALUES (?, ?, ?, ?, ?)",
+            rusqlite::params![id, model, input, output, cost],
+        )
+        .unwrap();
+    }
+}
+
+/// `(cost_usd, cost_source)` of a session's single token_usage row.
+fn token_cost(db: &Path, session_id: &str) -> (f64, String) {
+    let conn = read_db(db);
+    conn.query_row(
+        "SELECT t.cost_usd, t.cost_source FROM token_usage t
+         JOIN sessions s ON s.id = t.session_id WHERE s.session_id = ?",
+        [session_id],
+        |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?)),
+    )
+    .unwrap()
+}
+
+fn meta_val(db: &Path, key: &str) -> Option<String> {
+    let conn = read_db(db);
+    conn.query_row("SELECT value FROM meta WHERE key = ?", [key], |r| {
+        r.get::<_, String>(0)
+    })
+    .ok()
+}
+
+#[test]
+fn reprice_corrects_stale_computed_costs() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+
+    // A Claude session priced by an old binary at the pre-4.5 Opus rate.
+    // 1M input @ current Opus = $5.00; the stale stored value is $15.00.
+    seed_v5_db(
+        &db,
+        &[(
+            "sess-claude",
+            "claude",
+            "claude-opus-4-6",
+            1_000_000,
+            0,
+            15.0,
+        )],
+    );
+
+    let _idx = IndexStore::open_at(&db).unwrap();
+
+    let (cost, source) = token_cost(&db, "sess-claude");
+    assert_eq!(source, "computed");
+    assert!(
+        (cost - 5.0).abs() < 1e-9,
+        "expected repriced $5.00, got {cost}"
+    );
+    assert_eq!(meta_val(&db, "schema_version").as_deref(), Some("6"));
+    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("1"));
+}
+
+#[test]
+fn reprice_never_clobbers_provider_costs() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+
+    // Pi rows carry the provider's own cost: a free local model ($0) and a
+    // billed remote one ($1.23). Neither must be recomputed from the tier table.
+    seed_v5_db(
+        &db,
+        &[
+            ("sess-local", "pi", "ollama/llama3", 1_000_000, 0, 0.0),
+            ("sess-remote", "pi", "claude-opus-4-6", 1_000_000, 0, 1.23),
+        ],
+    );
+
+    let _idx = IndexStore::open_at(&db).unwrap();
+
+    let (local, local_src) = token_cost(&db, "sess-local");
+    let (remote, remote_src) = token_cost(&db, "sess-remote");
+    assert_eq!(
+        local_src, "provider",
+        "pi rows flagged provider by migration"
+    );
+    assert_eq!(remote_src, "provider");
+    assert_eq!(local, 0.0, "free local model stays $0");
+    assert!(
+        (remote - 1.23).abs() < 1e-9,
+        "provider-billed cost preserved, got {remote}"
+    );
+}
+
+#[test]
+fn reprice_runs_once_per_revision() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+
+    seed_v5_db(
+        &db,
+        &[(
+            "sess-claude",
+            "claude",
+            "claude-opus-4-6",
+            1_000_000,
+            0,
+            15.0,
+        )],
+    );
+
+    // First open reprices to $5.00 and stamps pricing_revision = 1.
+    let _idx = IndexStore::open_at(&db).unwrap();
+    assert!((token_cost(&db, "sess-claude").0 - 5.0).abs() < 1e-9);
+
+    // Tamper the stored cost; a second open must NOT reprice again (revision is
+    // already current), so the sentinel survives.
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute("UPDATE token_usage SET cost_usd = 999.0", [])
+            .unwrap();
+    }
+    let _idx2 = IndexStore::open_at(&db).unwrap();
+    assert_eq!(
+        token_cost(&db, "sess-claude").0,
+        999.0,
+        "reprice must be a one-off per PRICING_REVISION bump"
+    );
 }

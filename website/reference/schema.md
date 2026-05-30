@@ -1,6 +1,6 @@
 # Index schema
 
-The SQLite index at `~/.claudex/index.db`. **Schema version: 5.**
+The SQLite index at `~/.claudex/index.db`. **Schema version: 6.**
 
 ::: warning Not a stable surface
 Table and column names may change between releases. Use `claudex <cmd> --json`
@@ -17,7 +17,9 @@ Single-row key/value scratchpad.
 | `value` | TEXT    | Stringified value.                             |
 
 `schema_version` drives the forward-only migration ladder; `last_sync:<id>` and
-`sessions_root:<id>` track each provider's incremental sync independently.
+`sessions_root:<id>` track each provider's incremental sync independently;
+`pricing_revision` records the rate-card version this index was last priced at
+(drives the automatic one-off reprice — see [Pricing](/reference/pricing#repricing-existing-data)).
 
 ## `sessions`
 
@@ -52,17 +54,18 @@ Indexes: `idx_sessions_project`, `idx_sessions_timestamp`, `idx_sessions_parent`
 One row per `(session, model)` pair. A session that switched models has
 multiple rows.
 
-| Column                                                                        | Notes                                                                                                         |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).                                                                       |
-| `model`                                                                       | Model tag.                                                                                                    |
-| `assistant_message_count`                                                     | Assistant messages contributing to the row.                                                                   |
-| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                                                                                                |
-| `cost_usd`                                                                    | Pre-computed cost for this row.                                                                               |
-| `inference_geo`                                                               | Distinct reported regions for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.       |
-| `speed`                                                                       | Average tokens/sec for the session-model row, if reported.                                                    |
-| `service_tier`                                                                | Distinct reported service tiers for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value. |
-| `iterations`                                                                  | Count of messages contributing to the row.                                                                    |
+| Column                                                                        | Notes                                                                                                                              |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).                                                                                            |
+| `model`                                                                       | Model tag.                                                                                                                         |
+| `assistant_message_count`                                                     | Assistant messages contributing to the row.                                                                                        |
+| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                                                                                                                     |
+| `cost_usd`                                                                    | Pre-computed cost for this row.                                                                                                    |
+| `cost_source`                                                                 | `computed` (priced from the tier table) or `provider` (a provider-reported cost, e.g. Pi). Repricing only touches `computed` rows. |
+| `inference_geo`                                                               | Distinct reported regions for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                            |
+| `speed`                                                                       | Average tokens/sec for the session-model row, if reported.                                                                         |
+| `service_tier`                                                                | Distinct reported service tiers for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                      |
+| `iterations`                                                                  | Count of messages contributing to the row.                                                                                         |
 
 Index: `idx_token_usage_session`.
 
@@ -172,3 +175,9 @@ drops tables, because the index retains sessions that have left disk and those
 rows can't be rebuilt. Add a column to the `CREATE TABLE IF NOT EXISTS` block
 **and** an additive migration step, then bump the version. The only destructive
 path is `claudex index --force`.
+
+Cost values are versioned separately by `pricing_revision`: when the rate card
+(`ModelPricing::for_model`) changes, that constant is bumped and the next open
+reprices every `cost_source = 'computed'` row in place — non-destructively, so
+retained/archived rows are corrected too. See
+[Pricing → Repricing](/reference/pricing#repricing-existing-data).
