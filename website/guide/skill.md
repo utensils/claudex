@@ -1,8 +1,9 @@
-# Claude Code Skill
+# Agent Skill
 
-claudex ships a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that
-lets Claude — and agents like [openclaw](https://github.com/utensils/openclaw) — run claudex
-commands on your behalf without extra setup.
+claudex ships an [agent skill](https://docs.anthropic.com/en/docs/claude-code/skills) that lets
+Claude Code, OpenAI Codex, and Pi — and agents like
+[openclaw](https://github.com/utensils/openclaw) — run claudex commands on your behalf without
+extra setup. Generate and install it with [`claudex skills`](/commands/skills).
 
 ## What is a skill?
 
@@ -13,7 +14,23 @@ middleware" by running the right `claudex` command and interpreting the result.
 
 ## Installing the skill
 
-### Personal skill (all your projects)
+The easiest way is the built-in [`skills`](/commands/skills) command, which
+generates the skill from the live CLI (so it never drifts) and writes it into
+the right place for your harness — Claude Code, OpenAI Codex, or Pi.
+
+```bash
+claudex skills install --global              # personal: ~/.claude/skills/claudex
+claudex skills install                       # project-local: ./.claude/skills/claudex
+claudex skills install --target codex,pi     # also install for Codex and Pi
+```
+
+Run `claudex skills generate` first if you want to review the files before they
+go live — it writes a copy to `./claudex-skills/`. See the
+[`skills` command](/commands/skills) for every target and flag.
+
+### Manual install
+
+If you'd rather not run claudex, fetch the committed skill directly:
 
 ```bash
 mkdir -p ~/.claude/skills/claudex
@@ -21,26 +38,7 @@ curl -sL https://raw.githubusercontent.com/utensils/claudex/main/.claude/skills/
   -o ~/.claude/skills/claudex/SKILL.md
 ```
 
-This makes the skill available in every Claude Code session on your machine.
-
-### Project-local skill
-
-```bash
-mkdir -p .claude/skills/claudex
-curl -sL https://raw.githubusercontent.com/utensils/claudex/main/.claude/skills/claudex/SKILL.md \
-  -o .claude/skills/claudex/SKILL.md
-```
-
-Only active when you're in that project's directory.
-
-### From this repo (if you cloned claudex)
-
-The skill is already at `.claude/skills/claudex/SKILL.md` in the repo root. Copy it wherever you
-need it:
-
-```bash
-cp .claude/skills/claudex/SKILL.md ~/.claude/skills/claudex/SKILL.md
-```
+Use `.claude/skills/claudex/` (no `~`) instead for a project-local skill.
 
 ## Using the skill
 

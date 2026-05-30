@@ -5,13 +5,16 @@ flags, examples, and the JSON shape.
 
 Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
+Reports span Claude Code, OpenAI Codex, and Pi by default. Every report accepts
+the shared [filtering flags](/guide/providers) — `--provider`, `--project`,
+`--model`, `--since`/`--until`, `--on-disk-only`.
+
 ## Read-only reports
 
 | Command                          | What it does                                                     |
 | -------------------------------- | ---------------------------------------------------------------- |
 | [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.       |
-| [`codex`](/commands/codex)       | Codex CLI session/state stats from `~/.codex`.                   |
-| [`sessions`](/commands/sessions) | List sessions grouped by project.                                |
+| [`sessions`](/commands/sessions) | List sessions grouped by project (all providers).                |
 | [`session`](/commands/session)   | Drill into one session: spend, files, tools, PRs, turns.         |
 | [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session).   |
 | [`search`](/commands/search)     | Full-text search across session messages (FTS5), with JSON hits. |
@@ -26,28 +29,29 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 Not every report accepts every flag. Consult the per-command page for exact
 usage; the matrix below is the quick overview.
 
-| Command    | `--project` | `--limit` | `--json` | `--no-index` |
-| ---------- | :---------: | :-------: | :------: | :----------: |
-| `summary`  |      —      |     —     |    ✓     |      ✓       |
-| `codex`    |      —      |     —     |    ✓     |      —       |
-| `sessions` |      ✓      |     ✓     |    ✓     |      ✓       |
-| `session`  |      ✓      |     —     |    ✓     |      ✓       |
-| `cost`     |      ✓      |     ✓     |    ✓     |      ✓       |
-| `search`   |      ✓      |     ✓     |    ✓     |      ✓       |
-| `tools`    |      ✓      |     ✓     |    ✓     |      ✓       |
-| `models`   |      ✓      |     —     |    ✓     |      —       |
-| `turns`    |      ✓      |     ✓     |    ✓     |      —       |
-| `prs`      |      ✓      |     ✓     |    ✓     |      —       |
-| `files`    |      ✓      |     ✓     |    ✓     |      —       |
+| Command    | filters | `--project` | `--limit` | `--json` | `--no-index` |
+| ---------- | :-----: | :---------: | :-------: | :------: | :----------: |
+| `summary`  |    —    |      —      |     —     |    ✓     |      ✓       |
+| `sessions` |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `session`  |    —    |      ✓      |     —     |    ✓     |      ✓       |
+| `cost`     |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `search`   |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `tools`    |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `models`   |    ✓    |      ✓      |     —     |    ✓     |      —       |
+| `turns`    |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| `prs`      |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| `files`    |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
 
 Notes:
 
-- `search` supports `--json` now; case-sensitive queries still fall back to a
+- **filters** = the shared [`--provider` / `--model` / `--since` / `--until` /
+  `--on-disk-only`](/guide/providers) set.
+- `search` supports `--json`; case-sensitive queries still fall back to a
   file scan automatically.
 - `turns`, `prs`, `files`, and `models` derive their data from the index
   only — there's no file-scan fallback path, so `--no-index` isn't accepted.
-- `summary` is a whole-tree dashboard; filtering by project or row limit
-  doesn't apply.
+- `summary` is a whole-index dashboard spanning all providers; the shared
+  filters and row limit don't apply.
 - `summary` also accepts `--plan <api|flat-monthly:USD>` to reframe the cost
   section for flat-fee subscribers. See [`summary`](/commands/summary).
 
@@ -60,6 +64,7 @@ Notes:
 | [`index`](/commands/index-cmd)         | Manage the SQLite index — force sync or full rebuild.                                   |
 | [`update`](/commands/update)           | Self-update claudex, or print the right upgrade recipe for Nix / cargo / brew installs. |
 | [`completions`](/commands/completions) | Generate shell completion scripts.                                                      |
+| [`skills`](/commands/skills)           | Generate or install the claudex agent skill for Claude Code, Codex, or Pi.              |
 
 ## Conventions
 
@@ -76,9 +81,8 @@ Notes:
 
 ## Quick alphabetical index
 
-- [codex](/commands/codex)
-- [cost](/commands/cost)
 - [completions](/commands/completions)
+- [cost](/commands/cost)
 - [export](/commands/export)
 - [files](/commands/files)
 - [index](/commands/index-cmd)
@@ -87,6 +91,7 @@ Notes:
 - [search](/commands/search)
 - [session](/commands/session)
 - [sessions](/commands/sessions)
+- [skills](/commands/skills)
 - [summary](/commands/summary)
 - [tools](/commands/tools)
 - [turns](/commands/turns)

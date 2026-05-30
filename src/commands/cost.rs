@@ -4,9 +4,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chrono::DateTime;
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::parser::SessionStats;
 use crate::parser::parse_session;
+use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
@@ -17,20 +19,27 @@ pub fn run(
     limit: usize,
     json: bool,
     no_index: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(project, per_session, limit, json) {
+    if !no_index && let Ok(()) = run_indexed(project, per_session, limit, json, filter) {
         return Ok(());
     }
-    run_from_files(project, per_session, limit, json)
+    run_from_files(project, per_session, limit, json, filter)
 }
 
-fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+fn run_indexed(
+    project: Option<&str>,
+    per_session: bool,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     if per_session {
-        let rows = idx.query_cost_per_session(project, limit)?;
+        let rows = idx.query_cost_per_session(project, filter, limit)?;
 
         if json {
             let output: Vec<_> = rows
@@ -42,6 +51,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                         .map(|d| d.to_rfc3339());
                     let model = single_model(&r.models);
                     serde_json::json!({
+                        "provider": r.provider,
                         "project": r.project,
                         "session_id": r.session_id,
                         "date": date,
@@ -59,8 +69,9 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             return Ok(());
         }
 
+        let show_provider = ui::spans_providers(rows.iter().map(|r| r.provider.as_str()));
         let mut table = ui::table();
-        table.set_header(ui::header([
+        let mut headers = vec![
             "Project",
             "Session",
             "Date",
@@ -70,8 +81,19 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
             "Cache Write",
             "Cache Read",
             "Cost (USD)",
-        ]));
-        ui::right_align(&mut table, &[4, 5, 6, 7, 8]);
+        ];
+        if show_provider {
+            headers.insert(0, "Provider");
+        }
+        table.set_header(ui::header(headers));
+        ui::right_align(
+            &mut table,
+            if show_provider {
+                &[5, 6, 7, 8, 9]
+            } else {
+                &[4, 5, 6, 7, 8]
+            },
+        );
         for r in &rows {
             let sid: String = r
                 .session_id
@@ -86,7 +108,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                 .map(|d| d.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "-".to_string());
             let model = display_models(&r.models);
-            table.add_row([
+            let mut cells = vec![
                 ui::cell_project(&short_name(&r.project)),
                 ui::cell_dim(&sid),
                 ui::cell_dim(&date),
@@ -96,13 +118,17 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
                 ui::cell_count(r.cache_creation_tokens as u64),
                 ui::cell_count(r.cache_read_tokens as u64),
                 ui::cell_cost(r.cost_usd),
-            ]);
+            ];
+            if show_provider {
+                cells.insert(0, ui::cell_provider(&r.provider));
+            }
+            table.add_row(cells);
         }
         println!("{table}");
         return Ok(());
     }
 
-    let rows = idx.query_cost_by_project(project, limit)?;
+    let rows = idx.query_cost_by_project(project, filter, limit)?;
 
     if json {
         let output: Vec<_> = rows
@@ -191,13 +217,14 @@ fn run_from_files(
     per_session: bool,
     limit: usize,
     json: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
     if per_session {
-        run_per_session(files, limit, json)
+        run_per_session(files, limit, json, filter)
     } else {
-        run_by_project(files, limit, json)
+        run_by_project(files, limit, json, filter)
     }
 }
 
@@ -209,7 +236,12 @@ struct ProjectCost {
     models: Vec<String>,
 }
 
-fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
+fn run_by_project(
+    files: Vec<(String, PathBuf)>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let mut projects: HashMap<String, ProjectCost> = HashMap::new();
 
     for (project_raw, path) in &files {
@@ -217,6 +249,9 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
             Ok(s) => s,
             Err(_) => continue,
         };
+        if !filter.matches("claude", &stats, false) {
+            continue;
+        }
         let display = display_project_name(&decode_project_name(project_raw));
         let entry = projects
             .entry(project_raw.clone())
@@ -322,7 +357,12 @@ fn run_by_project(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Re
     Ok(())
 }
 
-fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
+fn run_per_session(
+    files: Vec<(String, PathBuf)>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let mut rows = Vec::new();
     for (project_raw, path) in &files {
         let stats = match parse_session(path) {
@@ -330,6 +370,9 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             Err(_) => continue,
         };
         if stats.usage.total_tokens() == 0 {
+            continue;
+        }
+        if !filter.matches("claude", &stats, false) {
             continue;
         }
         let cost = stats.cost_usd();
@@ -347,6 +390,7 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             .iter()
             .map(|(project, stats, cost)| {
                 serde_json::json!({
+                    "provider": "claude",
                     "project": project,
                     "session_id": stats.session_id,
                     "date": stats.first_timestamp.map(|d| d.to_rfc3339()),

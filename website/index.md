@@ -3,11 +3,11 @@ layout: home
 
 hero:
   name: claudex
-  text: Query your Claude Code sessions
+  text: Query your AI coding sessions
   tagline:
-    A Rust CLI that indexes every JSONL transcript Claude Code writes under
-    ~/.claude/projects/ and turns them into reports — cost, tools, turns, PRs,
-    full-text search, and more.
+    A Rust CLI that indexes the local transcripts of Claude Code, OpenAI Codex,
+    and Pi into one SQLite database and turns them into reports — cost, tools,
+    turns, PRs, full-text search, and more, across every provider.
   actions:
     - theme: brand
       text: Get Started →
@@ -20,37 +20,38 @@ hero:
       link: https://github.com/utensils/claudex
 
 features:
-  - title: Every session, indexed
-    details: Scans ~/.claude/projects/ into a local SQLite database at
-      ~/.claudex/index.db. Incremental sync keyed on (path, size, mtime);
-      staleness window is 5 minutes.
+  - title: Three providers, one index
+    details: Claude Code (~/.claude/projects), OpenAI Codex (~/.codex), and Pi
+      (~/.pi/agent) are all first-class. Every report spans them by default;
+      narrow with --provider claude|codex|pi.
+  - title: Additive & retentive
+    details: Archive or delete a session from disk and its indexed data stays.
+      Non-destructive schema migrations and per-provider incremental sync mean
+      historical usage never disappears.
   - title: Reports out of the box
     details:
-      summary, sessions, cost, tools, models, turns, files, prs, search, export,
-      codex — plus a live log watcher. Read commands support --json; most
-      Claude Code reports also support --no-index.
+      summary, sessions, cost, tools, models, turns, files, prs, search, export
+      — plus a live log watcher and a skill generator. Read commands support
+      --json; Claude reports also support --no-index.
+  - title: Proper filtering everywhere
+    details:
+      --provider, --project, --model, and --since / --until (dates, RFC3339, or
+      spans like 7d / 2w) on every reporting command. --json always carries a
+      provider key for unambiguous scripting.
   - title: Honest pricing math
     details:
-      Separate Opus / Sonnet / Haiku tiers applied per-message from the model
-      field in each record. Sub-cent values fall back to four decimals so tiny
-      sessions don't round to $0.00.
-  - title: Worktree-aware
-    details:
-      Sessions inside .claude/worktrees/&lt;branch&gt; aggregate to the parent
-      project and render as "project (worktree)". Group-by-project queries do
-      the right thing automatically.
+      Opus / Sonnet / Haiku and OpenAI gpt-5 / gpt-4 tiers, applied per model.
+      Pi reports its own per-message cost (local models = $0). Sub-cent values
+      fall back to four decimals.
   - title: FTS5 full-text search
     details:
       The index ships with a messages_fts virtual table. Search across every
-      user and assistant message in every session, filtered by project, with
-      SQLite's FTS5 ranking.
-  - title: Live tail with structure
-    details: claudex watch tails Claude Code's --debug-file log in real time,
-      formats tool calls, detects new sessions, and separates them with a
-      banner. --raw drops back to plain output.
-  - title: JSON or TTY — your choice
-    details: Human output uses a minimal comfy-table layout with dynamic width
-      detection. --json emits a stable shape for pipelines, grep, and jq.
+      user and assistant message in every session and provider, with SQLite's
+      FTS5 ranking.
+  - title: Worktree & subagent aware
+    details: Worktree sessions aggregate to the parent project; Claude subagent
+      transcripts roll up to their parent session. Group-by-project queries do
+      the right thing automatically.
   - title: Single binary, no daemon
     details:
       Built with rusqlite (bundled), clap, and owo-colors. Runs on Linux and
@@ -62,10 +63,10 @@ features:
 <div class="terminal">
 <span class="prompt">$</span> claudex summary<br>
 <br>
-<span class="comment"># Codex CLI activity from ~/.codex</span><br>
-<span class="prompt">$</span> claudex codex<br>
+<span class="comment"># How much have I spent on Codex this month?</span><br>
+<span class="prompt">$</span> claudex cost --provider codex --since 30d<br>
 <br>
-<span class="comment"># Top 5 projects by cost, last 30 days</span><br>
+<span class="comment"># Top 5 projects by cost across all providers</span><br>
 <span class="prompt">$</span> claudex cost --limit 5<br>
 <br>
 <span class="comment"># Which files get touched most across all my projects?</span><br>
@@ -97,23 +98,24 @@ shell-completion setup.
 
 ## Why claudex?
 
-Claude Code persists every conversation as JSONL under
-`~/.claude/projects/<encoded-path>/<session>.jsonl`. That's a gold mine — it
-records every user turn, every assistant message, every tool call, every
-token-usage block, every file modification — but those files are flat logs, not
-a queryable store.
+Claude Code, OpenAI Codex, and Pi each persist every conversation as local
+transcripts — every user turn, every assistant message, every tool call, every
+token-usage block, every file modification — but those files are flat logs in
+three different formats, not a queryable store.
 
-claudex reads them once, indexes the parts you actually want to ask questions
-about, and gives you a CLI that answers questions like:
+claudex reads them once, normalizes all three into one SQLite index, and gives
+you a CLI that answers questions like:
 
+- _How much have I spent on Codex versus Claude this month?_
 - _Which project burned the most Opus tokens last week?_
 - _What's my p95 turn duration in this repo?_
 - _Show me every session that linked a PR._
 - _Full-text search: where did I first discuss the schema migration?_
 - _How many times have I edited `src/index.rs` across sessions?_
 
-No cloud. No daemon. No background service. Just a small Rust binary and a
-SQLite file under `~/.claudex/`.
+The index is **additive** — sessions you archive or delete from disk stay in
+your history. No cloud. No daemon. No background service. Just a small Rust
+binary and a SQLite file under `~/.claudex/`.
 
 ## Next steps
 

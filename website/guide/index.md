@@ -1,22 +1,25 @@
 # What is claudex?
 
-claudex is a Rust CLI that reads the JSONL transcripts Claude Code writes under
-`~/.claude/projects/`, ingests them into a local SQLite index at
+claudex is a Rust CLI that reads the local session transcripts of three coding
+agents — **Claude Code** (`~/.claude/projects/`), **OpenAI Codex** (`~/.codex/`),
+and **Pi** (`~/.pi/agent/`) — ingests them into a single SQLite index at
 `~/.claudex/index.db`, and exposes reports as subcommands.
 
-Claude Code already persists every conversation you have with it — every user
-message, every assistant reply, every tool call, every token-usage block, every
-file edit, every PR link. Those files are flat JSONL logs, and they're hard to
-query by hand. claudex turns them into something you can actually _ask
-questions of_.
+Each agent persists every conversation — every user message, every assistant
+reply, every tool call, every token-usage block, every file edit, every PR link.
+Those files are flat logs in three different formats, hard to query by hand.
+claudex normalizes them into one store you can actually _ask questions of_,
+across every provider.
 
 ## The shape of the tool
 
 ```
- ~/.claude/projects/<encoded-path>/<session>.jsonl
-         │   (Claude Code writes these)
+ ~/.claude/projects/**.jsonl   (Claude Code)  ┐
+ ~/.codex/sessions/**          (OpenAI Codex) ├─ provider transcripts
+ ~/.pi/agent/sessions/**       (Pi)           ┘
+         │
          ▼
- claudex parser  →  SQLite index (~/.claudex/index.db)
+ claudex providers  →  SQLite index (~/.claudex/index.db)
          │
          ▼
  claudex <subcommand>  →  table + palette on TTY, --json for pipelines
@@ -24,34 +27,34 @@ questions of_.
 
 Every read command:
 
-- Supports `--json` to emit a stable, machine-readable shape.
+- Spans all three providers by default; narrow with the shared
+  [filter flags](/guide/providers) (`--provider`, `--since`/`--until`, …).
+- Supports `--json` to emit a stable, machine-readable shape (with a `provider`
+  key on every row).
 - Honors `--color auto|always|never` (and `NO_COLOR`) for color output.
+- Uses the index by default (per-provider incremental sync, 5-minute staleness
+  window).
 
-Most Claude Code reports also:
-
-- Use the index by default (incremental sync, 5-minute staleness window).
-- Support `--no-index` to bypass the index and scan JSONL files directly — the
-  fallback path always matches the indexed path.
-
-Two caveats: `models`, `turns`, `prs`, and `files` are derived from the index
-only and don't accept `--no-index`. And `claudex codex` is a separate reader —
-it scans `~/.codex/` directly and never touches the Claude Code index. See the
-[flag support matrix](/commands/) for the per-command breakdown.
+The index is **additive**: sessions you archive or delete from disk are
+retained. `models`, `turns`, `prs`, and `files` are derived from the index only
+and don't accept `--no-index`; the `--no-index` fallback (where offered) scans
+Claude transcripts directly. See the [flag support matrix](/commands/) for the
+per-command breakdown.
 
 ## Who is it for?
 
-You already use Claude Code and want to:
+You use Claude Code, OpenAI Codex, or Pi (or all three) and want to:
 
-- Understand where your token spend is going (per-project, per-session,
-  per-model).
-- Search across past conversations without grepping JSONL by hand.
+- Understand where your token spend is going (per-provider, per-project,
+  per-session, per-model).
+- Search across past conversations from every agent without grepping logs.
 - See which files get modified the most across all your projects.
 - Track how sessions turn into PRs.
 - Measure turn latency (avg, p50, p95, max).
 - Export a past session as Markdown or JSON.
 
-If you've never run `claude` locally, there's nothing for claudex to read —
-`~/.claude/projects/` will be empty.
+If you've never run any of the supported agents locally, there's nothing for
+claudex to read — the provider directories will be empty.
 
 ## What it isn't
 

@@ -3,20 +3,63 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
-use rusqlite::{Connection, params};
+use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, params, params_from_iter};
 
+use crate::cli::ResolvedFilter;
 use crate::parser::ModelSessionStats;
-use crate::parser::stream_records;
+use crate::providers::Provider;
 use crate::stats::percentile_sorted;
-use crate::store::{
-    SessionStore, canonical_project_path, decode_project_name, parent_session_id_for_path,
-};
-use crate::types::{ModelPricing, TokenUsage};
+use crate::types::ModelPricing;
 use crate::ui;
 
+/// Convert an optional substring filter into a SQL `LIKE` value, NULL if absent.
+fn opt_like(filter: Option<&str>) -> SqlValue {
+    match filter {
+        Some(f) => SqlValue::Text(format!("%{f}%")),
+        None => SqlValue::Null,
+    }
+}
+
+fn looks_like_session_id_prefix(selector: &str) -> bool {
+    let compact = selector.replace('-', "");
+    compact.len() >= 6 && compact.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
+
+/// Child tables whose rows hang off a single `sessions` row, paired with the
+/// column that references `sessions(id)`. `messages_fts` is a virtual table
+/// (no `ON DELETE CASCADE`), so we always clean it up explicitly; the rest are
+/// listed here so re-indexing a session in place can clear its derived rows
+/// without deleting (and thus losing the retained) parent row.
+const DERIVED_TABLES: &[(&str, &str)] = &[
+    ("token_usage", "session_id"),
+    ("tool_calls", "session_id"),
+    ("turn_durations", "session_rowid"),
+    ("pr_links", "session_rowid"),
+    ("file_modifications", "session_rowid"),
+    ("thinking_usage", "session_rowid"),
+    ("stop_reasons", "session_rowid"),
+    ("attachments", "session_rowid"),
+    ("permission_changes", "session_rowid"),
+    ("messages_fts", "session_id"),
+];
+
+/// Delete every derived row for a session id across all child tables. Used when
+/// re-indexing a changed file in place: the `sessions` row (and its retained
+/// metadata) is kept and updated, but its derived data is rebuilt from scratch.
+fn delete_session_derived(tx: &rusqlite::Transaction, session_id: i64) -> Result<()> {
+    for (table, col) in DERIVED_TABLES {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE {col} = ?"),
+            params![session_id],
+        )?;
+    }
+    Ok(())
+}
 
 fn now_unix_secs() -> u64 {
     SystemTime::now()
@@ -31,7 +74,9 @@ pub struct IndexStore {
 
 // --- Public result types ---
 
+#[derive(Clone)]
 pub struct IndexedSession {
+    pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
     pub file_path: String,
@@ -53,6 +98,7 @@ pub struct ProjectCostRow {
 }
 
 pub struct SessionCostRow {
+    pub provider: String,
     pub project: String,
     pub session_id: Option<String>,
     pub first_timestamp_ms: Option<i64>,
@@ -77,6 +123,7 @@ pub struct SessionToolRow {
 }
 
 pub struct SearchHit {
+    pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
     pub message_timestamp_ms: Option<i64>,
@@ -125,6 +172,7 @@ pub struct TurnStatsRow {
 }
 
 pub struct PrLinkRow {
+    pub provider: String,
     pub project: String,
     pub session_id: Option<String>,
     pub pr_number: i64,
@@ -240,37 +288,15 @@ struct ModelUsageAccumulator {
     total_iterations: i64,
 }
 
-// --- Internal parse types ---
+// --- Internal sync types ---
 
-struct MessageForFts {
-    msg_type: String,
-    content: String,
-    timestamp_ms: Option<i64>,
-}
-
-struct ParseEntry {
-    session_id: Option<String>,
-    first_timestamp: Option<DateTime<Utc>>,
-    last_timestamp: Option<DateTime<Utc>>,
-    duration_ms: u64,
-    message_count: usize,
-    model: Option<String>,
-    usage: TokenUsage,
-    model_usage: BTreeMap<String, ModelSessionStats>,
-    tool_names: Vec<String>,
-    messages: Vec<MessageForFts>,
-    // Extended metric fields
-    turn_durations: Vec<(u64, String)>, // (duration_ms, timestamp)
-    pr_links: Vec<(i64, String, String, String)>, // (pr_number, url, repo, timestamp)
-    file_paths_modified: Vec<String>,
-    thinking_block_count: u64,
-    stop_reason_counts: HashMap<String, u64>,
-    attachments: Vec<(String, String)>, // (filename, mime_type)
-    permission_modes: Vec<(String, String)>, // (mode, timestamp)
-    inference_geo: Option<String>,
-    speed: Option<f64>,
-    service_tier: Option<String>,
-    iterations: u64,
+/// A `sessions` row's identity and on-disk fingerprint, loaded at the start of
+/// a sync so changed/unchanged/missing files can be reconciled in one pass.
+struct KnownFile {
+    id: i64,
+    size: i64,
+    mtime: i64,
+    present: i64,
 }
 
 impl IndexStore {
@@ -308,26 +334,11 @@ impl IndexStore {
             .ok()
             .and_then(|s| s.parse().ok());
 
-        if stored_version != Some(SCHEMA_VERSION) {
-            // Drop everything and start fresh — this DB is a cache, data is expendable
-            self.conn.execute_batch(
-                r#"
-                DROP TABLE IF EXISTS messages_fts;
-                DROP TABLE IF EXISTS permission_changes;
-                DROP TABLE IF EXISTS attachments;
-                DROP TABLE IF EXISTS stop_reasons;
-                DROP TABLE IF EXISTS thinking_usage;
-                DROP TABLE IF EXISTS file_modifications;
-                DROP TABLE IF EXISTS pr_links;
-                DROP TABLE IF EXISTS turn_durations;
-                DROP TABLE IF EXISTS tool_calls;
-                DROP TABLE IF EXISTS token_usage;
-                DROP TABLE IF EXISTS sessions;
-                DROP TABLE IF EXISTS meta;
-                "#,
-            )?;
-        }
-
+        // The index is no longer an expendable cache: retained sessions (those
+        // archived or deleted from disk) cannot be rebuilt from source, so a
+        // schema bump must MIGRATE rather than DROP. The forward-only ladder in
+        // `migrate_schema` applies additive `ALTER TABLE`s; the only destructive
+        // path left is the explicit `claudex index --force`.
         self.conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS meta (
@@ -347,7 +358,12 @@ impl IndexStore {
                 duration_ms     INTEGER NOT NULL DEFAULT 0,
                 message_count   INTEGER NOT NULL DEFAULT 0,
                 model           TEXT,
-                indexed_at      INTEGER NOT NULL
+                indexed_at      INTEGER NOT NULL,
+                provider        TEXT    NOT NULL DEFAULT 'claude',
+                present_on_disk INTEGER NOT NULL DEFAULT 1,
+                archived_at     INTEGER,
+                last_seen       INTEGER,
+                extras          TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_project   ON sessions(project_name);
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(first_timestamp DESC);
@@ -429,6 +445,11 @@ impl IndexStore {
             "#,
         )?;
 
+        // Apply forward-only migrations for DBs created before the current
+        // schema. Fresh DBs already have every column from the CREATE above, so
+        // the guarded `ALTER`s no-op; older DBs gain the new columns in place.
+        self.migrate_schema(stored_version)?;
+
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
             params![SCHEMA_VERSION.to_string()],
@@ -437,98 +458,183 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Check staleness and sync if needed. Shows a spinner on stderr while
-    /// syncing (TTY-gated) so the user doesn't think the command has hung.
-    ///
-    /// Staleness is bypassed when the sessions root on disk differs from the
-    /// one stamped in `meta` by the last sync — otherwise a shared
-    /// `CLAUDEX_DIR` across different `$HOME` values could serve cached rows
-    /// from a previous home for up to `STALE_SECS` seconds.
-    pub fn ensure_fresh(&mut self, store: &SessionStore) -> Result<()> {
-        let last_sync: Option<u64> = self
-            .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'last_sync'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|s| s.parse().ok());
+    /// Returns true if `table` has a column named `col`. Table/column names are
+    /// hardcoded literals at every call site, so the formatted PRAGMA is safe.
+    fn column_exists(&self, table: &str, col: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let found = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == col);
+        Ok(found)
+    }
 
-        let sessions_root = store.base_dir.to_string_lossy().into_owned();
-        let stored_root: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'sessions_root'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-        let root_changed = stored_root.as_deref() != Some(sessions_root.as_str());
+    /// `ALTER TABLE ADD COLUMN` is not idempotent in SQLite (there is no
+    /// `IF NOT EXISTS`), so guard it with a `PRAGMA table_info` check.
+    fn add_column_if_missing(&self, table: &str, col: &str, decl: &str) -> Result<()> {
+        if !self.column_exists(table, col)? {
+            self.conn
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {decl};"))?;
+        }
+        Ok(())
+    }
 
-        if let Some(ls) = last_sync
-            && now_unix_secs().saturating_sub(ls) < STALE_SECS
-            && !root_changed
-        {
+    /// Forward-only migration ladder keyed on the stored `schema_version`. Each
+    /// step is additive and idempotent so retained data is never lost. `from`
+    /// is `None` for a brand-new DB (every column already exists → all no-ops).
+    fn migrate_schema(&self, from: Option<i64>) -> Result<()> {
+        // v4 → v5: provider awareness + additive retention metadata.
+        if from.unwrap_or(0) < 5 {
+            self.add_column_if_missing("sessions", "provider", "TEXT NOT NULL DEFAULT 'claude'")?;
+            self.add_column_if_missing(
+                "sessions",
+                "present_on_disk",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+            self.add_column_if_missing("sessions", "archived_at", "INTEGER")?;
+            self.add_column_if_missing("sessions", "last_seen", "INTEGER")?;
+            self.add_column_if_missing("sessions", "extras", "TEXT")?;
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider);
+                 CREATE INDEX IF NOT EXISTS idx_sessions_present  ON sessions(present_on_disk);",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Sync any provider whose index is stale, showing a spinner on stderr
+    /// while it runs (TTY-gated). Each provider has its own staleness window and
+    /// data-root stamp, so they sync independently.
+    pub fn ensure_fresh(&mut self, providers: &[Provider]) -> Result<()> {
+        let stale: Vec<&Provider> = providers
+            .iter()
+            .filter(|p| self.provider_is_stale(p))
+            .collect();
+        if stale.is_empty() {
             return Ok(());
         }
 
-        let message = if last_sync.is_none() {
-            "Building index..."
-        } else {
+        let message = if self.any_provider_synced() {
             "Syncing index..."
+        } else {
+            "Building index..."
         };
         let spinner = ui::Spinner::start(message);
-        let result = self.sync(store);
+        let mut result = Ok(());
+        for provider in stale {
+            if let Err(e) = self.sync_provider(provider) {
+                result = Err(e);
+                break;
+            }
+        }
         spinner.finish();
-        result.map(|_| ())
+        result
     }
 
-    /// Force a full rebuild regardless of staleness.
-    pub fn force_rebuild(&mut self, store: &SessionStore) -> Result<usize> {
+    /// A provider is stale when it has never synced, its staleness window has
+    /// elapsed, or its data root changed since the last sync — the last guards a
+    /// `CLAUDEX_DIR` shared across different `$HOME` values from serving rows
+    /// indexed under a previous home.
+    fn provider_is_stale(&self, provider: &Provider) -> bool {
+        let id = provider.id();
+        let last_sync: Option<u64> = self
+            .meta_get(&format!("last_sync:{id}"))
+            .and_then(|s| s.parse().ok());
+        let root = provider.root_dir().to_string_lossy().into_owned();
+        let root_changed =
+            self.meta_get(&format!("sessions_root:{id}")).as_deref() != Some(root.as_str());
+        match last_sync {
+            Some(ls) => now_unix_secs().saturating_sub(ls) >= STALE_SECS || root_changed,
+            None => true,
+        }
+    }
+
+    /// Whether any provider has ever completed a sync (controls spinner copy).
+    fn any_provider_synced(&self) -> bool {
         self.conn
-            .execute_batch("DELETE FROM messages_fts; DELETE FROM sessions; DELETE FROM meta;")?;
-        // Restore schema version after clearing meta
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key LIKE 'last_sync:%'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    }
+
+    fn meta_get(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM meta WHERE key = ?", params![key], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+    }
+
+    /// Force a full rebuild of every provider. This is the ONE destructive path
+    /// — it discards retained/archived data — and only `claudex index --force`
+    /// calls it.
+    pub fn force_rebuild(&mut self, providers: &[Provider]) -> Result<usize> {
+        self.conn
+            .execute_batch("DELETE FROM messages_fts; DELETE FROM sessions;")?;
         self.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
-            params![SCHEMA_VERSION.to_string()],
+            "DELETE FROM meta WHERE key LIKE 'last_sync:%' OR key LIKE 'sessions_root:%'",
+            [],
         )?;
-        self.sync(store)
+        self.sync(providers)
     }
 
-    /// Run an incremental sync now (bypass staleness check).
-    pub fn sync_now(&mut self, store: &SessionStore) -> Result<usize> {
-        self.sync(store)
+    /// Run an incremental sync of every provider now (bypass staleness check).
+    pub fn sync_now(&mut self, providers: &[Provider]) -> Result<usize> {
+        self.sync(providers)
     }
 
-    fn sync(&mut self, store: &SessionStore) -> Result<usize> {
-        // Load known file states
-        let mut known: HashMap<String, (i64, i64)> = HashMap::new();
+    fn sync(&mut self, providers: &[Provider]) -> Result<usize> {
+        let mut total = 0;
+        for provider in providers {
+            total += self.sync_provider(provider)?;
+        }
+        Ok(total)
+    }
+
+    /// Incrementally sync one provider's transcripts. Every reconciliation query
+    /// is scoped to `provider.id()` so a provider's sync never archives another
+    /// provider's rows just because they aren't in this provider's enumeration.
+    fn sync_provider(&mut self, provider: &Provider) -> Result<usize> {
+        let provider_id = provider.id();
+
+        // Load known file states for THIS provider only. `id`/`present_on_disk`
+        // let us re-index in place and un-archive a file that reappears.
+        let mut known: HashMap<String, KnownFile> = HashMap::new();
         {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT file_path, file_size, file_mtime FROM sessions")?;
-            let rows = stmt.query_map([], |row| {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_path, id, file_size, file_mtime, present_on_disk
+                 FROM sessions WHERE provider = ?",
+            )?;
+            let rows = stmt.query_map(params![provider_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
+                    KnownFile {
+                        id: row.get::<_, i64>(1)?,
+                        size: row.get::<_, i64>(2)?,
+                        mtime: row.get::<_, i64>(3)?,
+                        present: row.get::<_, i64>(4)?,
+                    },
                 ))
             })?;
             for row in rows {
-                let (p, sz, mt) = row?;
-                known.insert(p, (sz, mt));
+                let (p, k) = row?;
+                known.insert(p, k);
             }
         }
 
-        let all_files = store.all_session_files(None)?;
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let files = provider.enumerate()?;
+        let mut seen: HashSet<String> = HashSet::new();
         let now_secs = now_unix_secs() as i64;
         let mut indexed_count = 0usize;
 
         let tx = self.conn.transaction()?;
 
-        for (project_raw, file_path) in &all_files {
+        for discovered in &files {
+            let file_path = &discovered.path;
             let path_str = file_path.to_string_lossy().into_owned();
             seen.insert(path_str.clone());
 
@@ -544,72 +650,125 @@ impl IndexStore {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
 
-            if let Some(&(ksz, kmt)) = known.get(&path_str) {
-                if ksz == size && kmt == mtime {
-                    continue; // unchanged
+            let prior = known.get(&path_str);
+            let reuse_id = match prior {
+                Some(k) if k.size == size && k.mtime == mtime => {
+                    // Unchanged on disk. If it was previously archived (file had
+                    // disappeared and came back byte-identical), un-archive it.
+                    if k.present == 0 {
+                        tx.execute(
+                            "UPDATE sessions
+                             SET present_on_disk = 1, archived_at = NULL, last_seen = ?
+                             WHERE id = ?",
+                            params![now_secs, k.id],
+                        )?;
+                    }
+                    continue;
                 }
-                // Changed: remove old FTS rows first (no CASCADE on virtual table)
-                if let Ok(old_id) = tx.query_row(
-                    "SELECT id FROM sessions WHERE file_path = ?",
-                    params![path_str],
-                    |row| row.get::<_, i64>(0),
-                ) {
-                    tx.execute(
-                        "DELETE FROM messages_fts WHERE session_id = ?",
-                        params![old_id],
-                    )?;
+                // Changed: rebuild this session's derived rows in place, keeping
+                // the stable `sessions` rowid (and any retained metadata).
+                Some(k) => {
+                    delete_session_derived(&tx, k.id)?;
+                    Some(k.id)
                 }
-                tx.execute(
-                    "DELETE FROM sessions WHERE file_path = ?",
-                    params![path_str],
-                )?;
-            }
+                None => None,
+            };
 
-            let decoded = decode_project_name(project_raw);
-            let project_display = canonical_project_path(&decoded).to_string();
-            let project_dir = store.base_dir.join(project_raw);
-            let parent_session_id = parent_session_id_for_path(&project_dir, file_path);
-            let mut entry = match parse_session_for_index(file_path) {
+            let parent_session_id = discovered.parent_session_id.clone();
+            let mut entry = match provider.parse(discovered) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
 
-            // Fall back to file stem when session JSON lacks a sessionId field
+            // The enumerator's path-derived project is the default; a provider
+            // that reads the project from the transcript itself (Codex stores
+            // its cwd in `session_meta`) overrides it.
+            let project_display = if entry.project_display.is_empty() {
+                discovered.project_display.clone()
+            } else {
+                entry.project_display.clone()
+            };
+
+            // Fall back to file stem when the transcript lacks a session id
             if entry.session_id.is_none() {
                 entry.session_id = file_path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned());
             }
 
+            // A transcript living in the provider's archive location is indexed
+            // but stamped archived from the start.
+            let archived_at: Option<i64> = if discovered.archived {
+                Some(now_secs)
+            } else {
+                None
+            };
+
             let first_ts = entry.first_timestamp.map(|d| d.timestamp_millis());
             let last_ts = entry.last_timestamp.map(|d| d.timestamp_millis());
             let session_model = session_model_label(entry.model.as_deref(), &entry.model_usage);
 
-            tx.execute(
-                r#"INSERT INTO sessions
-                   (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
-                    first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-                params![
-                    project_display,
-                    path_str,
-                    size,
-                    mtime,
-                    entry.session_id,
-                    parent_session_id,
-                    first_ts,
-                    last_ts,
-                    entry.duration_ms as i64,
-                    entry.message_count as i64,
-                    session_model,
-                    now_secs,
-                ],
-            )?;
-
-            let row_id = tx.last_insert_rowid();
+            let row_id = if let Some(old_id) = reuse_id {
+                tx.execute(
+                    r#"UPDATE sessions SET
+                           project_name = ?, file_size = ?, file_mtime = ?, session_id = ?,
+                           parent_session_id = ?, first_timestamp = ?, last_timestamp = ?,
+                           duration_ms = ?, message_count = ?, model = ?, indexed_at = ?,
+                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?, extras = ?
+                       WHERE id = ?"#,
+                    params![
+                        project_display,
+                        size,
+                        mtime,
+                        entry.session_id,
+                        parent_session_id,
+                        first_ts,
+                        last_ts,
+                        entry.duration_ms as i64,
+                        entry.message_count as i64,
+                        session_model,
+                        now_secs,
+                        provider_id,
+                        archived_at,
+                        now_secs,
+                        entry.extras,
+                        old_id,
+                    ],
+                )?;
+                old_id
+            } else {
+                tx.execute(
+                    r#"INSERT INTO sessions
+                       (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
+                        first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at,
+                        provider, present_on_disk, archived_at, last_seen, extras)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#,
+                    params![
+                        project_display,
+                        path_str,
+                        size,
+                        mtime,
+                        entry.session_id,
+                        parent_session_id,
+                        first_ts,
+                        last_ts,
+                        entry.duration_ms as i64,
+                        entry.message_count as i64,
+                        session_model,
+                        now_secs,
+                        provider_id,
+                        archived_at,
+                        now_secs,
+                        entry.extras,
+                    ],
+                )?;
+                tx.last_insert_rowid()
+            };
 
             if entry.model_usage.is_empty() && entry.usage.total_tokens() > 0 {
-                let cost = entry.usage.cost_for_model(entry.model.as_deref());
+                let cost = entry
+                    .embedded_cost
+                    .unwrap_or_else(|| entry.usage.cost_for_model(entry.model.as_deref()));
                 tx.execute(
                     r#"INSERT INTO token_usage
                        (session_id, model, assistant_message_count, input_tokens, output_tokens,
@@ -641,7 +800,9 @@ impl IndexStore {
                     } else {
                         Some(model.as_str())
                     };
-                    let cost = usage.usage.cost_for_model(model_opt);
+                    let cost = usage
+                        .embedded_cost
+                        .unwrap_or_else(|| usage.usage.cost_for_model(model_opt));
                     tx.execute(
                         r#"INSERT INTO token_usage
                            (session_id, model, assistant_message_count, input_tokens, output_tokens,
@@ -736,30 +897,38 @@ impl IndexStore {
             indexed_count += 1;
         }
 
-        // Remove stale entries for deleted files
-        for path in known.keys() {
-            if !seen.contains(path) {
-                if let Ok(id) = tx.query_row(
-                    "SELECT id FROM sessions WHERE file_path = ?",
-                    params![path],
-                    |row| row.get::<_, i64>(0),
-                ) {
-                    tx.execute("DELETE FROM messages_fts WHERE session_id = ?", params![id])?;
-                }
-                tx.execute("DELETE FROM sessions WHERE file_path = ?", params![path])?;
+        // Soft-delete entries whose source file is gone. The index is additive:
+        // archived/deleted sessions are RETAINED (their derived rows and FTS
+        // content stay) and merely flagged, so historical usage never vanishes
+        // when a transcript is cleaned off disk. `claudex index --force` is the
+        // only path that actually discards retained data.
+        for (path, k) in &known {
+            if !seen.contains(path) && k.present == 1 {
+                tx.execute(
+                    "UPDATE sessions
+                     SET present_on_disk = 0, archived_at = COALESCE(archived_at, ?)
+                     WHERE id = ?",
+                    params![now_secs, k.id],
+                )?;
             }
         }
 
         tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync', ?)",
-            params![now_unix_secs().to_string()],
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            params![
+                format!("last_sync:{provider_id}"),
+                now_unix_secs().to_string()
+            ],
         )?;
-        // Stamp the sessions root so `ensure_fresh` can invalidate the
-        // staleness shortcut when the root changes (different $HOME or a
-        // moved `.claude/projects/` directory sharing one `CLAUDEX_DIR`).
+        // Stamp the provider's data root so `provider_is_stale` can invalidate
+        // the staleness shortcut when the root changes (e.g. a different $HOME
+        // sharing one `CLAUDEX_DIR`).
         tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('sessions_root', ?)",
-            params![store.base_dir.to_string_lossy().into_owned()],
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            params![
+                format!("sessions_root:{provider_id}"),
+                provider.root_dir().to_string_lossy().into_owned()
+            ],
         )?;
         tx.commit()?;
 
@@ -772,14 +941,14 @@ impl IndexStore {
         &self,
         project_filter: Option<&str>,
         file_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<IndexedSession>> {
-        let project = project_filter.map(|f| format!("%{f}%"));
-        let file = file_filter.map(|f| format!("%{f}%"));
-        let project_pat = project.as_deref();
-        let file_pat = file.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, s.file_path, s.first_timestamp,
+        let project = opt_like(project_filter);
+        let file = opt_like(file_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id, s.file_path, s.first_timestamp,
                       s.message_count, s.duration_ms, s.model
                FROM sessions s
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
@@ -788,45 +957,108 @@ impl IndexStore {
                        FROM file_modifications fm
                        WHERE fm.session_rowid = s.id
                          AND fm.file_path LIKE ?
-                 ))
+                 )){pred}
                ORDER BY s.first_timestamp DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(
-            params![
-                project_pat,
-                project_pat,
-                project_pat,
-                file_pat,
-                file_pat,
-                limit as i64
-            ],
-            |row| {
-                Ok(IndexedSession {
-                    project_name: row.get(0)?,
-                    session_id: row.get(1)?,
-                    file_path: row.get(2)?,
-                    first_timestamp_ms: row.get(3)?,
-                    message_count: row.get(4)?,
-                    duration_ms: row.get(5)?,
-                    model: row.get(6)?,
-                })
-            },
-        )?;
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![
+            project.clone(),
+            project.clone(),
+            project,
+            file.clone(),
+            file,
+        ];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
+            Ok(IndexedSession {
+                provider: row.get(0)?,
+                project_name: row.get(1)?,
+                session_id: row.get(2)?,
+                file_path: row.get(3)?,
+                first_timestamp_ms: row.get(4)?,
+                message_count: row.get(5)?,
+                duration_ms: row.get(6)?,
+                model: row.get(7)?,
+            })
+        })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn query_session_matches(
+        &self,
+        selector: &str,
+        project_filter: Option<&str>,
+    ) -> Result<Vec<IndexedSession>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT provider, project_name, session_id, file_path, first_timestamp,
+                      message_count, duration_ms, model
+               FROM sessions
+               ORDER BY first_timestamp DESC, file_path ASC"#,
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(IndexedSession {
+                    provider: row.get(0)?,
+                    project_name: row.get(1)?,
+                    session_id: row.get(2)?,
+                    file_path: row.get(3)?,
+                    first_timestamp_ms: row.get(4)?,
+                    message_count: row.get(5)?,
+                    duration_ms: row.get(6)?,
+                    model: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let selector = selector.to_lowercase();
+        let project_filter = project_filter.map(str::to_lowercase);
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|row| {
+                project_filter
+                    .as_deref()
+                    .is_none_or(|p| row.project_name.to_lowercase().contains(p))
+            })
+            .collect();
+
+        let id_matches: Vec<_> = rows
+            .iter()
+            .filter(|row| {
+                row.session_id
+                    .as_deref()
+                    .is_some_and(|id| id.to_lowercase().starts_with(&selector))
+                    || Path::new(&row.file_path)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().to_lowercase().starts_with(&selector))
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        if !id_matches.is_empty() || looks_like_session_id_prefix(&selector) {
+            return Ok(id_matches);
+        }
+
+        Ok(rows
+            .into_iter()
+            .filter(|row| row.project_name.to_lowercase().contains(&selector))
+            .collect())
     }
 
     pub fn query_cost_by_project(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<ProjectCostRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT s.project_name,
-                      COUNT(DISTINCT COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+                      COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
                       COALESCE(SUM(t.cache_creation_tokens), 0),
@@ -835,12 +1067,16 @@ impl IndexStore {
                       GROUP_CONCAT(DISTINCT t.model)
                FROM sessions s
                LEFT JOIN token_usage t ON t.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY s.project_name
                ORDER BY COALESCE(SUM(t.cost_usd), 0) DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             let models_raw: Option<String> = row.get(7)?;
             Ok((
                 row.get::<_, String>(0)?,
@@ -875,12 +1111,13 @@ impl IndexStore {
     pub fn query_cost_per_session(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SessionCostRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name,
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
                       GROUP_CONCAT(DISTINCT t.model),
@@ -892,22 +1129,27 @@ impl IndexStore {
                FROM sessions s
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
-                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               GROUP BY s.project_name, COALESCE(s.parent_session_id, s.session_id, s.file_path)
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
+               GROUP BY s.project_name, s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(SessionCostRow {
-                project: row.get(0)?,
-                session_id: row.get(1)?,
-                first_timestamp_ms: row.get(2)?,
-                models: split_joined_values(row.get::<_, Option<String>>(3)?.as_deref()),
-                input_tokens: row.get(4)?,
-                output_tokens: row.get(5)?,
-                cache_creation_tokens: row.get(6)?,
-                cache_read_tokens: row.get(7)?,
-                cost_usd: row.get(8)?,
+                provider: row.get(0)?,
+                project: row.get(1)?,
+                session_id: row.get(2)?,
+                first_timestamp_ms: row.get(3)?,
+                models: split_joined_values(row.get::<_, Option<String>>(4)?.as_deref()),
+                input_tokens: row.get(5)?,
+                output_tokens: row.get(6)?,
+                cache_creation_tokens: row.get(7)?,
+                cache_read_tokens: row.get(8)?,
+                cost_usd: row.get(9)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -917,20 +1159,25 @@ impl IndexStore {
     pub fn query_tools_aggregate(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<ToolRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT tc.tool_name, SUM(tc.count) AS total
                FROM tool_calls tc
                JOIN sessions s ON s.id = tc.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY tc.tool_name
                ORDER BY total DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(ToolRow {
                 tool_name: row.get(0)?,
                 count: row.get(1)?,
@@ -943,12 +1190,13 @@ impl IndexStore {
     pub fn query_tools_per_session(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SessionToolRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
                       s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
@@ -956,15 +1204,18 @@ impl IndexStore {
                       SUM(tc.count)
                FROM sessions s
                JOIN tool_calls tc ON tc.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY group_key, s.project_name, display_session_id, tc.tool_name
-               ORDER BY MIN(s.first_timestamp) DESC"#,
-        )?;
+               ORDER BY MIN(s.first_timestamp) DESC"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let mut order: Vec<String> = Vec::new();
         let mut map: HashMap<String, SessionToolRow> = HashMap::new();
 
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1002,30 +1253,36 @@ impl IndexStore {
         &self,
         query: &str,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SearchHit>> {
         let fts_query = fts_escape(query);
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, f.timestamp, f.message_type,
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id, f.timestamp, f.message_type,
                       snippet(messages_fts, 2, '[[', ']]', '...', 20),
                       bm25(messages_fts)
                FROM messages_fts f
                JOIN sessions s ON s.id = f.session_id
                WHERE messages_fts MATCH ?
-                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                ORDER BY bm25(messages_fts)
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fts_query, fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![SqlValue::Text(fts_query), fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(SearchHit {
-                project_name: row.get(0)?,
-                session_id: row.get(1)?,
-                message_timestamp_ms: row.get(2)?,
-                message_type: row.get(3)?,
-                snippet: row.get(4)?,
-                rank: row.get(5)?,
+                provider: row.get(0)?,
+                project_name: row.get(1)?,
+                session_id: row.get(2)?,
+                message_timestamp_ms: row.get(3)?,
+                message_type: row.get(4)?,
+                snippet: row.get(5)?,
+                rank: row.get(6)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1035,23 +1292,27 @@ impl IndexStore {
     pub fn query_turn_stats(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<TurnStatsRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
 
         // Fetch all (project, duration_ms) pairs already sorted by duration for percentile math
-        let mut stmt = self.conn.prepare(
+        let sql = format!(
             r#"SELECT s.project_name, td.duration_ms
                FROM turn_durations td
                JOIN sessions s ON s.id = td.session_rowid
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY s.project_name, td.duration_ms"#,
-        )?;
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
+               ORDER BY s.project_name, td.duration_ms"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let mut by_project: HashMap<String, Vec<i64>> = HashMap::new();
 
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
 
@@ -1091,34 +1352,40 @@ impl IndexStore {
     pub fn query_pr_links(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<PrLinkRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
         // One row per unique PR URL. A single PR is often referenced from many
         // sessions, which would otherwise produce a wall of duplicates. We
         // surface the most recent mention (MAX(timestamp)) and the session
         // that produced it — SQLite's bare-columns rule pairs the bare
         // columns with the MAX() row.
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id,
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id,
                       p.pr_number, p.pr_url, p.pr_repository,
                       MAX(p.timestamp) AS latest_ts
                FROM pr_links p
                JOIN sessions s ON s.id = p.session_rowid
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY p.pr_url
                ORDER BY latest_ts DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(PrLinkRow {
-                project: row.get(0)?,
-                session_id: row.get(1)?,
-                pr_number: row.get(2)?,
-                pr_url: row.get(3)?,
-                pr_repository: row.get(4)?,
-                timestamp: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                provider: row.get(0)?,
+                project: row.get(1)?,
+                session_id: row.get(2)?,
+                pr_number: row.get(3)?,
+                pr_url: row.get(4)?,
+                pr_repository: row.get(5)?,
+                timestamp: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1129,19 +1396,19 @@ impl IndexStore {
         &self,
         project_filter: Option<&str>,
         path_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<FileModRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let path = path_filter.map(|f| format!("%{f}%"));
-        let path_pat = path.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let path_pat = opt_like(path_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"WITH filtered AS (
                    SELECT fm.file_path, fm.session_rowid, s.project_name, s.last_timestamp
                    FROM file_modifications fm
                    JOIN sessions s ON s.id = fm.session_rowid
                    WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-                     AND (? IS NULL OR fm.file_path LIKE ?)
+                     AND (? IS NULL OR fm.file_path LIKE ?){pred}
                ),
                ranked_projects AS (
                    SELECT file_path, project_name, COUNT(*) AS project_events,
@@ -1162,30 +1429,35 @@ impl IndexStore {
                  ON rp.file_path = f.file_path AND rp.rn = 1
                GROUP BY f.file_path
                ORDER BY cnt DESC, f.file_path ASC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(
-            params![fp, fp, fp, path_pat, path_pat, limit as i64],
-            |row| {
-                Ok(FileModRow {
-                    file_path: row.get(0)?,
-                    modification_count: row.get(1)?,
-                    distinct_session_count: row.get(2)?,
-                    last_touched_timestamp_ms: row.get(3)?,
-                    top_project: row.get(4)?,
-                })
-            },
-        )?;
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp, path_pat.clone(), path_pat];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
+            Ok(FileModRow {
+                file_path: row.get(0)?,
+                modification_count: row.get(1)?,
+                distinct_session_count: row.get(2)?,
+                last_touched_timestamp_ms: row.get(3)?,
+                top_project: row.get(4)?,
+            })
+        })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
 
-    pub fn query_model_usage(&self, project_filter: Option<&str>) -> Result<Vec<ModelUsageRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+    pub fn query_model_usage(
+        &self,
+        project_filter: Option<&str>,
+        filter: &ResolvedFilter,
+    ) -> Result<Vec<ModelUsageRow>> {
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT t.model,
-                      s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
+                      s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
                       COALESCE(t.cache_creation_tokens, 0),
@@ -1197,9 +1469,12 @@ impl IndexStore {
                       COALESCE(t.iterations, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((
                 row.get::<_, Option<String>>(0)?.unwrap_or_default(),
                 row.get::<_, String>(1)?,
@@ -1441,6 +1716,8 @@ impl IndexStore {
             ))?;
             stmt.query_map(params![project.clone(), session_id.clone()], |row| {
                 Ok(PrLinkRow {
+                    // Session-detail PRs are not rendered with a provider column.
+                    provider: String::new(),
                     project: row.get(0)?,
                     session_id: row.get(1)?,
                     pr_number: row.get(2)?,
@@ -1624,7 +1901,7 @@ impl IndexStore {
             i64,
             i64,
         ) = self.conn.query_row(
-            r#"SELECT COUNT(DISTINCT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+            r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -1646,13 +1923,13 @@ impl IndexStore {
         )?;
 
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![today_start_ms],
             |row| row.get(0),
         )?;
 
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -1666,7 +1943,7 @@ impl IndexStore {
         )?;
 
         let mut top_stmt = self.conn.prepare(
-            r#"SELECT project_name, COUNT(DISTINCT COALESCE(parent_session_id, session_id, file_path)) AS cnt
+            r#"SELECT project_name, COUNT(DISTINCT provider || char(31) || COALESCE(parent_session_id, session_id, file_path)) AS cnt
                FROM sessions
                GROUP BY project_name
                ORDER BY cnt DESC
@@ -1755,7 +2032,7 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id"#,
         )?;
@@ -1880,227 +2157,4 @@ fn model_families_from_concat(raw: Option<&str>) -> Vec<String> {
         .map(|m| ModelPricing::name(Some(m.trim())).to_string())
         .filter(|f| !f.is_empty() && seen.insert(f.clone()))
         .collect()
-}
-
-/// Parse a session file once, extracting both stats and FTS content.
-fn parse_session_for_index(path: &Path) -> Result<ParseEntry> {
-    let mut entry = ParseEntry {
-        session_id: None,
-        first_timestamp: None,
-        last_timestamp: None,
-        duration_ms: 0,
-        message_count: 0,
-        model: None,
-        usage: TokenUsage::default(),
-        model_usage: BTreeMap::new(),
-        tool_names: Vec::new(),
-        messages: Vec::new(),
-        turn_durations: Vec::new(),
-        pr_links: Vec::new(),
-        file_paths_modified: Vec::new(),
-        thinking_block_count: 0,
-        stop_reason_counts: HashMap::new(),
-        attachments: Vec::new(),
-        permission_modes: Vec::new(),
-        inference_geo: None,
-        speed: None,
-        service_tier: None,
-        iterations: 0,
-    };
-
-    stream_records(path, |record| {
-        if entry.session_id.is_none()
-            && let Some(sid) = record["sessionId"].as_str()
-        {
-            entry.session_id = Some(sid.to_string());
-        }
-
-        let timestamp_str = record["timestamp"].as_str();
-        let timestamp_ms = timestamp_str.and_then(|ts| {
-            DateTime::parse_from_rfc3339(ts)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
-
-        if let Some(ts_str) = timestamp_str
-            && let Ok(dt) = DateTime::parse_from_rfc3339(ts_str)
-        {
-            let dt = dt.with_timezone(&Utc);
-            if entry.first_timestamp.is_none_or(|prev| dt < prev) {
-                entry.first_timestamp = Some(dt);
-            }
-            if entry.last_timestamp.is_none_or(|prev| dt > prev) {
-                entry.last_timestamp = Some(dt);
-            }
-        }
-
-        match record["type"].as_str().unwrap_or("") {
-            "assistant" => {
-                entry.message_count += 1;
-                let msg = &record["message"];
-
-                if entry.model.is_none()
-                    && let Some(m) = msg["model"].as_str()
-                {
-                    entry.model = Some(m.to_string());
-                }
-
-                let usage = &msg["usage"];
-                let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-                let cache_creation_tokens =
-                    usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                let cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-
-                entry.usage.input_tokens += input_tokens;
-                entry.usage.output_tokens += output_tokens;
-                entry.usage.cache_creation_tokens += cache_creation_tokens;
-                entry.usage.cache_read_tokens += cache_read_tokens;
-
-                if entry.inference_geo.is_none() {
-                    entry.inference_geo = usage["inference_geo"].as_str().map(|s| s.to_string());
-                }
-                if entry.speed.is_none() {
-                    entry.speed = usage["speed"].as_f64();
-                }
-                if entry.service_tier.is_none() {
-                    entry.service_tier = usage["service_tier"].as_str().map(|s| s.to_string());
-                }
-                entry.iterations += usage["iterations"].as_u64().unwrap_or(0);
-
-                let model_key = msg["model"].as_str().unwrap_or("").to_string();
-                let model_stats = entry.model_usage.entry(model_key).or_default();
-                model_stats.usage.input_tokens += input_tokens;
-                model_stats.usage.output_tokens += output_tokens;
-                model_stats.usage.cache_creation_tokens += cache_creation_tokens;
-                model_stats.usage.cache_read_tokens += cache_read_tokens;
-                model_stats.assistant_message_count += 1;
-                if let Some(geo) = usage["inference_geo"].as_str()
-                    && !geo.is_empty()
-                {
-                    model_stats.inference_geos.insert(geo.to_string());
-                }
-                if let Some(tier) = usage["service_tier"].as_str()
-                    && !tier.is_empty()
-                {
-                    model_stats.service_tiers.insert(tier.to_string());
-                }
-                if let Some(speed) = usage["speed"].as_f64() {
-                    model_stats.speed_sum += speed;
-                    model_stats.speed_samples += 1;
-                }
-                model_stats.iterations += usage["iterations"].as_u64().unwrap_or(0);
-
-                if let Some(stop) = msg["stop_reason"].as_str() {
-                    *entry
-                        .stop_reason_counts
-                        .entry(stop.to_string())
-                        .or_insert(0) += 1;
-                }
-
-                let mut text_parts: Vec<String> = Vec::new();
-                if let Some(content) = msg["content"].as_array() {
-                    for block in content {
-                        match block["type"].as_str() {
-                            Some("tool_use") => {
-                                if let Some(name) = block["name"].as_str() {
-                                    entry.tool_names.push(name.to_string());
-                                }
-                            }
-                            Some("text") => {
-                                if let Some(t) = block["text"].as_str()
-                                    && !t.is_empty()
-                                {
-                                    text_parts.push(t.to_string());
-                                }
-                            }
-                            Some("thinking") => {
-                                entry.thinking_block_count += 1;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if !text_parts.is_empty() {
-                    entry.messages.push(MessageForFts {
-                        msg_type: "assistant".to_string(),
-                        content: text_parts.join(" "),
-                        timestamp_ms,
-                    });
-                }
-            }
-            "user" => {
-                entry.message_count += 1;
-                let content_val = &record["message"]["content"];
-                let content = if let Some(s) = content_val.as_str() {
-                    s.to_string()
-                } else if let Some(arr) = content_val.as_array() {
-                    arr.iter()
-                        .filter(|b| b["type"].as_str() == Some("text"))
-                        .filter_map(|b| b["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else {
-                    String::new()
-                };
-                if !content.is_empty() {
-                    entry.messages.push(MessageForFts {
-                        msg_type: "user".to_string(),
-                        content,
-                        timestamp_ms,
-                    });
-                }
-            }
-            "system" => {
-                if let Some(dur) = record["durationMs"].as_u64() {
-                    entry.duration_ms += dur;
-                    if record["subtype"].as_str() == Some("turn_duration") {
-                        let ts = timestamp_str.unwrap_or("").to_string();
-                        entry.turn_durations.push((dur, ts));
-                    }
-                }
-            }
-            "pr-link" => {
-                let number = record["prNumber"].as_i64().unwrap_or(0);
-                let url = record["prUrl"].as_str().unwrap_or("").to_string();
-                let repo = record["prRepository"].as_str().unwrap_or("").to_string();
-                let ts = timestamp_str.unwrap_or("").to_string();
-                entry.pr_links.push((number, url, repo, ts));
-            }
-            "file-history-snapshot" => {
-                if let Some(backups) = record["snapshot"]["trackedFileBackups"].as_object() {
-                    for key in backups.keys() {
-                        if !entry.file_paths_modified.contains(key) {
-                            entry.file_paths_modified.push(key.clone());
-                        }
-                    }
-                }
-            }
-            "attachment" => {
-                let filename = record["filename"].as_str().unwrap_or("").to_string();
-                let mime = record["mimeType"].as_str().unwrap_or("").to_string();
-                if !filename.is_empty() {
-                    entry.attachments.push((filename, mime));
-                }
-            }
-            "permission-mode" => {
-                let mode = record["mode"].as_str().unwrap_or("").to_string();
-                let ts = timestamp_str.unwrap_or("").to_string();
-                if !mode.is_empty() {
-                    entry.permission_modes.push((mode, ts));
-                }
-            }
-            _ => {}
-        }
-        true
-    })?;
-
-    // Fallback duration from timestamp range
-    if entry.duration_ms == 0
-        && let (Some(first), Some(last)) = (entry.first_timestamp, entry.last_timestamp)
-    {
-        entry.duration_ms = last.signed_duration_since(first).num_milliseconds().max(0) as u64;
-    }
-
-    Ok(entry)
 }

@@ -1,8 +1,8 @@
 # Quickstart
 
 This is the five-minute tour. It assumes you've
-[installed claudex](/guide/installation) and run `claude` locally at least once
-so `~/.claude/projects/` has content.
+[installed claudex](/guide/installation) and run at least one of Claude Code,
+OpenAI Codex, or Pi locally so there are transcripts to index.
 
 ## 1. See the dashboard
 
@@ -13,21 +13,21 @@ claudex summary
 You'll get one screenful: total sessions, today/this-week counts, cost totals,
 top projects, top tools, model distribution, and the most recent session.
 
-First run indexes the whole `~/.claude/projects/` tree — the spinner shows
-progress on stderr. Subsequent runs reuse the index (5-minute staleness
-window), so they're near-instant.
+First run indexes every provider's transcripts (`~/.claude/projects`,
+`~/.codex`, `~/.pi/agent`) — the spinner shows progress on stderr. Subsequent
+runs reuse the index (5-minute staleness window), so they're near-instant.
 
-## 2. Codex CLI stats
+## 2. Narrow by provider
+
+Every report spans all three providers by default. Narrow with `--provider`:
 
 ```bash
-claudex codex
-claudex codex --json
+claudex cost --provider codex          # just OpenAI Codex
+claudex sessions --provider pi         # just Pi
+claudex cost --provider claude,codex   # Claude + Codex combined
 ```
 
-This scans `~/.codex/sessions`, `~/.codex/archived_sessions`,
-`~/.codex/session_index.jsonl`, and the optional `~/.codex/state_5.sqlite` state
-DB to summarize Codex activity: sessions, projects, tools, CLI versions, and
-state-thread token totals.
+See [Providers & filtering](/guide/providers) for the full filter set.
 
 ## 3. Cost, by project
 
@@ -35,13 +35,13 @@ state-thread token totals.
 claudex cost --limit 10
 ```
 
-Aggregates token usage across every session in each project, applies the
-correct pricing tier per message (Opus / Sonnet / Haiku), and sorts by cost
-descending.
+Aggregates token usage across every session in each project and every provider,
+applies the correct pricing tier per model (Opus / Sonnet / Haiku, OpenAI
+gpt-5 / gpt-4; Pi reports its own cost), and sorts by cost descending.
 
-Add `--per-session` to break it out by individual session, or
-`--project utensils` to filter to projects whose decoded path contains
-`utensils`.
+Add `--per-session` to break it out by individual session,
+`--project utensils` to filter to projects whose path contains `utensils`, or
+`--since 30d` to scope to the last 30 days.
 
 ## 4. Full-text search
 

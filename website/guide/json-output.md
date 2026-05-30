@@ -2,7 +2,8 @@
 
 Every read command supports `--json`, emitting a pretty-printed, stable shape.
 This is the recommended contract for automation — it doesn't change between
-patch releases.
+patch releases. Every per-row report includes a `"provider"` key
+(`claude` / `codex` / `pi`) so results are unambiguous across providers.
 
 ## Examples
 
@@ -16,8 +17,8 @@ claudex sessions --json
 # Summary as JSON
 claudex summary --json
 
-# Codex CLI stats as JSON
-claudex codex --json
+# Just Codex sessions, as JSON
+claudex sessions --provider codex --json
 ```
 
 ## Piping to jq
@@ -66,19 +67,9 @@ following keys are added alongside:
   `null` when there's no usage this week (a brand-new account would
   otherwise show a misleading "0× leverage").
 
-### `codex`
-
-Single object. Keys: `total_sessions`, `archived_sessions`,
-`active_session_files`, `sessions_today`, `sessions_this_week`,
-`user_messages`, `agent_messages`, `reasoning_items`, `tool_calls`,
-`tool_results`, `aborted_turns`, `compacted_events`, `review_events`,
-`top_projects`, `top_tools`, `cli_versions`, `originators`, `sources`,
-`most_recent`, and optional `state` with Codex state DB thread/token totals.
-See [`codex`](/commands/codex) for the full shape.
-
 ### `sessions`
 
-Array. Each entry: `project`, `session_id`, `file_path`, `date`,
+Array. Each entry: `provider`, `project`, `session_id`, `file_path`, `date`,
 `duration_ms`, `message_count`, `model`.
 
 ### `session`
@@ -93,13 +84,13 @@ Single object. Keys include `project`, `file_path`, `session_id`, `date`,
 - Aggregated: `project`, `sessions`, `input_tokens`, `output_tokens`,
   `cache_creation_tokens`, `cache_read_tokens`, `avg_cost_per_session_usd`,
   `models` (array of families), `cost_usd`.
-- Per-session: `project`, `session_id`, `date`, `model`, `models`,
+- Per-session: `provider`, `project`, `session_id`, `date`, `model`, `models`,
   `input_tokens`, `output_tokens`, `cache_creation_tokens`,
   `cache_read_tokens`, `cost_usd`.
 
 ### `search`
 
-Array. Each entry: `project`, `session_id`, `message_timestamp`,
+Array. Each entry: `provider`, `project`, `session_id`, `message_timestamp`,
 `message_type`, `snippet`, `rank`.
 
 ### `tools` (aggregated) / `tools --per-session`
@@ -122,8 +113,8 @@ Array. Each entry: `project`, `turn_count`, `avg_duration_ms`,
 
 ### `prs`
 
-Array. Each entry: `project`, `session_id`, `timestamp`, `pr_number`,
-`pr_repository`, `pr_url`.
+Array. Each entry: `provider`, `project`, `session_id`, `timestamp`,
+`pr_number`, `pr_repository`, `pr_url`.
 
 ### `files`
 

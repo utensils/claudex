@@ -16,14 +16,31 @@ pub struct ModelPricing {
 }
 
 impl ModelPricing {
+    /// Per-million-token pricing for a model id. Unknown models fall back to
+    /// Claude Sonnet — Pi's local/free models never reach this path because they
+    /// carry a provider-supplied cost instead (see `ModelSessionStats::embedded_cost`).
     pub fn for_model(model: Option<&str>) -> Self {
         let m = model.unwrap_or("").to_lowercase();
-        if m.contains("opus") {
+        if is_claude_opus_latest(&m) {
+            Self {
+                input_per_mtok: 5.0,
+                output_per_mtok: 25.0,
+                cache_write_per_mtok: 6.25,
+                cache_read_per_mtok: 0.50,
+            }
+        } else if m.contains("opus") {
             Self {
                 input_per_mtok: 15.0,
                 output_per_mtok: 75.0,
                 cache_write_per_mtok: 18.75,
                 cache_read_per_mtok: 1.50,
+            }
+        } else if is_claude_haiku_latest(&m) {
+            Self {
+                input_per_mtok: 1.0,
+                output_per_mtok: 5.0,
+                cache_write_per_mtok: 1.25,
+                cache_read_per_mtok: 0.10,
             }
         } else if m.contains("haiku") {
             Self {
@@ -32,8 +49,43 @@ impl ModelPricing {
                 cache_write_per_mtok: 1.00,
                 cache_read_per_mtok: 0.08,
             }
+        } else if has_any(&m, &["gpt-5.5-pro"]) {
+            openai_pricing(30.0, 30.0, 180.0)
+        } else if has_any(&m, &["gpt-5.5"]) {
+            openai_pricing(5.0, 0.50, 30.0)
+        } else if has_any(&m, &["gpt-5.4-pro"]) {
+            openai_pricing(30.0, 30.0, 180.0)
+        } else if has_any(&m, &["gpt-5.4-mini"]) {
+            openai_pricing(0.75, 0.075, 4.50)
+        } else if has_any(&m, &["gpt-5.4-nano"]) {
+            openai_pricing(0.20, 0.02, 1.25)
+        } else if has_any(&m, &["gpt-5.4"]) {
+            openai_pricing(2.50, 0.25, 15.0)
+        } else if has_any(&m, &["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2"]) {
+            openai_pricing(1.75, 0.175, 14.0)
+        } else if has_any(&m, &["gpt-5-pro"]) {
+            openai_pricing(15.0, 15.0, 120.0)
+        } else if is_gpt5(&m) {
+            Self {
+                input_per_mtok: 1.25,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 1.25,
+                cache_read_per_mtok: 0.125,
+            }
+        } else if has_any(&m, &["gpt-4.1-mini"]) {
+            openai_pricing(0.40, 0.10, 1.60)
+        } else if has_any(&m, &["gpt-4.1-nano"]) {
+            openai_pricing(0.10, 0.025, 0.40)
+        } else if has_any(&m, &["gpt-4.1"]) {
+            openai_pricing(2.0, 0.50, 8.0)
+        } else if has_any(&m, &["gpt-4o-mini"]) {
+            openai_pricing(0.15, 0.075, 0.60)
+        } else if has_any(&m, &["gpt-4o-2024-05-13"]) {
+            openai_pricing(5.0, 5.0, 15.0)
+        } else if is_gpt4(&m) {
+            openai_pricing(2.50, 1.25, 10.0)
         } else {
-            // Sonnet (default)
+            // Claude Sonnet — also the default for an unspecified model.
             Self {
                 input_per_mtok: 3.0,
                 output_per_mtok: 15.0,
@@ -43,15 +95,55 @@ impl ModelPricing {
         }
     }
 
+    /// Short display label for a model's family.
     pub fn name(model: Option<&str>) -> &'static str {
         let m = model.unwrap_or("").to_lowercase();
         if m.contains("opus") {
             "Opus"
         } else if m.contains("haiku") {
             "Haiku"
+        } else if is_gpt5(&m) {
+            "GPT-5"
+        } else if is_gpt4(&m) {
+            "GPT-4"
         } else {
             "Sonnet"
         }
+    }
+}
+
+fn is_gpt5(m: &str) -> bool {
+    m.contains("gpt-5") || m.contains("gpt5")
+}
+
+fn is_gpt4(m: &str) -> bool {
+    m.contains("gpt-4") || m.contains("gpt4")
+}
+
+fn is_claude_opus_latest(m: &str) -> bool {
+    has_any(
+        m,
+        &[
+            "opus-4-5", "opus-4.5", "opus-4-6", "opus-4.6", "opus-4-7", "opus-4.7", "opus-4-8",
+            "opus-4.8",
+        ],
+    )
+}
+
+fn is_claude_haiku_latest(m: &str) -> bool {
+    has_any(m, &["haiku-4-5", "haiku-4.5"])
+}
+
+fn has_any(m: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| m.contains(needle))
+}
+
+fn openai_pricing(input: f64, cached_input: f64, output: f64) -> ModelPricing {
+    ModelPricing {
+        input_per_mtok: input,
+        output_per_mtok: output,
+        cache_write_per_mtok: input,
+        cache_read_per_mtok: cached_input,
     }
 }
 
@@ -166,8 +258,8 @@ mod tests {
             input_tokens: 1_000_000,
             ..Default::default()
         };
-        // $15/MTok
-        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 15.0).abs() < 0.0001);
+        // $5/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 5.0).abs() < 0.0001);
     }
 
     #[test]
@@ -176,8 +268,8 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        // $75/MTok
-        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 75.0).abs() < 0.0001);
+        // $25/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 25.0).abs() < 0.0001);
     }
 
     #[test]
@@ -186,8 +278,8 @@ mod tests {
             cache_creation_tokens: 1_000_000,
             ..Default::default()
         };
-        // $18.75/MTok
-        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 18.75).abs() < 0.0001);
+        // $6.25/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 6.25).abs() < 0.0001);
     }
 
     #[test]
@@ -196,8 +288,8 @@ mod tests {
             cache_read_tokens: 1_000_000,
             ..Default::default()
         };
-        // $1.50/MTok
-        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 1.50).abs() < 0.0001);
+        // $0.50/MTok
+        assert!((u.cost_for_model(Some("claude-opus-4-6")) - 0.50).abs() < 0.0001);
     }
 
     #[test]
@@ -208,8 +300,8 @@ mod tests {
             cache_creation_tokens: 1_000_000,
             cache_read_tokens: 1_000_000,
         };
-        // $15 + $75 + $18.75 + $1.50 = $110.25
-        assert!((u.cost_for_model(Some("claude-opus-4-7")) - 110.25).abs() < 0.0001);
+        // $5 + $25 + $6.25 + $0.50 = $36.75
+        assert!((u.cost_for_model(Some("claude-opus-4-7")) - 36.75).abs() < 0.0001);
     }
 
     // --- Haiku pricing ---
@@ -220,8 +312,8 @@ mod tests {
             input_tokens: 1_000_000,
             ..Default::default()
         };
-        // $0.80/MTok
-        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 0.80).abs() < 0.0001);
+        // $1/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 1.0).abs() < 0.0001);
     }
 
     #[test]
@@ -230,8 +322,8 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        // $4/MTok
-        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 4.0).abs() < 0.0001);
+        // $5/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5-20251001")) - 5.0).abs() < 0.0001);
     }
 
     #[test]
@@ -240,8 +332,8 @@ mod tests {
             cache_creation_tokens: 1_000_000,
             ..Default::default()
         };
-        // $1.00/MTok
-        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 1.00).abs() < 0.0001);
+        // $1.25/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 1.25).abs() < 0.0001);
     }
 
     #[test]
@@ -250,8 +342,8 @@ mod tests {
             cache_read_tokens: 1_000_000,
             ..Default::default()
         };
-        // $0.08/MTok
-        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 0.08).abs() < 0.0001);
+        // $0.10/MTok
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 0.10).abs() < 0.0001);
     }
 
     #[test]
@@ -262,8 +354,62 @@ mod tests {
             cache_creation_tokens: 1_000_000,
             cache_read_tokens: 1_000_000,
         };
-        // $0.80 + $4.00 + $1.00 + $0.08 = $5.88
-        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 5.88).abs() < 0.0001);
+        // $1.00 + $5.00 + $1.25 + $0.10 = $7.35
+        assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 7.35).abs() < 0.0001);
+    }
+
+    // --- OpenAI GPT pricing (Codex) ---
+
+    #[test]
+    fn gpt5_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $1.25 + $10.00 + $1.25 + $0.125 = $12.625
+        assert!((u.cost_for_model(Some("gpt-5")) - 12.625).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("gpt-5-codex")) - 12.625).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("gpt-5.5")) - 40.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn gpt4_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $2.50 + $10.00 + $2.50 + $1.25 = $16.25
+        assert!((u.cost_for_model(Some("gpt-4o")) - 16.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn gpt_models_are_not_priced_as_sonnet() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // Sonnet output is $15/MTok; GPT-5 is $10/MTok — they must differ.
+        let gpt = u.cost_for_model(Some("gpt-5-codex"));
+        let sonnet = u.cost_for_model(Some("claude-sonnet-4-6"));
+        assert!(
+            (gpt - 10.0).abs() < 0.0001,
+            "gpt-5 output should be $10/MTok"
+        );
+        assert!(
+            gpt < sonnet,
+            "gpt-5 ({gpt}) must not be priced as sonnet ({sonnet})"
+        );
+    }
+
+    #[test]
+    fn gpt_name_labels() {
+        assert_eq!(ModelPricing::name(Some("gpt-5.5")), "GPT-5");
+        assert_eq!(ModelPricing::name(Some("gpt-5-codex")), "GPT-5");
+        assert_eq!(ModelPricing::name(Some("gpt-4o")), "GPT-4");
     }
 
     // --- Cross-model ordering ---
@@ -294,12 +440,12 @@ mod tests {
             cache_read_tokens: 500_000_000, // 500M cache reads
         };
         let cost = u.cost_for_model(Some("claude-opus-4-6"));
-        // input:  5K * 15 / 1M = $0.075
-        // output: 100K * 75 / 1M = $7.50
-        // cache_w: 50K * 18.75 / 1M = $0.9375
-        // cache_r: 500M * 1.50 / 1M = $750.00
-        // total: $758.5125
-        assert!((cost - 758.5125).abs() < 0.001, "got {cost}");
+        // input:  5K * 5 / 1M = $0.025
+        // output: 100K * 25 / 1M = $2.50
+        // cache_w: 50K * 6.25 / 1M = $0.3125
+        // cache_r: 500M * 0.50 / 1M = $250.00
+        // total: $252.8375
+        assert!((cost - 252.8375).abs() < 0.001, "got {cost}");
     }
 
     // --- add() ---
@@ -377,10 +523,10 @@ mod tests {
     #[test]
     fn pricing_constants_opus() {
         let p = ModelPricing::for_model(Some("claude-opus-4-6"));
-        assert_eq!(p.input_per_mtok, 15.0);
-        assert_eq!(p.output_per_mtok, 75.0);
-        assert_eq!(p.cache_write_per_mtok, 18.75);
-        assert_eq!(p.cache_read_per_mtok, 1.50);
+        assert_eq!(p.input_per_mtok, 5.0);
+        assert_eq!(p.output_per_mtok, 25.0);
+        assert_eq!(p.cache_write_per_mtok, 6.25);
+        assert_eq!(p.cache_read_per_mtok, 0.50);
     }
 
     #[test]
@@ -395,10 +541,10 @@ mod tests {
     #[test]
     fn pricing_constants_haiku() {
         let p = ModelPricing::for_model(Some("claude-haiku-4-5"));
-        assert_eq!(p.input_per_mtok, 0.80);
-        assert_eq!(p.output_per_mtok, 4.0);
-        assert_eq!(p.cache_write_per_mtok, 1.00);
-        assert_eq!(p.cache_read_per_mtok, 0.08);
+        assert_eq!(p.input_per_mtok, 1.0);
+        assert_eq!(p.output_per_mtok, 5.0);
+        assert_eq!(p.cache_write_per_mtok, 1.25);
+        assert_eq!(p.cache_read_per_mtok, 0.10);
     }
 
     #[test]

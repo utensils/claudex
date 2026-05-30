@@ -183,43 +183,53 @@ Three invariants worth knowing:
 ### Data flow
 
 ```
-~/.claude/projects/<encoded-path>/<session>.jsonl   ← source of truth (Claude Code writes these)
+~/.claude/projects/**.jsonl      (Claude Code)  ┐
+~/.codex/sessions|archived/**     (OpenAI Codex) ├─ source transcripts
+~/.pi/agent/sessions/**           (Pi)           ┘
         │
-        ▼   store::SessionStore (discovery + path decoding)
-        ▼   parser::parse_session / stream_records (streaming JSONL → SessionStats)
+        ▼   providers::{claude,codex,pi} (SessionProvider: enumerate + parse → ProviderRecord)
         ▼
-~/.claudex/index.db  (SQLite, schema_version=3, created on demand)
-        │
-        ▼   index::IndexStore::ensure_fresh / sync_now / force_rebuild
+~/.claudex/index.db  (SQLite, schema_version=5, created on demand)
+        │   additive/retentive: archived or deleted sessions are RETAINED (present_on_disk=0),
+        │   non-destructive ALTER-TABLE migrations, per-provider incremental sync.
+        ▼   index::IndexStore::ensure_fresh / sync_now / force_rebuild (take &[Provider])
         ▼
-commands::<name>::run  →  stdout (tables + palette via ui module, JSON via --json)
+commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palette via ui, JSON via --json)
 ```
 
 ### Module layout
 
 - `src/main.rs` — clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag too.
-- `src/lib.rs` — re-exports `commands`, `index`, `parser`, `store`, `types`, `ui`. Also exposes `claudex_dir()` → `~/.claudex`.
+- `src/lib.rs` — re-exports `cli`, `commands`, `index`, `parser`, `providers`, `skill`, `store`, `types`, `ui`. Also exposes `claudex_dir()` → `~/.claudex`.
+- `src/providers/{mod,claude,codex,pi}.rs` — the provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch) discover each agent's transcripts (`enumerate` → `DiscoveredFile`) and normalize them (`parse` → `ProviderRecord`, the type the index insert loop consumes). `enabled_default()` returns every provider whose root dir exists. Claude wraps `SessionStore` + the moved transcript parser; Codex reads `~/.codex` (last-cumulative `token_count`, cached input → cache read); Pi reads `~/.pi/agent` (per-model usage, trusts Pi's own `embedded_cost`, local models = $0).
+- `src/cli.rs` — shared `FilterArgs` (flattened into every reporting command) → `ResolvedFilter`: `--provider`, `--model`, `--since`/`--until` (date / RFC3339 / `7d`,`2w` spans), `--on-disk-only`. `sql_predicates()` builds the indexed WHERE; `matches()` filters the `--no-index` fallback. Also houses the `skills` clap types (`SkillCommand`/`SkillArgs`/`SkillTarget`).
+- `src/skill/{mod,templates}.rs` — `claudex skills generate|install`. A `Flavor` enum over one shared `body()`; `command_list()` is clap-derived so the skill never drifts. The committed `.claude/skills/claudex/SKILL.md` is a generated artifact (regenerate: `claudex skills generate --target claude-code --dir . --force`; a drift-guard test enforces it).
 - `src/store.rs` — locates session files, decodes project directory names (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), and canonicalises worktree paths (`…/.claude/worktrees/<branch>` aggregates to the parent project). `SessionStore::at(path)` is a test-only constructor.
 - `src/parser.rs` — `SessionStats` accumulator; `stream_records` reads JSONL one record at a time so large sessions don't balloon memory.
-- `src/types.rs` — `TokenUsage` and `ModelPricing` (Opus/Sonnet/Haiku pricing tiers; default is Sonnet). `cost_for_model` is the single source of truth for pricing math.
+- `src/types.rs` — `TokenUsage` and `ModelPricing` (Opus/Sonnet/Haiku + OpenAI `gpt-5`/`gpt-4` tiers; default is Sonnet). `cost_for_model` is the single source of truth for pricing math; providers that report their own cost set `ModelSessionStats::embedded_cost`, which the index trusts over the table.
 - `src/stats.rs` — small numeric helpers shared across commands (e.g. `percentile_sorted` used by `turns` and the session drill-down).
 - `src/plan.rs` — `Plan` enum (`Api` / `FlatMonthly { usd_per_month }`), `FromStr` parser for the `--plan` value, and `cost_fields` returning a `serde_json::Map` of plan-aware cost keys. Consumed only by the `summary` subcommand today; if you wire it into another command, add `--plan` to that command's clap definition (not as a global) so the flag never silently no-ops.
-- `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions`, `token_usage`, `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`. `IndexStore::open_at(path)` is a test-only constructor.
+- `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions` (now carries `provider`, `present_on_disk`, `archived_at`, `last_seen`, `extras`), `token_usage`, `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`, scoped per provider. `IndexStore::open_at(path)` is a test-only constructor.
 - `src/ui.rs` — **single home for every presentation concern**: palette (semantic helpers like `project`, `cost`, `cell_project`, `cell_cost`), `table()` builder (minimal style, dynamic width via `terminal_size`), `Spinner` (TTY-gated, stderr), number formatters (`fmt_cost` → `$12,345.67` with sub-cent fallback to 4 decimals, `fmt_count` → `326,297`), and `ColorChoice` / `apply_color_choice`.
-- `src/commands/*.rs` — one module per subcommand: `sessions`, `session`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`, `codex`. (`completions` is generated by a helper directly in `main.rs`, not a module here.)
+- `src/commands/*.rs` — one module per subcommand: `sessions`, `session`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs` to helpers/`skill::execute`, not modules here. The old scan-only `codex` subcommand was removed — Codex is now a first-class indexed provider reached via `--provider codex`.)
 - `tests/index_tests.rs` — unit-style tests against parser/types/store.
-- `tests/index_store_tests.rs` — integration tests against every `IndexStore` query method using `TempDir` + `open_at`/`at`.
-- `tests/cli_tests.rs` — end-to-end subprocess tests against the compiled binary with a fixture `$HOME`. Exercises every subcommand's indexed and `--no-index` paths, JSON and text output, and the `--color` flag.
+- `tests/index_store_tests.rs` — integration tests against every `IndexStore` query method using `TempDir` + `open_at`/`at` (query methods take `&ResolvedFilter`).
+- `tests/retention_tests.rs` — v4→v5 migration preserves data, deleted-file retention, in-place rowid reuse, restored-file un-archival (opens the on-disk DB with a `rusqlite` dev-dependency).
+- `tests/providers_tests.rs` — Claude/Codex/Pi `enumerate`+`parse` unit tests (cumulative tokens, embedded cost, archived flags).
+- `tests/cli_tests.rs` — end-to-end subprocess tests against the compiled binary with a fixture `$HOME` (including synthetic `~/.codex` / `~/.pi/agent`). Exercises indexed + `--no-index` paths, the shared filters, provider-aware output, and `skills`.
+- `tests/skill_tests.rs` — skill-template unit tests (per-flavor frontmatter, plugin manifest).
 - `tests/completions_tests.rs` — shell-completion generation tests (clap_complete).
 
 ### Key invariants
 
-- **Index staleness window = 300 s** (`STALE_SECS` in `src/index.rs`). Read commands call `ensure_fresh` which triggers an incremental sync only if the last sync is older than that. `claudex index` forces sync; `claudex index --force` wipes and rebuilds.
-- **Every read command supports `--no-index`** and falls back to scanning JSONL files directly via `parser::parse_session`. Both paths must produce matching results — if you add a metric, add it to both the index query and the file-scan fallback.
-- **Schema migrations**: bumping `SCHEMA_VERSION` in `src/index.rs` triggers a rebuild on next open. Add new columns/tables inside the `CREATE TABLE IF NOT EXISTS` block and bump the version.
+- **Providers are first-class and additive.** All three (Claude/Codex/Pi) flow through the same `IndexStore` pipeline. `ensure_fresh`/`sync`/`force_rebuild` take `&[Provider]`; default reporting spans every provider (`providers::enabled_default()`). Filtering happens at query time (`--provider`), never at sync time — the index always holds everything available.
+- **The index is retentive, not a cache.** A session whose source file is archived or deleted is soft-deleted (`present_on_disk=0`, `archived_at` stamped) and RETAINED with its derived rows + FTS. The ONLY destructive path is `claudex index --force` (`force_rebuild`). Per-provider sync scoping (`WHERE provider = ?`) is mandatory so one provider's sync never archives another's rows.
+- **Index staleness window = 300 s** (`STALE_SECS`), tracked per provider (`last_sync:<id>` / `sessions_root:<id>` meta keys). `claudex index` forces sync; `claudex index --force` wipes and rebuilds.
+- **Schema migrations are forward-only and non-destructive.** Bumping `SCHEMA_VERSION` runs the `migrate_schema` ladder (guarded `ALTER TABLE ADD COLUMN`) — never `DROP`, because retained data can't be rebuilt from disk. Add columns to the `CREATE TABLE IF NOT EXISTS` block AND an additive migration step, then bump the version.
+- **Every Claude read command still supports `--no-index`**, falling back to `parser::parse_session` with `ResolvedFilter::matches` applied in memory. The indexed path is the multi-provider one; `--no-index` is a Claude-only escape hatch.
+- **Filtering is centralized in `src/cli.rs`.** Reporting commands flatten `FilterArgs` and pass `&ResolvedFilter` to the query methods, which append `sql_predicates(alias)`. Don't hand-roll provider/date predicates in a command.
 - **Worktree aggregation**: always key on `canonical_project_path(&decoded)` when grouping by project, and use `display_project_name` for user-facing labels (renders worktree sessions as `"projectname (worktree)"`).
-- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` so the Opus/Sonnet/Haiku tiers stay consistent.
-- **`codex` is the one exception to the index pipeline.** It scans `~/.codex/sessions/**` (and `~/.codex/archived_sessions/`) directly on every invocation, plus an optional read-only open of `~/.codex/state_5.sqlite` and `~/.codex/session_index.jsonl` — no `~/.claudex/` writes, no `--no-index` flag, no staleness window. Keep it that way unless you also build a parallel ingest path; do not silently route Codex data through `IndexStore`.
+- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers). Providers reporting their own cost set `embedded_cost`, which the insert loop uses instead.
 
 ### Adding a new subcommand
 

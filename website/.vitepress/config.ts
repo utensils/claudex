@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   title: 'claudex',
   description:
-    'Query, search, and analyze Claude Code sessions from the command line. A Rust CLI that indexes ~/.claude/projects/ into SQLite and exposes reports as subcommands.',
+    'Query, search, and analyze Claude Code, OpenAI Codex, and Pi sessions from the command line. A Rust CLI that indexes all three providers into one SQLite database and exposes reports as subcommands.',
   base: '/claudex/',
 
   vite: {
@@ -27,7 +27,7 @@ export default defineConfig({
       {
         property: 'og:description',
         content:
-          'Query, search, and analyze Claude Code sessions from the command line.',
+          'Query, search, and analyze Claude Code, OpenAI Codex, and Pi sessions from the command line.',
       },
     ],
   ],
@@ -82,6 +82,7 @@ export default defineConfig({
         {
           text: 'Using claudex',
           items: [
+            { text: 'Providers & filtering', link: '/guide/providers' },
             { text: 'The index', link: '/guide/indexing' },
             { text: 'JSON output', link: '/guide/json-output' },
             { text: 'Color & terminal', link: '/guide/color' },
@@ -107,7 +108,6 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/commands/' },
             { text: 'summary', link: '/commands/summary' },
-            { text: 'codex', link: '/commands/codex' },
             { text: 'sessions', link: '/commands/sessions' },
             { text: 'session', link: '/commands/session' },
             { text: 'cost', link: '/commands/cost' },
@@ -122,6 +122,7 @@ export default defineConfig({
             { text: 'index', link: '/commands/index-cmd' },
             { text: 'update', link: '/commands/update' },
             { text: 'completions', link: '/commands/completions' },
+            { text: 'skills', link: '/commands/skills' },
           ],
         },
       ],

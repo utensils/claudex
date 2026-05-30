@@ -1,16 +1,18 @@
 use anyhow::Result;
 
+use crate::cli::ResolvedFilter;
 use crate::commands::sessions::format_duration;
 use crate::index::IndexStore;
-use crate::store::{SessionStore, short_name};
+use crate::providers::enabled_default;
+use crate::store::short_name;
 use crate::ui;
 
-pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+pub fn run(project: Option<&str>, limit: usize, json: bool, filter: &ResolvedFilter) -> Result<()> {
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
-    let rows = idx.query_turn_stats(project, limit)?;
+    let rows = idx.query_turn_stats(project, filter, limit)?;
 
     if json {
         let output: Vec<_> = rows

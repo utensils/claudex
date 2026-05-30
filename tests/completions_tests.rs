@@ -17,20 +17,38 @@ fn dynamic_completions(shell: &str, index: &str, words: &[&str]) -> String {
 }
 
 #[test]
-fn dynamic_root_completions_include_codex() {
+fn dynamic_root_completions_include_sessions() {
     let stdout = dynamic_completions("bash", "1", &["claudex", ""]);
     assert!(
-        stdout.lines().any(|line| line == "codex"),
-        "root completions should include codex, got: {stdout}"
+        stdout.lines().any(|line| line == "sessions"),
+        "root completions should include sessions, got: {stdout}"
     );
 }
 
 #[test]
-fn dynamic_codex_completions_include_json_flag() {
-    let stdout = dynamic_completions("bash", "2", &["claudex", "codex", "--"]);
+fn dynamic_root_completions_include_skills() {
+    let stdout = dynamic_completions("bash", "1", &["claudex", ""]);
+    assert!(
+        stdout.lines().any(|line| line == "skills"),
+        "root completions should include skills, got: {stdout}"
+    );
+}
+
+#[test]
+fn dynamic_cost_completions_include_provider_flag() {
+    let stdout = dynamic_completions("bash", "2", &["claudex", "cost", "--"]);
+    assert!(
+        stdout.lines().any(|line| line.starts_with("--provider")),
+        "cost completions should include --provider, got: {stdout}"
+    );
+}
+
+#[test]
+fn dynamic_cost_completions_include_json_flag() {
+    let stdout = dynamic_completions("bash", "2", &["claudex", "cost", "--"]);
     assert!(
         stdout.lines().any(|line| line.starts_with("--json")),
-        "codex completions should include --json, got: {stdout}"
+        "cost completions should include --json, got: {stdout}"
     );
 }
 

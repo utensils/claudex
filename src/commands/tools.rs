@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chrono::DateTime;
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::parser::parse_session;
+use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, display_project_name, short_name};
 use crate::ui;
 
@@ -15,20 +17,27 @@ pub fn run(
     limit: usize,
     json: bool,
     no_index: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(project, per_session, limit, json) {
+    if !no_index && let Ok(()) = run_indexed(project, per_session, limit, json, filter) {
         return Ok(());
     }
-    run_from_files(project, per_session, limit, json)
+    run_from_files(project, per_session, limit, json, filter)
 }
 
-fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: bool) -> Result<()> {
-    let store = SessionStore::new()?;
+fn run_indexed(
+    project: Option<&str>,
+    per_session: bool,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
+    let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
-    idx.ensure_fresh(&store)?;
+    idx.ensure_fresh(&providers)?;
 
     if per_session {
-        let rows = idx.query_tools_per_session(project, limit)?;
+        let rows = idx.query_tools_per_session(project, filter, limit)?;
 
         if json {
             let output: Vec<_> = rows
@@ -93,7 +102,7 @@ fn run_indexed(project: Option<&str>, per_session: bool, limit: usize, json: boo
         return Ok(());
     }
 
-    let rows = idx.query_tools_aggregate(project, limit)?;
+    let rows = idx.query_tools_aggregate(project, filter, limit)?;
 
     if json {
         let output: Vec<_> = rows
@@ -119,17 +128,23 @@ fn run_from_files(
     per_session: bool,
     limit: usize,
     json: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
     if per_session {
-        run_per_session(files, limit, json)
+        run_per_session(files, limit, json, filter)
     } else {
-        run_aggregate(files, limit, json)
+        run_aggregate(files, limit, json, filter)
     }
 }
 
-fn run_aggregate(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
+fn run_aggregate(
+    files: Vec<(String, PathBuf)>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let mut counts: HashMap<String, u64> = HashMap::new();
 
     for (_, path) in &files {
@@ -137,6 +152,9 @@ fn run_aggregate(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Res
             Ok(s) => s,
             Err(_) => continue,
         };
+        if !filter.matches("claude", &stats, false) {
+            continue;
+        }
         for name in stats.tool_names {
             *counts.entry(name).or_insert(0) += 1;
         }
@@ -165,7 +183,12 @@ fn run_aggregate(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Res
     Ok(())
 }
 
-fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> Result<()> {
+fn run_per_session(
+    files: Vec<(String, PathBuf)>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let mut rows = Vec::new();
     for (project_raw, path) in &files {
         let stats = match parse_session(path) {
@@ -173,6 +196,9 @@ fn run_per_session(files: Vec<(String, PathBuf)>, limit: usize, json: bool) -> R
             Err(_) => continue,
         };
         if stats.tool_names.is_empty() {
+            continue;
+        }
+        if !filter.matches("claude", &stats, false) {
             continue;
         }
         let mut counts: HashMap<String, u64> = HashMap::new();

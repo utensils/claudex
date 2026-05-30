@@ -9,6 +9,7 @@ use crate::index::{
     IndexStore, SessionDetail, SessionModelUsageRow, StopReasonRow, ToolRow, TurnStatsRow,
 };
 use crate::parser::{ModelSessionStats, SessionStats, parse_session};
+use crate::providers::enabled_default;
 use crate::stats::percentile_sorted;
 use crate::store::{
     SessionStore, decode_project_name, display_project_name, find_matching_sessions, short_name,
@@ -18,17 +19,18 @@ use crate::types::ModelPricing;
 use crate::ui;
 
 pub fn run(selector: &str, project_filter: Option<&str>, json: bool, no_index: bool) -> Result<()> {
-    let store = SessionStore::new()?;
-    let (project_raw, path) = resolve_one_session(&store, selector, project_filter)?;
-    let project = display_project_name(&decode_project_name(&project_raw));
-
     if !no_index {
+        let providers = enabled_default()?;
         let mut idx = IndexStore::open()?;
-        idx.ensure_fresh(&store)?;
-        if let Some(detail) = idx.query_session_detail(&path.to_string_lossy())? {
+        idx.ensure_fresh(&providers)?;
+        if let Some(detail) = resolve_indexed_session(&idx, selector, project_filter)? {
             return render_indexed(detail, json);
         }
     }
+
+    let store = SessionStore::new()?;
+    let (project_raw, path) = resolve_one_session(&store, selector, project_filter)?;
+    let project = display_project_name(&decode_project_name(&project_raw));
 
     let mut stats = parse_session(&path)?;
     // Roll up subagent transcripts the way the indexed path does, so the
@@ -268,6 +270,36 @@ fn resolve_one_session(
             )
         }
     }
+}
+
+fn resolve_indexed_session(
+    idx: &IndexStore,
+    selector: &str,
+    project_filter: Option<&str>,
+) -> Result<Option<SessionDetail>> {
+    let matches = idx.query_session_matches(selector, project_filter)?;
+    let selected = match matches.as_slice() {
+        [] => return Ok(None),
+        [single] => single,
+        many => {
+            let mut preview = Vec::new();
+            for row in many.iter().take(8) {
+                preview.push(format!(
+                    "{}  {}  {}",
+                    short_session_id(row.session_id.as_deref()),
+                    row.provider,
+                    short_name(&row.project_name),
+                ));
+            }
+            bail!(
+                "selector {:?} matched {} sessions; refine it:\n{}",
+                selector,
+                many.len(),
+                preview.join("\n")
+            )
+        }
+    };
+    idx.query_session_detail(&selected.file_path)
 }
 
 fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
@@ -602,6 +634,7 @@ fn print_prs_file(project: &str, session_id: Option<&str>, prs: &[(i64, String, 
         .iter()
         .map(
             |(pr_number, pr_url, pr_repository, timestamp)| crate::index::PrLinkRow {
+                provider: String::new(),
                 project: project.to_string(),
                 session_id: session_id.map(|s| s.to_string()),
                 pr_number: *pr_number,

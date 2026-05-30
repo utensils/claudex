@@ -2,10 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+pub mod cli;
 pub mod commands;
 pub mod index;
 pub mod parser;
 pub mod plan;
+pub mod providers;
+pub mod skill;
 pub mod stats;
 pub mod store;
 pub mod types;

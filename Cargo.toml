@@ -31,4 +31,5 @@ tar = "0.4"
 terminal_size = "0.4"
 
 [dev-dependencies]
+rusqlite = { version = "0.39", features = ["bundled"] }
 tempfile = "3"
