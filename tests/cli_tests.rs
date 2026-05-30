@@ -850,9 +850,29 @@ fn parse_error_shows_scoped_usage_and_help_hint() {
         "shows scoped usage:\n{err}"
     );
     assert!(
+        err.contains("--since/--until: YYYY-MM-DD, RFC3339"),
+        "shows accepted date formats:\n{err}"
+    );
+    assert!(
+        err.contains("claudex models --since 7d"),
+        "shows command examples:\n{err}"
+    );
+    assert!(
         err.contains("try 'claudex models --help'"),
         "scoped help hint:\n{err}"
     );
+}
+
+#[test]
+fn invalid_since_value_shows_formats_and_examples() {
+    let home = fixture_home();
+    let out = run(home.path(), &["models", "--since", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("invalid date/time 'nope'"));
+    assert!(err.contains("Usage: claudex models"));
+    assert!(err.contains("--since/--until: YYYY-MM-DD, RFC3339"));
+    assert!(err.contains("claudex models --since 7d"));
 }
 
 #[test]
@@ -865,7 +885,57 @@ fn nested_parse_error_scopes_usage_to_subsubcommand() {
         err.contains("Usage: claudex skills generate"),
         "scopes to nested command:\n{err}"
     );
+    assert!(
+        err.contains("claudex skills generate --target codex --dir ."),
+        "shows nested command examples:\n{err}"
+    );
     assert!(err.contains("try 'claudex skills generate --help'"));
+}
+
+#[test]
+fn invalid_skills_target_shows_target_examples() {
+    let home = fixture_home();
+    let out = run(home.path(), &["skills", "generate", "--target", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("invalid value 'nope'"));
+    assert!(err.contains("Accepted targets:"));
+    assert!(err.contains("claude-code, codex, pi, agents-md, plugin, all"));
+}
+
+#[test]
+fn skills_parent_parse_error_shows_examples() {
+    let home = fixture_home();
+    let out = run(home.path(), &["skills", "--target", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("Usage: claudex skills"));
+    assert!(err.contains("claudex skills generate"));
+    assert!(err.contains("claudex skills install --global --target codex"));
+}
+
+#[test]
+fn invalid_export_format_is_usage_error_with_examples() {
+    let home = fixture_home();
+    let out = run(home.path(), &["export", "--format", "xml", "abc12345"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("invalid value 'xml'"));
+    assert!(err.contains("possible values: markdown, json"));
+    assert!(err.contains("Usage: claudex export"));
+    assert!(err.contains("claudex export claudex --format json --output session.json"));
+}
+
+#[test]
+fn invalid_completions_shell_is_usage_error_with_examples() {
+    let home = fixture_home();
+    let out = run(home.path(), &["completions", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("invalid value 'nope'"));
+    assert!(err.contains("bash, zsh, fish, elvish, powershell"));
+    assert!(err.contains("Usage: claudex completions"));
+    assert!(err.contains("source <(claudex completions zsh)"));
 }
 
 #[test]
@@ -888,6 +958,46 @@ fn help_flag_still_exits_zero_on_stdout() {
         stderr_of(&out).is_empty(),
         "help goes to stdout, not stderr"
     );
+}
+
+#[test]
+fn representative_help_outputs_include_examples() {
+    let home = fixture_home();
+    for (args, expected) in [
+        (&["models", "--help"][..], "claudex models --since 7d"),
+        (
+            &["search", "--help"][..],
+            "claudex search \"panic\" --since 7d",
+        ),
+        (
+            &["export", "--help"][..],
+            "claudex export claudex --format json --output session.json",
+        ),
+        (
+            &["watch", "--help"][..],
+            "claudex watch --follow /tmp/my-claude.log",
+        ),
+        (
+            &["skills", "generate", "--help"][..],
+            "claudex skills generate --target codex --dir .",
+        ),
+        (
+            &["skills", "--help"][..],
+            "claudex skills install --global --target codex",
+        ),
+    ] {
+        let out = run(home.path(), args);
+        assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+        let help = stdout_of(&out);
+        assert!(
+            help.contains("Examples:"),
+            "help should include an examples section:\n{help}"
+        );
+        assert!(
+            help.contains(expected),
+            "help should include {expected:?}:\n{help}"
+        );
+    }
 }
 
 // --- tools ---
@@ -1171,6 +1281,8 @@ fn summary_plan_invalid_value_is_rejected() {
     assert!(!out.status.success(), "expected non-zero exit");
     let err = stderr_of(&out);
     assert!(err.contains("--plan") || err.contains("invalid"));
+    assert!(err.contains("Usage: claudex summary"));
+    assert!(err.contains("claudex summary --plan flat-monthly:250"));
 }
 
 #[test]

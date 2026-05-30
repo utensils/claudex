@@ -101,7 +101,11 @@ fn completions_unknown_shell_errors() {
     assert!(!output.status.success(), "unknown shell should fail");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(
-        stderr.contains("unknown shell"),
-        "stderr should mention unknown shell, got: {stderr}"
+        stderr.contains("invalid value 'tcsh'"),
+        "stderr should mention invalid shell, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("bash, zsh, fish, elvish, powershell"),
+        "stderr should list supported shells, got: {stderr}"
     );
 }

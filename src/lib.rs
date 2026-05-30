@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 pub mod cli;
+pub mod cli_help;
 pub mod commands;
 pub mod index;
 pub mod parser;

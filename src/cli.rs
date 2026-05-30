@@ -43,10 +43,10 @@ pub struct FilterArgs {
     pub model: Option<String>,
     /// Only sessions at/after this time — a date (`2026-01-01`), an RFC3339
     /// timestamp, or a relative span (`7d`, `12h`, `2w`).
-    #[arg(long)]
+    #[arg(long, value_parser = validate_when_arg)]
     pub since: Option<String>,
     /// Only sessions at/before this time (same formats as `--since`).
-    #[arg(long)]
+    #[arg(long, value_parser = validate_when_arg)]
     pub until: Option<String>,
     /// Exclude sessions whose source file has been archived or deleted from
     /// disk (retained in the index by default).
@@ -186,8 +186,10 @@ impl ResolvedFilter {
 #[derive(Subcommand, Debug)]
 pub enum SkillCommand {
     /// Write skill files to a directory for review (default ./claudex-skills)
+    #[command(after_long_help = crate::cli_help::SKILLS_GENERATE_EXAMPLES)]
     Generate(SkillArgs),
     /// Write skill files into live harness configuration locations
+    #[command(after_long_help = crate::cli_help::SKILLS_INSTALL_EXAMPLES)]
     Install(SkillArgs),
 }
 
@@ -252,6 +254,12 @@ fn parse_when(value: &str, end_of_day: bool) -> Result<i64> {
         return Ok(date.and_time(time).and_utc().timestamp_millis());
     }
     bail!("invalid date/time '{value}' (use YYYY-MM-DD, RFC3339, or a span like 7d/12h/2w)")
+}
+
+pub fn validate_when_arg(value: &str) -> std::result::Result<String, String> {
+    parse_when(value, false)
+        .map(|_| value.to_string())
+        .map_err(|e| e.to_string())
 }
 
 /// Parse a relative span like `7d`, `12h`, `2w`, `30m` into "now minus span" in
