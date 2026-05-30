@@ -114,6 +114,32 @@ pub fn cell_project(s: &str) -> Cell {
     Cell::new(s).fg(Color::Cyan)
 }
 
+/// Whether a result set spans more than one provider — used to decide if a
+/// table should carry a Provider column (omitted when everything is one
+/// provider, e.g. a Claude-only user, to keep tables narrow).
+pub fn spans_providers<'a, I: IntoIterator<Item = &'a str>>(providers: I) -> bool {
+    let mut seen: Option<&str> = None;
+    for p in providers {
+        match seen {
+            None => seen = Some(p),
+            Some(first) if first != p => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Provider label cell, colored per agent so mixed result sets read at a glance.
+pub fn cell_provider(s: &str) -> Cell {
+    let color = match s {
+        "claude" => Color::Blue,
+        "codex" => Color::Green,
+        "pi" => Color::Magenta,
+        _ => Color::White,
+    };
+    Cell::new(s).fg(color)
+}
+
 pub fn cell_cost(usd: f64) -> Cell {
     Cell::new(fmt_cost(usd)).fg(Color::Green)
 }

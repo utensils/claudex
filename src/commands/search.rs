@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::parser::stream_records;
 use crate::providers::enabled_default;
@@ -14,23 +15,30 @@ pub fn run(
     json: bool,
     case_sensitive: bool,
     no_index: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
     // FTS5 is case-insensitive; fall back to file scan for case-sensitive queries
     if !no_index
         && !case_sensitive
-        && let Ok(()) = run_indexed(query, project, limit, json)
+        && let Ok(()) = run_indexed(query, project, limit, json, filter)
     {
         return Ok(());
     }
-    run_from_files(query, project, limit, json, case_sensitive)
+    run_from_files(query, project, limit, json, case_sensitive, filter)
 }
 
-fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+fn run_indexed(
+    query: &str,
+    project: Option<&str>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
 
-    let hits = idx.search_fts(query, project, limit)?;
+    let hits = idx.search_fts(query, project, filter, limit)?;
 
     if json {
         let output: Vec<_> = hits
@@ -41,6 +49,7 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> 
                     .and_then(DateTime::from_timestamp_millis)
                     .map(|d| d.to_rfc3339());
                 serde_json::json!({
+                    "provider": hit.provider,
                     "project": hit.project_name,
                     "session_id": hit.session_id,
                     "message_timestamp": message_timestamp,
@@ -59,6 +68,7 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> 
         return Ok(());
     }
 
+    let show_provider = ui::spans_providers(hits.iter().map(|h| h.provider.as_str()));
     for hit in &hits {
         let date_str = hit
             .message_timestamp_ms
@@ -74,8 +84,13 @@ fn run_indexed(query: &str, project: Option<&str>, limit: usize, json: bool) -> 
             .collect();
         let project_display = short_name(&hit.project_name);
 
+        let prefix = if show_provider {
+            format!("{} ", ui::record_type(&hit.provider))
+        } else {
+            String::new()
+        };
         println!(
-            "{} {} [{}] {}",
+            "{prefix}{} {} [{}] {}",
             ui::project_headline(&project_display),
             ui::session_id(&sid),
             ui::timestamp(&date_str),
@@ -93,7 +108,18 @@ fn run_from_files(
     limit: usize,
     json: bool,
     case_sensitive: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
+    // The file-scan fallback only reads Claude transcripts; if the provider
+    // filter excludes Claude there is nothing for it to match.
+    if !filter.includes_provider("claude") {
+        if json {
+            println!("[]");
+        } else {
+            println!("No matches found for {query:?}");
+        }
+        return Ok(());
+    }
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
 

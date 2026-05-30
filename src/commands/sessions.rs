@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::providers::enabled_default;
@@ -14,18 +15,25 @@ pub fn run(
     limit: usize,
     json: bool,
     no_index: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(project, file, limit, json) {
+    if !no_index && let Ok(()) = run_indexed(project, file, limit, json, filter) {
         return Ok(());
     }
-    run_from_files(project, file, limit, json)
+    run_from_files(project, file, limit, json, filter)
 }
 
-fn run_indexed(project: Option<&str>, file: Option<&str>, limit: usize, json: bool) -> Result<()> {
+fn run_indexed(
+    project: Option<&str>,
+    file: Option<&str>,
+    limit: usize,
+    json: bool,
+    filter: &ResolvedFilter,
+) -> Result<()> {
     let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
-    let rows = idx.query_sessions(project, file, limit)?;
+    let rows = idx.query_sessions(project, file, filter, limit)?;
 
     if json {
         let output: Vec<_> = rows
@@ -36,6 +44,7 @@ fn run_indexed(project: Option<&str>, file: Option<&str>, limit: usize, json: bo
                     .and_then(DateTime::from_timestamp_millis)
                     .map(|d| d.to_rfc3339());
                 serde_json::json!({
+                    "provider": s.provider,
                     "project": s.project_name,
                     "session_id": s.session_id,
                     "file_path": s.file_path,
@@ -50,11 +59,16 @@ fn run_indexed(project: Option<&str>, file: Option<&str>, limit: usize, json: bo
         return Ok(());
     }
 
+    let show_provider = ui::spans_providers(rows.iter().map(|r| r.provider.as_str()));
     let mut table = ui::table();
-    table.set_header(ui::header([
+    let mut headers = vec![
         "Project", "Session", "Date", "Messages", "Duration", "Model",
-    ]));
-    ui::right_align(&mut table, &[3, 4]);
+    ];
+    if show_provider {
+        headers.insert(0, "Provider");
+    }
+    table.set_header(ui::header(headers));
+    ui::right_align(&mut table, if show_provider { &[4, 5] } else { &[3, 4] });
 
     for s in &rows {
         let sid: String = s
@@ -75,14 +89,18 @@ fn run_indexed(project: Option<&str>, file: Option<&str>, limit: usize, json: bo
             .map(|m| m.trim_start_matches("claude-"))
             .unwrap_or("-")
             .to_string();
-        table.add_row([
+        let mut cells = vec![
             ui::cell_project(&short_name(&s.project_name)),
             ui::cell_dim(&sid),
             ui::cell_dim(&date),
             ui::cell_count(s.message_count as u64),
             ui::cell_plain(format_duration(s.duration_ms as u64)),
             ui::cell_model(&model),
-        ]);
+        ];
+        if show_provider {
+            cells.insert(0, ui::cell_provider(&s.provider));
+        }
+        table.add_row(cells);
     }
     println!("{table}");
     Ok(())
@@ -93,6 +111,7 @@ fn run_from_files(
     file: Option<&str>,
     limit: usize,
     json: bool,
+    filter: &ResolvedFilter,
 ) -> Result<()> {
     let store = SessionStore::new()?;
     let mut sessions: Vec<SessionInfo> = Vec::new();
@@ -102,6 +121,11 @@ fn run_from_files(
             Ok(s) => s,
             Err(_) => continue,
         };
+        // The `--no-index` fallback scans Claude transcripts; apply the
+        // cross-cutting provider/date/model filters in memory.
+        if !filter.matches("claude", &stats, false) {
+            continue;
+        }
         if let Some(file_filter) = file
             && !stats
                 .file_paths_modified
@@ -133,6 +157,7 @@ fn run_from_files(
             .iter()
             .map(|s| {
                 serde_json::json!({
+                    "provider": "claude",
                     "project": s.project,
                     "session_id": s.session_id,
                     "file_path": s.file_path,

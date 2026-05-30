@@ -604,6 +604,7 @@ fn print_prs_file(project: &str, session_id: Option<&str>, prs: &[(i64, String, 
         .iter()
         .map(
             |(pr_number, pr_url, pr_repository, timestamp)| crate::index::PrLinkRow {
+                provider: String::new(),
                 project: project.to_string(),
                 session_id: session_id.map(|s| s.to_string()),
                 pr_number: *pr_number,

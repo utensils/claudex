@@ -1,22 +1,24 @@
 use anyhow::Result;
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::providers::enabled_default;
 use crate::store::short_name;
 use crate::ui;
 
-pub fn run(project: Option<&str>, limit: usize, json: bool) -> Result<()> {
+pub fn run(project: Option<&str>, limit: usize, json: bool, filter: &ResolvedFilter) -> Result<()> {
     let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
 
-    let rows = idx.query_pr_links(project, limit)?;
+    let rows = idx.query_pr_links(project, filter, limit)?;
 
     if json {
         let output: Vec<_> = rows
             .iter()
             .map(|r| {
                 serde_json::json!({
+                    "provider": r.provider,
                     "project": r.project,
                     "session_id": r.session_id,
                     "pr_number": r.pr_number,

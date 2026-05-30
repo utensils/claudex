@@ -203,6 +203,105 @@ fn codex_cost_uses_last_cumulative_tokens_and_gpt_pricing() {
     assert!((cost - 6.025).abs() < 0.001, "expected ~$6.025, got {cost}");
 }
 
+// --- shared filtering args ---
+
+#[test]
+fn provider_filter_scopes_results() {
+    let home = fixture_home_with_codex();
+
+    // --provider codex returns only codex sessions.
+    let out = run(home.path(), &["sessions", "--provider", "codex", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let arr = rows.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected codex rows");
+    assert!(
+        arr.iter().all(|r| r["provider"] == "codex"),
+        "every row must be codex, got: {rows}"
+    );
+
+    // --provider claude excludes codex.
+    let out = run(home.path(), &["sessions", "--provider", "claude", "--json"]);
+    let rows = json_of(&out);
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["provider"] == "claude"),
+        "every row must be claude, got: {rows}"
+    );
+    assert!(
+        !rows.as_array().unwrap().iter().any(|r| r["project"]
+            .as_str()
+            .is_some_and(|p| p.contains("codexproj"))),
+        "claude scope must not include codex projects"
+    );
+}
+
+#[test]
+fn since_until_filter_by_date() {
+    let home = fixture_home();
+    // Everything in the fixture is dated 2026-04; a 2027 floor yields nothing.
+    let out = run(
+        home.path(),
+        &["sessions", "--since", "2027-01-01", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(json_of(&out).as_array().unwrap().is_empty());
+
+    // A 2026 floor keeps them.
+    let out = run(
+        home.path(),
+        &["sessions", "--since", "2026-01-01", "--json"],
+    );
+    assert!(!json_of(&out).as_array().unwrap().is_empty());
+
+    // An --until before the data excludes everything.
+    let out = run(
+        home.path(),
+        &["sessions", "--until", "2026-01-01", "--json"],
+    );
+    assert!(json_of(&out).as_array().unwrap().is_empty());
+}
+
+#[test]
+fn provider_column_shows_only_when_results_span_providers() {
+    // Mixed providers → Provider column present.
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["sessions"]);
+    let s = stdout_of(&out);
+    assert!(s.contains("Provider"), "mixed providers show a column: {s}");
+    assert!(s.contains("codex"), "codex rows labeled");
+
+    // Single provider (claude only) → no Provider column noise.
+    let home = fixture_home();
+    let out = run(home.path(), &["sessions"]);
+    let s = stdout_of(&out);
+    assert!(
+        !s.contains("Provider"),
+        "claude-only output omits the provider column: {s}"
+    );
+}
+
+#[test]
+fn json_always_carries_provider_key() {
+    let home = fixture_home();
+    for args in [
+        vec!["sessions", "--json"],
+        vec!["cost", "--per-session", "--json"],
+    ] {
+        let out = run(home.path(), &args);
+        let rows = json_of(&out);
+        assert!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("provider").is_some()),
+            "{args:?} rows must carry a provider key, got: {rows}"
+        );
+    }
+}
+
 // --- pi provider (unified index) ---
 
 fn fixture_home_with_pi() -> TempDir {

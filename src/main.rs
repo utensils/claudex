@@ -3,6 +3,7 @@ use std::str::FromStr;
 use clap::builder::ValueHint;
 use clap::{CommandFactory, Parser, Subcommand};
 
+use claudex::cli::FilterArgs;
 use claudex::commands;
 use claudex::plan::Plan;
 use claudex::ui::{self, ColorChoice};
@@ -42,6 +43,8 @@ enum Commands {
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Token usage and approximate cost report
     Cost {
@@ -60,6 +63,8 @@ enum Commands {
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Full-text search across session messages
     Search {
@@ -80,6 +85,8 @@ enum Commands {
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Tool usage frequency report
     Tools {
@@ -98,6 +105,8 @@ enum Commands {
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Tail Claude Code's debug log in real time with formatted output
     #[command(after_long_help = "\
@@ -185,6 +194,8 @@ Custom path:
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// PR linkage report — sessions linked to pull requests
     Prs {
@@ -197,6 +208,8 @@ Custom path:
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Most frequently modified files across sessions
     Files {
@@ -212,6 +225,8 @@ Custom path:
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Model usage breakdown — call counts, token usage, cost per model
     Models {
@@ -221,6 +236,8 @@ Custom path:
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Self-update to the latest claudex release (or a specific tag)
     #[command(after_long_help = "\
@@ -297,14 +314,27 @@ fn main() {
             limit,
             json,
             no_index,
-        } => commands::sessions::run(project.as_deref(), file.as_deref(), limit, json, no_index),
+            filter,
+        } => filter.resolve().and_then(|f| {
+            commands::sessions::run(
+                project.as_deref(),
+                file.as_deref(),
+                limit,
+                json,
+                no_index,
+                &f,
+            )
+        }),
         Commands::Cost {
             project,
             per_session,
             limit,
             json,
             no_index,
-        } => commands::cost::run(project.as_deref(), per_session, limit, json, no_index),
+            filter,
+        } => filter.resolve().and_then(|f| {
+            commands::cost::run(project.as_deref(), per_session, limit, json, no_index, &f)
+        }),
         Commands::Search {
             query,
             project,
@@ -312,21 +342,28 @@ fn main() {
             json,
             case_sensitive,
             no_index,
-        } => commands::search::run(
-            &query,
-            project.as_deref(),
-            limit,
-            json,
-            case_sensitive,
-            no_index,
-        ),
+            filter,
+        } => filter.resolve().and_then(|f| {
+            commands::search::run(
+                &query,
+                project.as_deref(),
+                limit,
+                json,
+                case_sensitive,
+                no_index,
+                &f,
+            )
+        }),
         Commands::Tools {
             project,
             per_session,
             limit,
             json,
             no_index,
-        } => commands::tools::run(project.as_deref(), per_session, limit, json, no_index),
+            filter,
+        } => filter.resolve().and_then(|f| {
+            commands::tools::run(project.as_deref(), per_session, limit, json, no_index, &f)
+        }),
         Commands::Watch { raw, follow } => commands::watch::run(raw, follow.as_deref()),
         Commands::Summary {
             json,
@@ -350,19 +387,34 @@ fn main() {
             project,
             limit,
             json,
-        } => commands::turns::run(project.as_deref(), limit, json),
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::turns::run(project.as_deref(), limit, json, &f)),
         Commands::Prs {
             project,
             limit,
             json,
-        } => commands::prs::run(project.as_deref(), limit, json),
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::prs::run(project.as_deref(), limit, json, &f)),
         Commands::Files {
             project,
             path,
             limit,
             json,
-        } => commands::files::run(project.as_deref(), path.as_deref(), limit, json),
-        Commands::Models { project, json } => commands::models::run(project.as_deref(), json),
+            filter,
+        } => filter.resolve().and_then(|f| {
+            commands::files::run(project.as_deref(), path.as_deref(), limit, json, &f)
+        }),
+        Commands::Models {
+            project,
+            json,
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::models::run(project.as_deref(), json, &f)),
         Commands::Update {
             check,
             force,

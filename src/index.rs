@@ -4,13 +4,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, params, params_from_iter};
 
+use crate::cli::ResolvedFilter;
 use crate::parser::ModelSessionStats;
 use crate::providers::Provider;
 use crate::stats::percentile_sorted;
 use crate::types::ModelPricing;
 use crate::ui;
+
+/// Convert an optional substring filter into a SQL `LIKE` value, NULL if absent.
+fn opt_like(filter: Option<&str>) -> SqlValue {
+    match filter {
+        Some(f) => SqlValue::Text(format!("%{f}%")),
+        None => SqlValue::Null,
+    }
+}
 
 const STALE_SECS: u64 = 300;
 const SCHEMA_VERSION: i64 = 5;
@@ -60,6 +70,7 @@ pub struct IndexStore {
 // --- Public result types ---
 
 pub struct IndexedSession {
+    pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
     pub file_path: String,
@@ -81,6 +92,7 @@ pub struct ProjectCostRow {
 }
 
 pub struct SessionCostRow {
+    pub provider: String,
     pub project: String,
     pub session_id: Option<String>,
     pub first_timestamp_ms: Option<i64>,
@@ -105,6 +117,7 @@ pub struct SessionToolRow {
 }
 
 pub struct SearchHit {
+    pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
     pub message_timestamp_ms: Option<i64>,
@@ -153,6 +166,7 @@ pub struct TurnStatsRow {
 }
 
 pub struct PrLinkRow {
+    pub provider: String,
     pub project: String,
     pub session_id: Option<String>,
     pub pr_number: i64,
@@ -921,14 +935,14 @@ impl IndexStore {
         &self,
         project_filter: Option<&str>,
         file_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<IndexedSession>> {
-        let project = project_filter.map(|f| format!("%{f}%"));
-        let file = file_filter.map(|f| format!("%{f}%"));
-        let project_pat = project.as_deref();
-        let file_pat = file.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, s.file_path, s.first_timestamp,
+        let project = opt_like(project_filter);
+        let file = opt_like(file_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id, s.file_path, s.first_timestamp,
                       s.message_count, s.duration_ms, s.model
                FROM sessions s
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
@@ -937,31 +951,32 @@ impl IndexStore {
                        FROM file_modifications fm
                        WHERE fm.session_rowid = s.id
                          AND fm.file_path LIKE ?
-                 ))
+                 )){pred}
                ORDER BY s.first_timestamp DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(
-            params![
-                project_pat,
-                project_pat,
-                project_pat,
-                file_pat,
-                file_pat,
-                limit as i64
-            ],
-            |row| {
-                Ok(IndexedSession {
-                    project_name: row.get(0)?,
-                    session_id: row.get(1)?,
-                    file_path: row.get(2)?,
-                    first_timestamp_ms: row.get(3)?,
-                    message_count: row.get(4)?,
-                    duration_ms: row.get(5)?,
-                    model: row.get(6)?,
-                })
-            },
-        )?;
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![
+            project.clone(),
+            project.clone(),
+            project,
+            file.clone(),
+            file,
+        ];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
+            Ok(IndexedSession {
+                provider: row.get(0)?,
+                project_name: row.get(1)?,
+                session_id: row.get(2)?,
+                file_path: row.get(3)?,
+                first_timestamp_ms: row.get(4)?,
+                message_count: row.get(5)?,
+                duration_ms: row.get(6)?,
+                model: row.get(7)?,
+            })
+        })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -969,11 +984,12 @@ impl IndexStore {
     pub fn query_cost_by_project(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<ProjectCostRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT s.project_name,
                       COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
@@ -984,12 +1000,16 @@ impl IndexStore {
                       GROUP_CONCAT(DISTINCT t.model)
                FROM sessions s
                LEFT JOIN token_usage t ON t.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY s.project_name
                ORDER BY COALESCE(SUM(t.cost_usd), 0) DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             let models_raw: Option<String> = row.get(7)?;
             Ok((
                 row.get::<_, String>(0)?,
@@ -1024,12 +1044,13 @@ impl IndexStore {
     pub fn query_cost_per_session(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SessionCostRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name,
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
                       GROUP_CONCAT(DISTINCT t.model),
@@ -1041,22 +1062,27 @@ impl IndexStore {
                FROM sessions s
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
-                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY s.project_name, s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(SessionCostRow {
-                project: row.get(0)?,
-                session_id: row.get(1)?,
-                first_timestamp_ms: row.get(2)?,
-                models: split_joined_values(row.get::<_, Option<String>>(3)?.as_deref()),
-                input_tokens: row.get(4)?,
-                output_tokens: row.get(5)?,
-                cache_creation_tokens: row.get(6)?,
-                cache_read_tokens: row.get(7)?,
-                cost_usd: row.get(8)?,
+                provider: row.get(0)?,
+                project: row.get(1)?,
+                session_id: row.get(2)?,
+                first_timestamp_ms: row.get(3)?,
+                models: split_joined_values(row.get::<_, Option<String>>(4)?.as_deref()),
+                input_tokens: row.get(5)?,
+                output_tokens: row.get(6)?,
+                cache_creation_tokens: row.get(7)?,
+                cache_read_tokens: row.get(8)?,
+                cost_usd: row.get(9)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1066,20 +1092,25 @@ impl IndexStore {
     pub fn query_tools_aggregate(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<ToolRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT tc.tool_name, SUM(tc.count) AS total
                FROM tool_calls tc
                JOIN sessions s ON s.id = tc.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY tc.tool_name
                ORDER BY total DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(ToolRow {
                 tool_name: row.get(0)?,
                 count: row.get(1)?,
@@ -1092,11 +1123,12 @@ impl IndexStore {
     pub fn query_tools_per_session(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SessionToolRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
                       s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
@@ -1105,15 +1137,18 @@ impl IndexStore {
                       SUM(tc.count)
                FROM sessions s
                JOIN tool_calls tc ON tc.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY group_key, s.project_name, display_session_id, tc.tool_name
-               ORDER BY MIN(s.first_timestamp) DESC"#,
-        )?;
+               ORDER BY MIN(s.first_timestamp) DESC"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let mut order: Vec<String> = Vec::new();
         let mut map: HashMap<String, SessionToolRow> = HashMap::new();
 
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1151,30 +1186,36 @@ impl IndexStore {
         &self,
         query: &str,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<SearchHit>> {
         let fts_query = fts_escape(query);
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id, f.timestamp, f.message_type,
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id, f.timestamp, f.message_type,
                       snippet(messages_fts, 2, '[[', ']]', '...', 20),
                       bm25(messages_fts)
                FROM messages_fts f
                JOIN sessions s ON s.id = f.session_id
                WHERE messages_fts MATCH ?
-                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                ORDER BY bm25(messages_fts)
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fts_query, fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![SqlValue::Text(fts_query), fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(SearchHit {
-                project_name: row.get(0)?,
-                session_id: row.get(1)?,
-                message_timestamp_ms: row.get(2)?,
-                message_type: row.get(3)?,
-                snippet: row.get(4)?,
-                rank: row.get(5)?,
+                provider: row.get(0)?,
+                project_name: row.get(1)?,
+                session_id: row.get(2)?,
+                message_timestamp_ms: row.get(3)?,
+                message_type: row.get(4)?,
+                snippet: row.get(5)?,
+                rank: row.get(6)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1184,23 +1225,27 @@ impl IndexStore {
     pub fn query_turn_stats(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<TurnStatsRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
 
         // Fetch all (project, duration_ms) pairs already sorted by duration for percentile math
-        let mut stmt = self.conn.prepare(
+        let sql = format!(
             r#"SELECT s.project_name, td.duration_ms
                FROM turn_durations td
                JOIN sessions s ON s.id = td.session_rowid
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-               ORDER BY s.project_name, td.duration_ms"#,
-        )?;
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
+               ORDER BY s.project_name, td.duration_ms"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let mut by_project: HashMap<String, Vec<i64>> = HashMap::new();
 
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
 
@@ -1240,34 +1285,40 @@ impl IndexStore {
     pub fn query_pr_links(
         &self,
         project_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<PrLinkRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
         // One row per unique PR URL. A single PR is often referenced from many
         // sessions, which would otherwise produce a wall of duplicates. We
         // surface the most recent mention (MAX(timestamp)) and the session
         // that produced it — SQLite's bare-columns rule pairs the bare
         // columns with the MAX() row.
-        let mut stmt = self.conn.prepare(
-            r#"SELECT s.project_name, s.session_id,
+        let sql = format!(
+            r#"SELECT s.provider, s.project_name, s.session_id,
                       p.pr_number, p.pr_url, p.pr_repository,
                       MAX(p.timestamp) AS latest_ts
                FROM pr_links p
                JOIN sessions s ON s.id = p.session_rowid
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY p.pr_url
                ORDER BY latest_ts DESC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp, limit as i64], |row| {
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(PrLinkRow {
-                project: row.get(0)?,
-                session_id: row.get(1)?,
-                pr_number: row.get(2)?,
-                pr_url: row.get(3)?,
-                pr_repository: row.get(4)?,
-                timestamp: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                provider: row.get(0)?,
+                project: row.get(1)?,
+                session_id: row.get(2)?,
+                pr_number: row.get(3)?,
+                pr_url: row.get(4)?,
+                pr_repository: row.get(5)?,
+                timestamp: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1278,19 +1329,19 @@ impl IndexStore {
         &self,
         project_filter: Option<&str>,
         path_filter: Option<&str>,
+        filter: &ResolvedFilter,
         limit: usize,
     ) -> Result<Vec<FileModRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let path = path_filter.map(|f| format!("%{f}%"));
-        let path_pat = path.as_deref();
-        let mut stmt = self.conn.prepare(
+        let fp = opt_like(project_filter);
+        let path_pat = opt_like(path_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"WITH filtered AS (
                    SELECT fm.file_path, fm.session_rowid, s.project_name, s.last_timestamp
                    FROM file_modifications fm
                    JOIN sessions s ON s.id = fm.session_rowid
                    WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
-                     AND (? IS NULL OR fm.file_path LIKE ?)
+                     AND (? IS NULL OR fm.file_path LIKE ?){pred}
                ),
                ranked_projects AS (
                    SELECT file_path, project_name, COUNT(*) AS project_events,
@@ -1311,28 +1362,33 @@ impl IndexStore {
                  ON rp.file_path = f.file_path AND rp.rn = 1
                GROUP BY f.file_path
                ORDER BY cnt DESC, f.file_path ASC
-               LIMIT ?"#,
-        )?;
-        let rows = stmt.query_map(
-            params![fp, fp, fp, path_pat, path_pat, limit as i64],
-            |row| {
-                Ok(FileModRow {
-                    file_path: row.get(0)?,
-                    modification_count: row.get(1)?,
-                    distinct_session_count: row.get(2)?,
-                    last_touched_timestamp_ms: row.get(3)?,
-                    top_project: row.get(4)?,
-                })
-            },
-        )?;
+               LIMIT ?"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp, path_pat.clone(), path_pat];
+        binds.extend(pred_params);
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
+            Ok(FileModRow {
+                file_path: row.get(0)?,
+                modification_count: row.get(1)?,
+                distinct_session_count: row.get(2)?,
+                last_touched_timestamp_ms: row.get(3)?,
+                top_project: row.get(4)?,
+            })
+        })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
 
-    pub fn query_model_usage(&self, project_filter: Option<&str>) -> Result<Vec<ModelUsageRow>> {
-        let filter = project_filter.map(|f| format!("%{f}%"));
-        let fp = filter.as_deref();
-        let mut stmt = self.conn.prepare(
+    pub fn query_model_usage(
+        &self,
+        project_filter: Option<&str>,
+        filter: &ResolvedFilter,
+    ) -> Result<Vec<ModelUsageRow>> {
+        let fp = opt_like(project_filter);
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
             r#"SELECT t.model,
                       s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
@@ -1346,9 +1402,12 @@ impl IndexStore {
                       COALESCE(t.iterations, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)"#,
-        )?;
-        let rows = stmt.query_map(params![fp, fp, fp], |row| {
+               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
+        );
+        let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
+        binds.extend(pred_params);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((
                 row.get::<_, Option<String>>(0)?.unwrap_or_default(),
                 row.get::<_, String>(1)?,
@@ -1590,6 +1649,8 @@ impl IndexStore {
             ))?;
             stmt.query_map(params![project.clone(), session_id.clone()], |row| {
                 Ok(PrLinkRow {
+                    // Session-detail PRs are not rendered with a provider column.
+                    provider: String::new(),
                     project: row.get(0)?,
                     session_id: row.get(1)?,
                     pr_number: row.get(2)?,

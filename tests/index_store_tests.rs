@@ -8,10 +8,16 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use claudex::cli::ResolvedFilter;
 use claudex::index::IndexStore;
 use claudex::providers::{ClaudeProvider, Provider};
 use claudex::store::SessionStore;
 use tempfile::TempDir;
+
+/// The unfiltered (all-providers, no date/model) filter used by query tests.
+fn all() -> ResolvedFilter {
+    ResolvedFilter::default()
+}
 
 /// Wrap a `projects` directory in the single-Claude-provider set the index sync
 /// methods now expect.
@@ -104,7 +110,7 @@ fn build_fixture() -> (TempDir, Vec<Provider>, IndexStore) {
 fn sync_now_indexes_every_session() {
     let (_tmp, _store, idx) = build_fixture();
     // 2 sessions in alpha + 1 in beta + 1 in gamma = 4
-    let rows = idx.query_sessions(None, None, 100).unwrap();
+    let rows = idx.query_sessions(None, None, &all(), 100).unwrap();
     assert_eq!(rows.len(), 4);
 }
 
@@ -148,22 +154,22 @@ fn sync_indexes_subagent_transcripts_and_rolls_up_parent_reports() {
     let providers = vec![Provider::Claude(ClaudeProvider::at(store))];
     idx.sync_now(&providers).unwrap();
 
-    let indexed_sessions = idx.query_sessions(None, None, 10).unwrap();
+    let indexed_sessions = idx.query_sessions(None, None, &all(), 10).unwrap();
     assert_eq!(indexed_sessions.len(), 2);
 
     let hits = idx
-        .search_fts("Authenticated the dev app", None, 10)
+        .search_fts("Authenticated the dev app", None, &all(), 10)
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].session_id.as_deref(), Some("child-1"));
 
-    let cost_rows = idx.query_cost_per_session(None, 10).unwrap();
+    let cost_rows = idx.query_cost_per_session(None, &all(), 10).unwrap();
     assert_eq!(cost_rows.len(), 1);
     assert_eq!(cost_rows[0].session_id.as_deref(), Some("parent-1"));
     assert_eq!(cost_rows[0].input_tokens, 1000);
     assert_eq!(cost_rows[0].output_tokens, 100);
 
-    let tools = idx.query_tools_per_session(None, 10).unwrap();
+    let tools = idx.query_tools_per_session(None, &all(), 10).unwrap();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].session_id.as_deref(), Some("parent-1"));
     assert_eq!(tools[0].tools.get("Task"), Some(&1));
@@ -188,7 +194,9 @@ fn sync_indexes_subagent_transcripts_and_rolls_up_parent_reports() {
 #[test]
 fn query_sessions_filters_by_project() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_sessions(Some("alpha"), None, 100).unwrap();
+    let rows = idx
+        .query_sessions(Some("alpha"), None, &all(), 100)
+        .unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r.project_name.contains("alpha")));
 }
@@ -196,14 +204,14 @@ fn query_sessions_filters_by_project() {
 #[test]
 fn query_sessions_respects_limit() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_sessions(None, None, 2).unwrap();
+    let rows = idx.query_sessions(None, None, &all(), 2).unwrap();
     assert_eq!(rows.len(), 2);
 }
 
 #[test]
 fn query_cost_by_project_aggregates_token_usage() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_cost_by_project(None, 100).unwrap();
+    let rows = idx.query_cost_by_project(None, &all(), 100).unwrap();
     assert_eq!(rows.len(), 3); // alpha, beta, gamma
 
     let alpha = rows.iter().find(|r| r.project.contains("alpha")).unwrap();
@@ -218,7 +226,7 @@ fn query_cost_by_project_aggregates_token_usage() {
 #[test]
 fn query_cost_per_session_returns_rows_for_sessions_with_usage() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_cost_per_session(None, 100).unwrap();
+    let rows = idx.query_cost_per_session(None, &all(), 100).unwrap();
     // gamma has no assistant message (no token usage) so it's filtered out;
     // the three sessions with tokens should all show up.
     assert_eq!(rows.len(), 3);
@@ -232,7 +240,7 @@ fn query_cost_per_session_returns_rows_for_sessions_with_usage() {
 #[test]
 fn query_tools_aggregate_counts_tool_invocations() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_tools_aggregate(None, 100).unwrap();
+    let rows = idx.query_tools_aggregate(None, &all(), 100).unwrap();
     let counts: std::collections::HashMap<_, _> = rows
         .iter()
         .map(|r| (r.tool_name.clone(), r.count))
@@ -246,7 +254,7 @@ fn query_tools_aggregate_counts_tool_invocations() {
 #[test]
 fn query_tools_per_session_breaks_down_by_session() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_tools_per_session(None, 100).unwrap();
+    let rows = idx.query_tools_per_session(None, &all(), 100).unwrap();
     // Only sessions with tools — gamma has none.
     assert_eq!(rows.len(), 3);
     let sess_a1 = rows
@@ -260,7 +268,7 @@ fn query_tools_per_session_breaks_down_by_session() {
 #[test]
 fn search_fts_finds_terms_in_user_messages() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("foo", None, 10).unwrap();
+    let hits = idx.search_fts("foo", None, &all(), 10).unwrap();
     assert!(!hits.is_empty());
     assert!(
         hits.iter().any(|h| h.snippet.contains("foo")),
@@ -272,21 +280,21 @@ fn search_fts_finds_terms_in_user_messages() {
 #[test]
 fn search_fts_filters_by_project() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("alpha", Some("alpha"), 10).unwrap();
+    let hits = idx.search_fts("alpha", Some("alpha"), &all(), 10).unwrap();
     assert!(hits.iter().all(|h| h.project_name.contains("alpha")));
 }
 
 #[test]
 fn search_fts_respects_limit() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("the", None, 1).unwrap();
+    let hits = idx.search_fts("the", None, &all(), 1).unwrap();
     assert!(hits.len() <= 1);
 }
 
 #[test]
 fn query_turn_stats_returns_percentiles() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_turn_stats(None, 100).unwrap();
+    let rows = idx.query_turn_stats(None, &all(), 100).unwrap();
     let alpha = rows.iter().find(|r| r.project.contains("alpha")).unwrap();
     // alpha has turn_durations [5000, 10000]
     assert_eq!(alpha.turn_count, 2);
@@ -298,7 +306,7 @@ fn query_turn_stats_returns_percentiles() {
 #[test]
 fn query_pr_links_returns_unique_links() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_pr_links(None, 100).unwrap();
+    let rows = idx.query_pr_links(None, &all(), 100).unwrap();
     // Only alpha has a pr-link.
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].pr_number, 7);
@@ -308,7 +316,7 @@ fn query_pr_links_returns_unique_links() {
 #[test]
 fn query_file_mods_returns_file_counts() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_file_mods(None, None, 100).unwrap();
+    let rows = idx.query_file_mods(None, None, &all(), 100).unwrap();
     assert!(rows.iter().any(|r| r.file_path == "src/a.rs"));
     let src_a = rows.iter().find(|r| r.file_path == "src/a.rs").unwrap();
     assert_eq!(src_a.distinct_session_count, 1);
@@ -318,7 +326,7 @@ fn query_file_mods_returns_file_counts() {
 #[test]
 fn query_model_usage_groups_by_model_family() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_model_usage(None).unwrap();
+    let rows = idx.query_model_usage(None, &all()).unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| !r.model.is_empty()));
     let models: Vec<_> = rows.iter().map(|r| r.model.as_str()).collect();
@@ -346,18 +354,18 @@ fn ensure_fresh_is_noop_within_staleness_window() {
     let (_tmp, providers, mut idx) = build_fixture();
     // fixture already synced; ensure_fresh should return immediately without
     // changing anything.
-    let before = idx.query_sessions(None, None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     idx.ensure_fresh(&providers).unwrap();
-    let after = idx.query_sessions(None, None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn force_rebuild_wipes_and_reindexes() {
     let (_tmp, providers, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     let indexed = idx.force_rebuild(&providers).unwrap();
-    let after = idx.query_sessions(None, None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     assert_eq!(before, after);
     assert!(indexed >= before);
 }
@@ -365,17 +373,17 @@ fn force_rebuild_wipes_and_reindexes() {
 #[test]
 fn sync_now_is_idempotent() {
     let (_tmp, providers, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     idx.sync_now(&providers).unwrap();
     idx.sync_now(&providers).unwrap();
-    let after = idx.query_sessions(None, None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     assert_eq!(before, after);
 }
 
 #[test]
 fn sync_picks_up_new_sessions() {
     let (tmp, providers, mut idx) = build_fixture();
-    let before = idx.query_sessions(None, None, 100).unwrap().len();
+    let before = idx.query_sessions(None, None, &all(), 100).unwrap().len();
 
     // Add a fresh session to an existing project.
     write_session(
@@ -388,14 +396,16 @@ fn sync_picks_up_new_sessions() {
     );
 
     idx.sync_now(&providers).unwrap();
-    let after = idx.query_sessions(None, None, 100).unwrap().len();
+    let after = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     assert_eq!(after, before + 1);
 }
 
 #[test]
 fn query_sessions_filters_by_touched_file() {
     let (_tmp, _store, idx) = build_fixture();
-    let rows = idx.query_sessions(None, Some("src/a.rs"), 100).unwrap();
+    let rows = idx
+        .query_sessions(None, Some("src/a.rs"), &all(), 100)
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].session_id.as_deref(), Some("sess-a1"));
 }
@@ -403,7 +413,7 @@ fn query_sessions_filters_by_touched_file() {
 #[test]
 fn query_session_detail_returns_rich_metrics() {
     let (_tmp, _store, idx) = build_fixture();
-    let session = idx.query_sessions(Some("alpha"), None, 10).unwrap();
+    let session = idx.query_sessions(Some("alpha"), None, &all(), 10).unwrap();
     let file_path = session
         .iter()
         .find(|row| row.session_id.as_deref() == Some("sess-a1"))
@@ -442,7 +452,7 @@ fn mixed_model_sessions_are_split_in_token_usage_and_aggregated_per_session() {
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
     idx.sync_now(&providers).unwrap();
 
-    let rows = idx.query_cost_per_session(None, 10).unwrap();
+    let rows = idx.query_cost_per_session(None, &all(), 10).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].input_tokens, 300);
     assert_eq!(rows[0].output_tokens, 60);
@@ -450,7 +460,7 @@ fn mixed_model_sessions_are_split_in_token_usage_and_aggregated_per_session() {
     assert_eq!(rows[0].cache_read_tokens, 75);
     assert_eq!(rows[0].models.len(), 2);
 
-    let models = idx.query_model_usage(None).unwrap();
+    let models = idx.query_model_usage(None, &all()).unwrap();
     assert_eq!(models.len(), 2);
     assert!(models.iter().any(|m| m.model.contains("opus")));
     assert!(models.iter().any(|m| m.model.contains("sonnet")));
@@ -478,7 +488,7 @@ fn zero_token_model_rows_are_skipped() {
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
     idx.sync_now(&providers).unwrap();
 
-    let models = idx.query_model_usage(None).unwrap();
+    let models = idx.query_model_usage(None, &all()).unwrap();
     assert_eq!(models.len(), 1);
     assert!(models[0].model.contains("opus"));
 }
