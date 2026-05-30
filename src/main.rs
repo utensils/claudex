@@ -586,7 +586,7 @@ function _clap_dynamic_completer_claudex() {{
     # directory traversal, and proper path completion.
     local prev_word="${{words[$(( CURRENT - 1 ))]}}"
     case "$prev_word" in
-        --output|-o)
+        --output|-o|--follow)
             _files
             return
             ;;

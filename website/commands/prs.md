@@ -17,6 +17,12 @@ claudex prs [-p/--project <substr>] [-l/--limit <n>] [--json]
 | `-l`, `--limit <n>`        | `20`    | Maximum rows.                                  |
 | `--json`                   | off     | Emit JSON.                                     |
 
+### Shared filters
+
+Also accepts the cross-cutting [filter flags](/guide/providers) that every
+report shares: `--provider`, `--model`, `--since`, `--until`, and
+`--on-disk-only`.
+
 ## Example
 
 ```bash

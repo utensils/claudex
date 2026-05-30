@@ -6,29 +6,63 @@ for providers that report their own cost, from that figure directly.
 
 Source of truth: `src/types.rs`, `ModelPricing::for_model`.
 
-## Tiers
+## Anthropic (Claude) tiers
 
-| Model tier | Input         | Output        | Cache write   | Cache read    |
-| ---------- | ------------- | ------------- | ------------- | ------------- |
-| **Opus**   | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok | $1.50 / MTok  |
-| **Sonnet** | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok  | $0.30 / MTok  |
-| **Haiku**  | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok  | $0.08 / MTok  |
-| **GPT-5**  | $1.25 / MTok  | $10.00 / MTok | $1.25 / MTok  | $0.125 / MTok |
-| **GPT-4**  | $2.50 / MTok  | $10.00 / MTok | $2.50 / MTok  | $1.25 / MTok  |
+Opus and Haiku each have **two** rate cards: the current 4.5+ generation is
+priced well below the older models, so claudex routes them to a separate "latest"
+branch.
 
-(MTok = million tokens. Claude tiers are Anthropic's published rates; the OpenAI
-`gpt-*` tiers are list rates and approximate.)
+| Model tier              | Input         | Output        | Cache write   | Cache read   |
+| ----------------------- | ------------- | ------------- | ------------- | ------------ |
+| **Opus 4.5+** (4.5–4.8) | $5.00 / MTok  | $25.00 / MTok | $6.25 / MTok  | $0.50 / MTok |
+| **Opus** (legacy)       | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok | $1.50 / MTok |
+| **Sonnet** (default)    | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok  | $0.30 / MTok |
+| **Haiku 4.5** (latest)  | $1.00 / MTok  | $5.00 / MTok  | $1.25 / MTok  | $0.10 / MTok |
+| **Haiku** (legacy)      | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok  | $0.08 / MTok |
+
+(MTok = million tokens. These are Anthropic's published rates.)
+
+## OpenAI (`gpt-*`) tiers
+
+OpenAI models carry many sub-tiers. claudex matches the **most specific** name
+first, falling back to a base `gpt-5` / `gpt-4o` rate. For OpenAI models the
+**cache-write** rate equals the input rate, and the **cache-read** rate is the
+posted "cached input" rate.
+
+| Model match                                 | Input         | Output         | Cache read    |
+| ------------------------------------------- | ------------- | -------------- | ------------- |
+| `gpt-5.5-pro`, `gpt-5.4-pro`                | $30.00 / MTok | $180.00 / MTok | $30.00 / MTok |
+| `gpt-5-pro`                                 | $15.00 / MTok | $120.00 / MTok | $15.00 / MTok |
+| `gpt-5.5`                                   | $5.00 / MTok  | $30.00 / MTok  | $0.50 / MTok  |
+| `gpt-5.4`                                   | $2.50 / MTok  | $15.00 / MTok  | $0.25 / MTok  |
+| `gpt-5.4-mini`                              | $0.75 / MTok  | $4.50 / MTok   | $0.075 / MTok |
+| `gpt-5.4-nano`                              | $0.20 / MTok  | $1.25 / MTok   | $0.02 / MTok  |
+| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2` | $1.75 / MTok  | $14.00 / MTok  | $0.175 / MTok |
+| `gpt-5` (base / other `gpt-5*`)             | $1.25 / MTok  | $10.00 / MTok  | $0.125 / MTok |
+| `gpt-4.1`                                   | $2.00 / MTok  | $8.00 / MTok   | $0.50 / MTok  |
+| `gpt-4.1-mini`                              | $0.40 / MTok  | $1.60 / MTok   | $0.10 / MTok  |
+| `gpt-4.1-nano`                              | $0.10 / MTok  | $0.40 / MTok   | $0.025 / MTok |
+| `gpt-4o-mini`                               | $0.15 / MTok  | $0.60 / MTok   | $0.075 / MTok |
+| `gpt-4o-2024-05-13`                         | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok  |
+| `gpt-4o` (base / other `gpt-4*`)            | $2.50 / MTok  | $10.00 / MTok  | $1.25 / MTok  |
+
+(OpenAI tiers are list rates and approximate. Pi-reported sessions use Pi's own
+cost instead — see below.)
 
 ## Tier detection
 
-The tier is chosen from a substring of the model name:
+The tier is chosen by substring-matching the model name, **most specific first**:
 
-- Contains `opus` → Opus; contains `haiku` → Haiku.
-- Contains `gpt-5`/`gpt5` → GPT-5; contains `gpt-4`/`gpt4` → GPT-4.
+- `opus-4-5`/`4.6`/`4.7`/`4.8` → Opus 4.5+ rates; any other `opus` → legacy Opus.
+- `haiku-4-5` → Haiku 4.5 rates; any other `haiku` → legacy Haiku.
+- `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants win over
+  the base rate).
 - Anything else → Sonnet (the safe fallback, including Claude's `<synthetic>`).
 
-So `claude-opus-4-7` maps to Opus, `gpt-5-codex` and `gpt-5.5` map to GPT-5, and
-unknown names map to Sonnet.
+So `claude-opus-4-8` maps to **Opus 4.5+** ($5/$25), an older `claude-opus-3`
+maps to **legacy Opus** ($15/$75), and unknown names map to Sonnet. Note that the
+display **family label** (`models` command) is just `Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`
+— it does not distinguish latest from legacy, but the **cost** does.
 
 ## Provider-supplied cost
 
@@ -73,10 +107,11 @@ accurate enough.
 
 ## Opus:Sonnet ratio
 
-Opus is exactly 5× Sonnet on input, output, and cache reads, and exactly 5×
-Sonnet on cache writes as well. If you see an Opus session that claims cost
-less than 5× what you'd expect from the same session run on Sonnet, check for
-model switching mid-session.
+**Legacy** Opus is exactly 5× Sonnet on every dimension ($15 vs $3 input, $75 vs
+$15 output, etc.). **Current** Opus 4.5+ is much cheaper — $5/$25 input/output,
+roughly 1.7× Sonnet — so do _not_ assume a 5× multiple for present-day Opus
+sessions. If an Opus cost looks lower than you expect, that's usually the 4.5+
+rate card, not an error; mid-session model switching can also lower it.
 
 ## Rendering
 

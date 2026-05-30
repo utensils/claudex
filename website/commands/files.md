@@ -18,6 +18,12 @@ claudex files [-p/--project <substr>] [--path <substr>]
 | `-l`, `--limit <n>`        | `20`    | Maximum files to show.                         |
 | `--json`                   | off     | Emit JSON.                                     |
 
+### Shared filters
+
+Also accepts the cross-cutting [filter flags](/guide/providers) that every
+report shares: `--provider`, `--model`, `--since`, `--until`, and
+`--on-disk-only`.
+
 ## Example
 
 ```bash

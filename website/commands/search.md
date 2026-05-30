@@ -22,6 +22,12 @@ claudex search <query> [-p/--project <substr>]
 | `--case-sensitive`         | off     | Drop back to a file scan (FTS5 is case-insensitive). |
 | `--no-index`               | off     | Scan JSONL files directly.                           |
 
+### Shared filters
+
+Also accepts the cross-cutting [filter flags](/guide/providers) that every
+report shares: `--provider`, `--model`, `--since`, `--until`, and
+`--on-disk-only`.
+
 ## Example
 
 ```bash
