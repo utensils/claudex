@@ -125,11 +125,22 @@ impl ResolvedFilter {
             params.push(SqlValue::Integer(until));
         }
         if let Some(model) = &self.model {
-            sql.push_str(&format!(" AND {alias}.model LIKE ?"));
+            // Match against the session's per-model token_usage rows, not the
+            // `sessions.model` label — that label is "mixed" for sessions that
+            // switched models, which would otherwise drop them from a
+            // `--model opus` / `--model gpt-5` filter.
+            sql.push_str(&format!(
+                " AND EXISTS (SELECT 1 FROM token_usage tu WHERE tu.session_id = {alias}.id AND tu.model LIKE ?)"
+            ));
             params.push(SqlValue::Text(format!("%{model}%")));
         }
         if self.on_disk_only {
-            sql.push_str(&format!(" AND {alias}.present_on_disk = 1"));
+            // Archived transcripts (e.g. Codex's archived_sessions/) still live
+            // on disk, so `present_on_disk = 1` alone keeps them; require they
+            // are not archived too.
+            sql.push_str(&format!(
+                " AND {alias}.present_on_disk = 1 AND {alias}.archived_at IS NULL"
+            ));
         }
         (sql, params)
     }

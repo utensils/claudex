@@ -3,7 +3,7 @@ use chrono::DateTime;
 
 use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
-use crate::parser::stream_records;
+use crate::parser::{parse_session, stream_records};
 use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, short_name};
 use crate::ui;
@@ -133,6 +133,16 @@ fn run_from_files(
     let mut json_hits = Vec::new();
 
     'outer: for (project_raw, path) in &files {
+        // Apply the cross-cutting --since/--until/--model filters at the session
+        // level (the indexed path filters sessions the same way). Skip the parse
+        // when no filter is active so an unfiltered search stays single-pass.
+        if !filter.is_unfiltered()
+            && let Ok(stats) = parse_session(path)
+            && !filter.matches("claude", &stats, false)
+        {
+            continue;
+        }
+
         let project_display = short_name(&decode_project_name(project_raw));
         let mut session_date = None;
         let mut session_id: Option<String> = None;

@@ -413,6 +413,86 @@ fn since_until_filter_by_date() {
 }
 
 #[test]
+fn model_filter_matches_mixed_model_sessions() {
+    // sess-a1 uses claude-opus-4-6 AND claude-sonnet-4-6, so its sessions.model
+    // label is "mixed". A --model filter must still match it via its per-model
+    // token_usage rows — not just the label.
+    let home = fixture_home();
+    for needle in ["opus", "sonnet"] {
+        let out = run(
+            home.path(),
+            &["cost", "--per-session", "--model", needle, "--json"],
+        );
+        assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+        let rows = json_of(&out);
+        assert!(
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["session_id"].as_str() == Some("sess-a1")),
+            "--model {needle} must match the mixed-model session, got: {rows}"
+        );
+    }
+    // A model nobody used matches nothing.
+    let out = run(
+        home.path(),
+        &["cost", "--per-session", "--model", "gpt-5", "--json"],
+    );
+    assert!(json_of(&out).as_array().unwrap().is_empty());
+}
+
+#[test]
+fn on_disk_only_excludes_archived_sessions() {
+    // The Codex fixture's codex-b lives under archived_sessions/ — on disk but
+    // archived. --on-disk-only must drop it.
+    let home = fixture_home_with_codex();
+    let projects: Vec<String> = json_of(&run(home.path(), &["sessions", "--json"]))
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["project"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        projects.iter().any(|p| p.contains("archive")),
+        "archived codex session is present by default"
+    );
+
+    let on_disk: Vec<String> = json_of(&run(home.path(), &["sessions", "--on-disk-only", "--json"]))
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["project"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        !on_disk.iter().any(|p| p.contains("archive")),
+        "--on-disk-only must exclude the archived session, got: {on_disk:?}"
+    );
+    // The live codex session is still there.
+    assert!(on_disk.iter().any(|p| p.contains("codexproj")));
+}
+
+#[test]
+fn no_index_search_applies_date_filter() {
+    // "foo" appears in sess-a1 (dated 2026-04). The file-scan search path must
+    // honor --since, not just emit every textual match.
+    let home = fixture_home();
+    let hit = run(home.path(), &["search", "foo", "--no-index", "--json"]);
+    assert!(
+        !json_of(&hit).as_array().unwrap().is_empty(),
+        "baseline: foo is found without a date filter"
+    );
+
+    let filtered = run(
+        home.path(),
+        &["search", "foo", "--no-index", "--since", "2027-01-01", "--json"],
+    );
+    assert!(
+        json_of(&filtered).as_array().unwrap().is_empty(),
+        "a future --since must exclude the 2026 match in the file-scan path"
+    );
+}
+
+#[test]
 fn provider_column_shows_only_when_results_span_providers() {
     // Mixed providers → Provider column present.
     let home = fixture_home_with_codex();
