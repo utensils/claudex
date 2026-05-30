@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.5.1](https://github.com/utensils/claudex/compare/v0.5.0...v0.5.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **aur:** preserve PKGBUILD perms when rewriting ([#29](https://github.com/utensils/claudex/issues/29)) ([6a4130d](https://github.com/utensils/claudex/commit/6a4130db4bc7222121ff70cecf5a69bfabcf2f4e))
+
 ## [0.5.0](https://github.com/utensils/claudex/compare/v0.4.0...v0.5.0) (2026-05-30)
 
 
