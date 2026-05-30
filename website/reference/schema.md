@@ -1,6 +1,6 @@
 # Index schema
 
-The SQLite index at `~/.claudex/index.db`. **Schema version: 3.**
+The SQLite index at `~/.claudex/index.db`. **Schema version: 5.**
 
 ::: warning Not a stable surface
 Table and column names may change between releases. Use `claudex <cmd> --json`
@@ -11,33 +11,41 @@ for automation. This page is for curiosity and debugging.
 
 Single-row key/value scratchpad.
 
-| Column  | Type    | Notes                               |
-| ------- | ------- | ----------------------------------- |
-| `key`   | TEXT PK | e.g. `schema_version`, `last_sync`. |
-| `value` | TEXT    | Stringified value.                  |
+| Column  | Type    | Notes                                          |
+| ------- | ------- | ---------------------------------------------- |
+| `key`   | TEXT PK | e.g. `schema_version`, `last_sync:<provider>`. |
+| `value` | TEXT    | Stringified value.                             |
 
-`schema_version` is the source of truth for rebuild-on-mismatch logic.
+`schema_version` drives the forward-only migration ladder; `last_sync:<id>` and
+`sessions_root:<id>` track each provider's incremental sync independently.
 
 ## `sessions`
 
-One row per JSONL file.
+One row per transcript file, across every provider.
 
-| Column            | Type        | Notes                                                          |
-| ----------------- | ----------- | -------------------------------------------------------------- |
-| `id`              | INTEGER PK  | Surrogate key.                                                 |
-| `project_name`    | TEXT        | Decoded project name, with `(worktree)` for worktree sessions. |
-| `file_path`       | TEXT UNIQUE | Absolute path to the JSONL.                                    |
-| `file_size`       | INTEGER     | Bytes. Part of the incremental-sync key.                       |
-| `file_mtime`      | INTEGER     | Unix seconds. Part of the sync key.                            |
-| `session_id`      | TEXT        | Session UUID from Claude Code.                                 |
-| `first_timestamp` | INTEGER     | Unix ms.                                                       |
-| `last_timestamp`  | INTEGER     | Unix ms.                                                       |
-| `duration_ms`     | INTEGER     | Last minus first.                                              |
-| `message_count`   | INTEGER     | User + assistant.                                              |
-| `model`           | TEXT        | Sole model tag, or `mixed` when a session switched models.     |
-| `indexed_at`      | INTEGER     | Unix seconds.                                                  |
+| Column              | Type        | Notes                                                              |
+| ------------------- | ----------- | ------------------------------------------------------------------ |
+| `id`                | INTEGER PK  | Surrogate key.                                                     |
+| `project_name`      | TEXT        | Decoded project name, with `(worktree)` for worktree sessions.     |
+| `file_path`         | TEXT UNIQUE | Absolute path to the transcript.                                   |
+| `file_size`         | INTEGER     | Bytes. Part of the incremental-sync key.                           |
+| `file_mtime`        | INTEGER     | Unix seconds. Part of the sync key.                                |
+| `session_id`        | TEXT        | Session id from the provider.                                      |
+| `parent_session_id` | TEXT        | Set for Claude subagent transcripts (roll up to parent).           |
+| `first_timestamp`   | INTEGER     | Unix ms.                                                           |
+| `last_timestamp`    | INTEGER     | Unix ms.                                                           |
+| `duration_ms`       | INTEGER     | Last minus first.                                                  |
+| `message_count`     | INTEGER     | User + assistant.                                                  |
+| `model`             | TEXT        | Sole model tag, or `mixed` when a session switched models.         |
+| `indexed_at`        | INTEGER     | Unix seconds.                                                      |
+| `provider`          | TEXT        | `claude` / `codex` / `pi`.                                         |
+| `present_on_disk`   | INTEGER     | `1` if the source file still exists, `0` if retained-after-delete. |
+| `archived_at`       | INTEGER     | Unix seconds when the file was archived/removed (NULL if live).    |
+| `last_seen`         | INTEGER     | Unix seconds of the last sync that observed the file.              |
+| `extras`            | TEXT        | Provider-specific metadata as a JSON object (cli_version, git, …). |
 
-Indexes: `idx_sessions_project`, `idx_sessions_timestamp`.
+Indexes: `idx_sessions_project`, `idx_sessions_timestamp`, `idx_sessions_parent`,
+`idx_sessions_provider`, `idx_sessions_present`.
 
 ## `token_usage`
 
@@ -158,7 +166,9 @@ matches `migration`, `migrated`, `migrates`.
 
 ## Migration strategy
 
-Schema changes follow one rule: bump `SCHEMA_VERSION`. A version mismatch on
-open triggers a full rebuild. Additive changes (new column defaulting to 0,
-new table) go inside the same `CREATE TABLE IF NOT EXISTS` block; destructive
-changes still need a version bump.
+Migrations are **forward-only and non-destructive**. Bumping `SCHEMA_VERSION`
+runs a migration ladder of guarded `ALTER TABLE ADD COLUMN` steps — it never
+drops tables, because the index retains sessions that have left disk and those
+rows can't be rebuilt. Add a column to the `CREATE TABLE IF NOT EXISTS` block
+**and** an additive migration step, then bump the version. The only destructive
+path is `claudex index --force`.

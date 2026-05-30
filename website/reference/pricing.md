@@ -1,36 +1,47 @@
 # Pricing model
 
-All costs in claudex are **approximate**. They come from published Anthropic
-pricing tiers applied to the token-usage blocks recorded in each session.
+All costs in claudex are **approximate**. They come from published per-model
+pricing tiers applied to the token-usage blocks recorded in each session — or,
+for providers that report their own cost, from that figure directly.
 
 Source of truth: `src/types.rs`, `ModelPricing::for_model`.
 
 ## Tiers
 
-| Model tier | Input         | Output        | Cache write   | Cache read   |
-| ---------- | ------------- | ------------- | ------------- | ------------ |
-| **Opus**   | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok | $1.50 / MTok |
-| **Sonnet** | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok  | $0.30 / MTok |
-| **Haiku**  | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok  | $0.08 / MTok |
+| Model tier | Input         | Output        | Cache write   | Cache read    |
+| ---------- | ------------- | ------------- | ------------- | ------------- |
+| **Opus**   | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok | $1.50 / MTok  |
+| **Sonnet** | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok  | $0.30 / MTok  |
+| **Haiku**  | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok  | $0.08 / MTok  |
+| **GPT-5**  | $1.25 / MTok  | $10.00 / MTok | $1.25 / MTok  | $0.125 / MTok |
+| **GPT-4**  | $2.50 / MTok  | $10.00 / MTok | $2.50 / MTok  | $1.25 / MTok  |
 
-(MTok = million tokens.)
+(MTok = million tokens. Claude tiers are Anthropic's published rates; the OpenAI
+`gpt-*` tiers are list rates and approximate.)
 
 ## Tier detection
 
 The tier is chosen from a substring of the model name:
 
-- Name contains `opus` → Opus.
-- Name contains `haiku` → Haiku.
-- Anything else → Sonnet (the safe fallback).
+- Contains `opus` → Opus; contains `haiku` → Haiku.
+- Contains `gpt-5`/`gpt5` → GPT-5; contains `gpt-4`/`gpt4` → GPT-4.
+- Anything else → Sonnet (the safe fallback, including Claude's `<synthetic>`).
 
-So `claude-opus-4-7`, `claude-opus-4-6`, and `opus` all map to Opus.
-`claude-haiku-4-5-20251001` maps to Haiku. Unknown or missing names map to
-Sonnet — the middle tier — which underestimates Opus and overestimates Haiku
-by a small amount.
+So `claude-opus-4-7` maps to Opus, `gpt-5-codex` and `gpt-5.5` map to GPT-5, and
+unknown names map to Sonnet.
+
+## Provider-supplied cost
+
+Pi computes a cost for every assistant message (and reports `$0` for local
+Ollama models). claudex **trusts that figure** rather than re-deriving it from
+the tier table — so a Pi session's cost reflects exactly what Pi billed,
+including free local inference. Internally this is `ModelSessionStats::embedded_cost`,
+which the index uses in place of `cost_for_model` when present.
 
 ## Computation
 
-For each `(session, model)` row in the `token_usage` table:
+For each `(session, model)` row in the `token_usage` table, when no
+provider-supplied cost is present:
 
 ```
 cost = (input  × input_per_mtok
@@ -39,10 +50,9 @@ cost = (input  × input_per_mtok
       + cache_read  × cache_read_per_mtok) / 1_000_000
 ```
 
-The four token counts come from the `usage` block on each assistant message
-(Claude Code records them verbatim from the API response).
-
-Sessions that switched models accumulate multiple rows; totals sum across them.
+For Codex, `input`/`cache_read` come from the last cumulative `token_count`
+record (the cached portion of the prompt is billed as a cache read). Sessions
+that switched models accumulate multiple rows; totals sum across them.
 
 ## Why it's approximate
 

@@ -25,28 +25,19 @@ Sessions inside `~/.claude/worktrees/<branch>/…` are rolled up to the parent
 project via `canonical_project_path`, so a worktree checkout of `claudex` ends
 up grouped with the main `claudex` project for every report.
 
-### `~/.codex/sessions/**/rollout-*.jsonl`
+### `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions/**`
 
-OpenAI Codex CLI active session transcripts. `claudex codex` scans these files
-recursively, counts session metadata, user/agent messages, reasoning items, tool
-calls/results, review events, compactions, aborts, CLI versions, and per-project
-activity.
+OpenAI Codex CLI session transcripts. The Codex provider ingests these into the
+index like any other: project from the transcript's `cwd`, model from
+`turn_context`, token usage from the last cumulative `token_count` record, tool
+calls, reasoning, and message text for full-text search. Files under
+`archived_sessions/` are indexed and flagged archived.
 
-### `~/.codex/archived_sessions/rollout-*.jsonl`
+### `~/.pi/agent/sessions/<cwd-encoded>/*.jsonl`
 
-Codex's archived rollout transcripts. `claudex codex` includes these in the
-same totals while also reporting active vs archived session-file counts.
-
-### `~/.codex/session_index.jsonl`
-
-Optional Codex title index. When present, `claudex codex` uses it to attach
-thread titles to the `most_recent` JSON object and text report.
-
-### `~/.codex/state_5.sqlite`
-
-Optional Codex state database. `claudex codex` opens this read-only and reports
-thread counts, token totals, top projects, and model/provider counts when the
-`threads` table is available.
+Pi session transcripts, one directory per working directory. The Pi provider
+ingests per-model token usage and trusts Pi's own per-message cost (local Ollama
+models report `$0`).
 
 ## Writes
 
@@ -71,11 +62,12 @@ so a two-terminal workflow works without configuration.
 - `NO_COLOR` — disable color output (honored when `--color` is `auto`).
 - `COLUMNS` — override terminal width for table rendering.
 
-## Nothing lives in `~/.claude/` or `~/.codex/` that claudex owns
+## Nothing in the provider directories belongs to claudex
 
-Claudex is strictly a reader of `~/.claude/projects/` and `~/.codex/`. It never
-writes there, never modifies transcripts, never interferes with Claude Code or
-Codex state.
+Claudex is strictly a reader of `~/.claude/projects/`, `~/.codex/`, and
+`~/.pi/agent/`. It never writes there, never modifies transcripts, never
+interferes with Claude Code, Codex, or Pi state. (`claudex skills install` does
+write `SKILL.md` files into harness config dirs, but only when you ask it to.)
 
 Uninstalling is `rm -rf ~/.claudex` plus `cargo uninstall claudex` (or deleting
 the binary if installed another way).
