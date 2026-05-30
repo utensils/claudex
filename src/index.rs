@@ -16,7 +16,38 @@ use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
+
+/// Child tables whose rows hang off a single `sessions` row, paired with the
+/// column that references `sessions(id)`. `messages_fts` is a virtual table
+/// (no `ON DELETE CASCADE`), so we always clean it up explicitly; the rest are
+/// listed here so re-indexing a session in place can clear its derived rows
+/// without deleting (and thus losing the retained) parent row.
+const DERIVED_TABLES: &[(&str, &str)] = &[
+    ("token_usage", "session_id"),
+    ("tool_calls", "session_id"),
+    ("turn_durations", "session_rowid"),
+    ("pr_links", "session_rowid"),
+    ("file_modifications", "session_rowid"),
+    ("thinking_usage", "session_rowid"),
+    ("stop_reasons", "session_rowid"),
+    ("attachments", "session_rowid"),
+    ("permission_changes", "session_rowid"),
+    ("messages_fts", "session_id"),
+];
+
+/// Delete every derived row for a session id across all child tables. Used when
+/// re-indexing a changed file in place: the `sessions` row (and its retained
+/// metadata) is kept and updated, but its derived data is rebuilt from scratch.
+fn delete_session_derived(tx: &rusqlite::Transaction, session_id: i64) -> Result<()> {
+    for (table, col) in DERIVED_TABLES {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE {col} = ?"),
+            params![session_id],
+        )?;
+    }
+    Ok(())
+}
 
 fn now_unix_secs() -> u64 {
     SystemTime::now()
@@ -248,6 +279,15 @@ struct MessageForFts {
     timestamp_ms: Option<i64>,
 }
 
+/// A `sessions` row's identity and on-disk fingerprint, loaded at the start of
+/// a sync so changed/unchanged/missing files can be reconciled in one pass.
+struct KnownFile {
+    id: i64,
+    size: i64,
+    mtime: i64,
+    present: i64,
+}
+
 struct ParseEntry {
     session_id: Option<String>,
     first_timestamp: Option<DateTime<Utc>>,
@@ -308,26 +348,11 @@ impl IndexStore {
             .ok()
             .and_then(|s| s.parse().ok());
 
-        if stored_version != Some(SCHEMA_VERSION) {
-            // Drop everything and start fresh — this DB is a cache, data is expendable
-            self.conn.execute_batch(
-                r#"
-                DROP TABLE IF EXISTS messages_fts;
-                DROP TABLE IF EXISTS permission_changes;
-                DROP TABLE IF EXISTS attachments;
-                DROP TABLE IF EXISTS stop_reasons;
-                DROP TABLE IF EXISTS thinking_usage;
-                DROP TABLE IF EXISTS file_modifications;
-                DROP TABLE IF EXISTS pr_links;
-                DROP TABLE IF EXISTS turn_durations;
-                DROP TABLE IF EXISTS tool_calls;
-                DROP TABLE IF EXISTS token_usage;
-                DROP TABLE IF EXISTS sessions;
-                DROP TABLE IF EXISTS meta;
-                "#,
-            )?;
-        }
-
+        // The index is no longer an expendable cache: retained sessions (those
+        // archived or deleted from disk) cannot be rebuilt from source, so a
+        // schema bump must MIGRATE rather than DROP. The forward-only ladder in
+        // `migrate_schema` applies additive `ALTER TABLE`s; the only destructive
+        // path left is the explicit `claudex index --force`.
         self.conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS meta (
@@ -347,7 +372,12 @@ impl IndexStore {
                 duration_ms     INTEGER NOT NULL DEFAULT 0,
                 message_count   INTEGER NOT NULL DEFAULT 0,
                 model           TEXT,
-                indexed_at      INTEGER NOT NULL
+                indexed_at      INTEGER NOT NULL,
+                provider        TEXT    NOT NULL DEFAULT 'claude',
+                present_on_disk INTEGER NOT NULL DEFAULT 1,
+                archived_at     INTEGER,
+                last_seen       INTEGER,
+                extras          TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_project   ON sessions(project_name);
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(first_timestamp DESC);
@@ -429,11 +459,60 @@ impl IndexStore {
             "#,
         )?;
 
+        // Apply forward-only migrations for DBs created before the current
+        // schema. Fresh DBs already have every column from the CREATE above, so
+        // the guarded `ALTER`s no-op; older DBs gain the new columns in place.
+        self.migrate_schema(stored_version)?;
+
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
             params![SCHEMA_VERSION.to_string()],
         )?;
 
+        Ok(())
+    }
+
+    /// Returns true if `table` has a column named `col`. Table/column names are
+    /// hardcoded literals at every call site, so the formatted PRAGMA is safe.
+    fn column_exists(&self, table: &str, col: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let found = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == col);
+        Ok(found)
+    }
+
+    /// `ALTER TABLE ADD COLUMN` is not idempotent in SQLite (there is no
+    /// `IF NOT EXISTS`), so guard it with a `PRAGMA table_info` check.
+    fn add_column_if_missing(&self, table: &str, col: &str, decl: &str) -> Result<()> {
+        if !self.column_exists(table, col)? {
+            self.conn
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {decl};"))?;
+        }
+        Ok(())
+    }
+
+    /// Forward-only migration ladder keyed on the stored `schema_version`. Each
+    /// step is additive and idempotent so retained data is never lost. `from`
+    /// is `None` for a brand-new DB (every column already exists → all no-ops).
+    fn migrate_schema(&self, from: Option<i64>) -> Result<()> {
+        // v4 → v5: provider awareness + additive retention metadata.
+        if from.unwrap_or(0) < 5 {
+            self.add_column_if_missing("sessions", "provider", "TEXT NOT NULL DEFAULT 'claude'")?;
+            self.add_column_if_missing(
+                "sessions",
+                "present_on_disk",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+            self.add_column_if_missing("sessions", "archived_at", "INTEGER")?;
+            self.add_column_if_missing("sessions", "last_seen", "INTEGER")?;
+            self.add_column_if_missing("sessions", "extras", "TEXT")?;
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider);
+                 CREATE INDEX IF NOT EXISTS idx_sessions_present  ON sessions(present_on_disk);",
+            )?;
+        }
         Ok(())
     }
 
@@ -502,22 +581,30 @@ impl IndexStore {
     }
 
     fn sync(&mut self, store: &SessionStore) -> Result<usize> {
-        // Load known file states
-        let mut known: HashMap<String, (i64, i64)> = HashMap::new();
+        // Load known file states. Scope to the Claude provider so a future
+        // per-provider sync never treats another provider's rows as "missing"
+        // (which would archive them). `id`/`present_on_disk` let us re-index in
+        // place and un-archive a file that reappears unchanged.
+        let mut known: HashMap<String, KnownFile> = HashMap::new();
         {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT file_path, file_size, file_mtime FROM sessions")?;
+            let mut stmt = self.conn.prepare(
+                "SELECT file_path, id, file_size, file_mtime, present_on_disk
+                 FROM sessions WHERE provider = 'claude'",
+            )?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
+                    KnownFile {
+                        id: row.get::<_, i64>(1)?,
+                        size: row.get::<_, i64>(2)?,
+                        mtime: row.get::<_, i64>(3)?,
+                        present: row.get::<_, i64>(4)?,
+                    },
                 ))
             })?;
             for row in rows {
-                let (p, sz, mt) = row?;
-                known.insert(p, (sz, mt));
+                let (p, k) = row?;
+                known.insert(p, k);
             }
         }
 
@@ -544,26 +631,29 @@ impl IndexStore {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
 
-            if let Some(&(ksz, kmt)) = known.get(&path_str) {
-                if ksz == size && kmt == mtime {
-                    continue; // unchanged
+            let prior = known.get(&path_str);
+            let reuse_id = match prior {
+                Some(k) if k.size == size && k.mtime == mtime => {
+                    // Unchanged on disk. If it was previously archived (file had
+                    // disappeared and came back byte-identical), un-archive it.
+                    if k.present == 0 {
+                        tx.execute(
+                            "UPDATE sessions
+                             SET present_on_disk = 1, archived_at = NULL, last_seen = ?
+                             WHERE id = ?",
+                            params![now_secs, k.id],
+                        )?;
+                    }
+                    continue;
                 }
-                // Changed: remove old FTS rows first (no CASCADE on virtual table)
-                if let Ok(old_id) = tx.query_row(
-                    "SELECT id FROM sessions WHERE file_path = ?",
-                    params![path_str],
-                    |row| row.get::<_, i64>(0),
-                ) {
-                    tx.execute(
-                        "DELETE FROM messages_fts WHERE session_id = ?",
-                        params![old_id],
-                    )?;
+                // Changed: rebuild this session's derived rows in place, keeping
+                // the stable `sessions` rowid (and any retained metadata).
+                Some(k) => {
+                    delete_session_derived(&tx, k.id)?;
+                    Some(k.id)
                 }
-                tx.execute(
-                    "DELETE FROM sessions WHERE file_path = ?",
-                    params![path_str],
-                )?;
-            }
+                None => None,
+            };
 
             let decoded = decode_project_name(project_raw);
             let project_display = canonical_project_path(&decoded).to_string();
@@ -585,28 +675,56 @@ impl IndexStore {
             let last_ts = entry.last_timestamp.map(|d| d.timestamp_millis());
             let session_model = session_model_label(entry.model.as_deref(), &entry.model_usage);
 
-            tx.execute(
-                r#"INSERT INTO sessions
-                   (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
-                    first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-                params![
-                    project_display,
-                    path_str,
-                    size,
-                    mtime,
-                    entry.session_id,
-                    parent_session_id,
-                    first_ts,
-                    last_ts,
-                    entry.duration_ms as i64,
-                    entry.message_count as i64,
-                    session_model,
-                    now_secs,
-                ],
-            )?;
-
-            let row_id = tx.last_insert_rowid();
+            let row_id = if let Some(old_id) = reuse_id {
+                tx.execute(
+                    r#"UPDATE sessions SET
+                           project_name = ?, file_size = ?, file_mtime = ?, session_id = ?,
+                           parent_session_id = ?, first_timestamp = ?, last_timestamp = ?,
+                           duration_ms = ?, message_count = ?, model = ?, indexed_at = ?,
+                           provider = 'claude', present_on_disk = 1, archived_at = NULL, last_seen = ?
+                       WHERE id = ?"#,
+                    params![
+                        project_display,
+                        size,
+                        mtime,
+                        entry.session_id,
+                        parent_session_id,
+                        first_ts,
+                        last_ts,
+                        entry.duration_ms as i64,
+                        entry.message_count as i64,
+                        session_model,
+                        now_secs,
+                        now_secs,
+                        old_id,
+                    ],
+                )?;
+                old_id
+            } else {
+                tx.execute(
+                    r#"INSERT INTO sessions
+                       (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
+                        first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at,
+                        provider, present_on_disk, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'claude', 1, ?)"#,
+                    params![
+                        project_display,
+                        path_str,
+                        size,
+                        mtime,
+                        entry.session_id,
+                        parent_session_id,
+                        first_ts,
+                        last_ts,
+                        entry.duration_ms as i64,
+                        entry.message_count as i64,
+                        session_model,
+                        now_secs,
+                        now_secs,
+                    ],
+                )?;
+                tx.last_insert_rowid()
+            };
 
             if entry.model_usage.is_empty() && entry.usage.total_tokens() > 0 {
                 let cost = entry.usage.cost_for_model(entry.model.as_deref());
@@ -736,17 +854,19 @@ impl IndexStore {
             indexed_count += 1;
         }
 
-        // Remove stale entries for deleted files
-        for path in known.keys() {
-            if !seen.contains(path) {
-                if let Ok(id) = tx.query_row(
-                    "SELECT id FROM sessions WHERE file_path = ?",
-                    params![path],
-                    |row| row.get::<_, i64>(0),
-                ) {
-                    tx.execute("DELETE FROM messages_fts WHERE session_id = ?", params![id])?;
-                }
-                tx.execute("DELETE FROM sessions WHERE file_path = ?", params![path])?;
+        // Soft-delete entries whose source file is gone. The index is additive:
+        // archived/deleted sessions are RETAINED (their derived rows and FTS
+        // content stay) and merely flagged, so historical usage never vanishes
+        // when a transcript is cleaned off disk. `claudex index --force` is the
+        // only path that actually discards retained data.
+        for (path, k) in &known {
+            if !seen.contains(path) && k.present == 1 {
+                tx.execute(
+                    "UPDATE sessions
+                     SET present_on_disk = 0, archived_at = COALESCE(archived_at, ?)
+                     WHERE id = ?",
+                    params![now_secs, k.id],
+                )?;
             }
         }
 

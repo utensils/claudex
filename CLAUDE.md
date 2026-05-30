@@ -188,7 +188,7 @@ Three invariants worth knowing:
         ▼   store::SessionStore (discovery + path decoding)
         ▼   parser::parse_session / stream_records (streaming JSONL → SessionStats)
         ▼
-~/.claudex/index.db  (SQLite, schema_version=3, created on demand)
+~/.claudex/index.db  (SQLite, schema_version=4, created on demand)
         │
         ▼   index::IndexStore::ensure_fresh / sync_now / force_rebuild
         ▼

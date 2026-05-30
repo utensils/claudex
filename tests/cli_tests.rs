@@ -1027,15 +1027,15 @@ fn claudex_dir_resyncs_when_sessions_root_changes() {
     assert_eq!(rows_a.len(), 2, "home_a should have two sessions");
 
     let rows_b = run_with(home_b.path());
-    assert_eq!(
-        rows_b.len(),
-        1,
-        "sharing CLAUDEX_DIR across HOMEs must trigger a re-sync; got {rows_b:?}"
-    );
+    // The index is additive: home_a's sessions are retained (soft-deleted, not
+    // purged) when its files vanish from this root. The root change must still
+    // trigger a re-sync that indexes home_b — a stale-cache bug would return
+    // only home_a's two sessions, with gamma absent.
     assert!(
-        rows_b[0]["project"].as_str().unwrap().contains("gamma"),
-        "expected gamma session, got: {:?}",
-        rows_b[0]
+        rows_b
+            .iter()
+            .any(|r| r["project"].as_str().unwrap_or("").contains("gamma")),
+        "sharing CLAUDEX_DIR across HOMEs must trigger a re-sync that indexes home_b; got {rows_b:?}"
     );
 }
 
