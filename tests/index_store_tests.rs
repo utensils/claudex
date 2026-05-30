@@ -17,12 +17,19 @@ fn write_session(projects: &Path, encoded_project: &str, session: &str, lines: &
     let dir = projects.join(encoded_project);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{session}.jsonl"));
-    let mut f = fs::File::create(&path).unwrap();
+    write_jsonl(&path, lines)
+}
+
+fn write_jsonl(path: &Path, lines: &[&str]) -> PathBuf {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let mut f = fs::File::create(path).unwrap();
     for line in lines {
         writeln!(f, "{line}").unwrap();
     }
     f.flush().unwrap();
-    path
+    path.to_path_buf()
 }
 
 /// Build a fixture with three projects and two sessions each, exercising
@@ -90,6 +97,82 @@ fn sync_now_indexes_every_session() {
     // 2 sessions in alpha + 1 in beta + 1 in gamma = 4
     let rows = idx.query_sessions(None, None, 100).unwrap();
     assert_eq!(rows.len(), 4);
+}
+
+#[test]
+fn sync_indexes_subagent_transcripts_and_rolls_up_parent_reports() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    let encoded = "-Users-test-Projects-agents";
+
+    let parent_path = write_session(
+        &projects,
+        encoded,
+        "parent-1",
+        &[
+            r#"{"type":"user","sessionId":"parent-1","timestamp":"2026-04-10T10:00:00Z","message":{"content":"delegate work"}}"#,
+            r#"{"type":"assistant","sessionId":"parent-1","timestamp":"2026-04-10T10:01:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","name":"Task","id":"t1","input":{}},{"type":"text","text":"started subagent"}]}}"#,
+        ],
+    );
+    write_jsonl(
+        &projects
+            .join(encoded)
+            .join("parent-1/subagents/workflows/run-1/agent-child.jsonl"),
+        &[
+            r#"{"type":"user","isSidechain":true,"sessionId":"child-1","timestamp":"2026-04-10T10:02:00Z","message":{"content":"subagent prompt"}}"#,
+            r#"{"type":"assistant","isSidechain":true,"sessionId":"child-1","timestamp":"2026-04-10T10:03:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":900,"output_tokens":80,"cache_creation_input_tokens":10,"cache_read_input_tokens":50},"content":[{"type":"tool_use","name":"Edit","id":"t2","input":{}},{"type":"text","text":"Authenticated the dev app from a subagent"}]}}"#,
+            r#"{"type":"file-history-snapshot","isSidechain":true,"snapshot":{"trackedFileBackups":{"src/subagent.rs":{"backupFileName":"x"}}},"timestamp":"2026-04-10T10:03:10Z"}"#,
+        ],
+    );
+    write_jsonl(
+        &projects
+            .join(encoded)
+            .join("parent-1/subagents/workflows/run-1/journal.jsonl"),
+        &[r#"{"type":"started","agentId":"agent-child"}"#],
+    );
+
+    let store = SessionStore::at(projects);
+    let files = store.all_session_files(None).unwrap();
+    assert_eq!(files.len(), 2, "journal.jsonl must not be discovered");
+
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&store).unwrap();
+
+    let indexed_sessions = idx.query_sessions(None, None, 10).unwrap();
+    assert_eq!(indexed_sessions.len(), 2);
+
+    let hits = idx
+        .search_fts("Authenticated the dev app", None, 10)
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].session_id.as_deref(), Some("child-1"));
+
+    let cost_rows = idx.query_cost_per_session(None, 10).unwrap();
+    assert_eq!(cost_rows.len(), 1);
+    assert_eq!(cost_rows[0].session_id.as_deref(), Some("parent-1"));
+    assert_eq!(cost_rows[0].input_tokens, 1000);
+    assert_eq!(cost_rows[0].output_tokens, 100);
+
+    let tools = idx.query_tools_per_session(None, 10).unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].session_id.as_deref(), Some("parent-1"));
+    assert_eq!(tools[0].tools.get("Task"), Some(&1));
+    assert_eq!(tools[0].tools.get("Edit"), Some(&1));
+
+    let detail = idx
+        .query_session_detail(&parent_path.to_string_lossy())
+        .unwrap()
+        .expect("parent detail");
+    assert_eq!(detail.message_count, 4);
+    assert_eq!(detail.input_tokens, 1000);
+    assert_eq!(detail.output_tokens, 100);
+    assert!(
+        detail
+            .files_modified
+            .contains(&"src/subagent.rs".to_string())
+    );
+    assert_eq!(detail.subagent_files.len(), 1);
+    assert!(detail.subagent_files[0].ends_with("agent-child.jsonl"));
 }
 
 #[test]

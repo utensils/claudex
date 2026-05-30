@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -44,6 +44,8 @@ impl SessionStore {
             let path = entry.path();
             if path.is_file() && path.extension().is_some_and(|e| e == "jsonl") {
                 files.push(path);
+            } else if path.is_dir() {
+                collect_subagent_transcripts(&path.join("subagents"), &mut files)?;
             }
         }
         files.sort();
@@ -178,6 +180,56 @@ fn looks_like_session_id_prefix(selector: &str) -> bool {
     compact.len() >= 6 && compact.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+fn collect_subagent_transcripts(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_subagent_transcripts(&path, files)?;
+        } else if is_subagent_transcript_file(&path) {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_subagent_transcript_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "jsonl")
+        && path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|name| name.starts_with("agent-"))
+}
+
+/// Return the parent top-level session id for a nested subagent transcript.
+///
+/// Claude Code stores subagent transcripts under
+/// `<project>/<parent-session>/subagents/**/agent-*.jsonl`. Workflow
+/// `journal.jsonl` files and `agent-*.meta.json` sidecars are deliberately
+/// ignored by discovery, so only transcript files return a parent id here.
+pub fn parent_session_id_for_path(project_path: &Path, session_file: &Path) -> Option<String> {
+    let rel = session_file.strip_prefix(project_path).ok()?;
+    let mut components = rel.components();
+    let parent = match components.next()? {
+        Component::Normal(s) => s.to_string_lossy().into_owned(),
+        _ => return None,
+    };
+    if parent.ends_with(".jsonl") {
+        return None;
+    }
+    match components.next()? {
+        Component::Normal(s) if s == "subagents" => {}
+        _ => return None,
+    }
+    if is_subagent_transcript_file(session_file) {
+        Some(parent)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +320,21 @@ mod tests {
         let matches = find_matching_sessions(&files, "alpha");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].1, PathBuf::from("/tmp/other-session.jsonl"));
+    }
+
+    #[test]
+    fn parent_session_id_detects_subagent_transcripts() {
+        let project = PathBuf::from("/tmp/projects/p");
+        let child = project.join("parent-123/subagents/workflows/run-1/agent-abc.jsonl");
+        assert_eq!(
+            parent_session_id_for_path(&project, &child).as_deref(),
+            Some("parent-123")
+        );
+
+        let top_level = project.join("parent-123.jsonl");
+        assert_eq!(parent_session_id_for_path(&project, &top_level), None);
+
+        let journal = project.join("parent-123/subagents/workflows/run-1/journal.jsonl");
+        assert_eq!(parent_session_id_for_path(&project, &journal), None);
     }
 }
