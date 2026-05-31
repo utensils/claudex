@@ -381,13 +381,16 @@ fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
             r#"{"timestamp":"2026-05-30T00:01:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr create --fill","stdout":"https://github.com/utensils/claudex/pull/38\n"}}"#,
             r#"{"timestamp":"2026-05-30T00:02:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":["sed","-n","1,20p","SKILL.md"],"stdout":"example: gh pr view https://github.com/org/repo/pull/123\n"}}"#,
             r#"{"timestamp":"2026-05-30T00:03:00Z","type":"response_item","payload":{"type":"function_call_output","call_id":"search","output":"src/providers/pr.rs: text contains ::git-create-pr https://github.com/utensils/claudex/pull/1"}}"#,
+            r#"{"timestamp":"2026-05-30T00:04:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1","arguments":"{\"cmd\":\"gh pr view\"}"}}"#,
+            r#"{"timestamp":"2026-05-30T00:05:00Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"https://github.com/utensils/aethon/pull/167"}}"#,
+            r#"{"timestamp":"2026-05-30T00:06:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Opened https://github.com/utensils/ptywright/pull/14"}]}}"#,
         ],
     );
     let providers = codex_providers(codex);
     let db_path = tmp.path().join("index.db");
     let mut idx = IndexStore::open_at(&db_path).unwrap();
     idx.sync_now(&providers).unwrap();
-    assert_eq!(idx.query_pr_links(None, &all(), 100).unwrap().len(), 1);
+    assert_eq!(idx.query_pr_links(None, &all(), 100).unwrap().len(), 3);
     drop(idx);
 
     let conn = Connection::open(&db_path).unwrap();
@@ -409,10 +412,18 @@ fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
     let mut idx = IndexStore::open_at(&db_path).unwrap();
     idx.ensure_pr_links_fresh(&providers).unwrap();
     let rows = idx.query_pr_links(None, &all(), 100).unwrap();
-    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.len(), 3);
     assert_eq!(
-        rows[0].pr_url,
+        rows.iter().find(|row| row.pr_number == 38).unwrap().pr_url,
         "https://github.com/utensils/claudex/pull/38"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.pr_url == "https://github.com/utensils/aethon/pull/167")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.pr_url == "https://github.com/utensils/ptywright/pull/14")
     );
 }
 
@@ -427,6 +438,8 @@ fn pi_pr_link_backfill_ignores_bash_execution_output_without_command() {
             r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"gh pr create --fill"}}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"toolUse"}}"#,
             r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"https://github.com/utensils/claudex/pull/39"}],"isError":false}}"#,
             r#"{"type":"message","id":"b1","timestamp":"2026-05-30T00:03:00Z","message":{"role":"bashExecution","output":"docs mention gh pr view https://github.com/utensils/claudex/pull/1"}}"#,
+            r#"{"type":"message","id":"b2","timestamp":"2026-05-30T00:04:00Z","message":{"role":"bashExecution","command":"gh pr view","output":"https://github.com/utensils/ptywright/pull/14"}}"#,
+            r#"{"type":"message","id":"a2","timestamp":"2026-05-30T00:05:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Opened https://github.com/utensils/aethon/pull/168"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}"#,
         ],
     );
     let providers = pi_providers(agent);
@@ -447,10 +460,18 @@ fn pi_pr_link_backfill_ignores_bash_execution_output_without_command() {
     let mut idx = IndexStore::open_at(&db_path).unwrap();
     idx.ensure_pr_links_fresh(&providers).unwrap();
     let rows = idx.query_pr_links(None, &all(), 100).unwrap();
-    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.len(), 3);
     assert_eq!(
-        rows[0].pr_url,
+        rows.iter().find(|row| row.pr_number == 39).unwrap().pr_url,
         "https://github.com/utensils/claudex/pull/39"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.pr_url == "https://github.com/utensils/ptywright/pull/14")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.pr_url == "https://github.com/utensils/aethon/pull/168")
     );
 }
 

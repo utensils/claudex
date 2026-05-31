@@ -228,6 +228,9 @@ fn codex_extracts_pr_links_from_gh_pr_output_and_agent_marker() {
             r#"{"timestamp":"2026-05-30T00:01:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr create --fill","stdout":"https://github.com/utensils/claudex/pull/38\n"}}"#,
             r#"{"timestamp":"2026-05-30T00:02:00Z","type":"response_item","payload":{"type":"agent_message","message":"::git-create-pr{url=\"https://github.com/utensils/aethon/pull/167\"}"}}"#,
             r#"{"timestamp":"2026-05-30T00:03:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr view","stdout":"https://github.com/utensils/claudex/pull/38"}}"#,
+            r#"{"timestamp":"2026-05-30T00:04:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1","arguments":"{\"cmd\":\"gh pr view\"}"}}"#,
+            r#"{"timestamp":"2026-05-30T00:05:00Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"https://github.com/utensils/claudex/pull/41"}}"#,
+            r#"{"timestamp":"2026-05-30T00:06:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Opened https://github.com/utensils/ptywright/pull/14"}]}}"#,
         ],
     );
 
@@ -235,7 +238,7 @@ fn codex_extracts_pr_links_from_gh_pr_output_and_agent_marker() {
     let files = provider.enumerate().unwrap();
     let rec = provider.parse(&files[0]).unwrap();
 
-    assert_eq!(rec.pr_links.len(), 2);
+    assert_eq!(rec.pr_links.len(), 4);
     assert!(rec.pr_links.iter().any(|(n, url, repo, _)| *n == 38
         && url == "https://github.com/utensils/claudex/pull/38"
         && repo == "utensils/claudex"));
@@ -243,6 +246,16 @@ fn codex_extracts_pr_links_from_gh_pr_output_and_agent_marker() {
         rec.pr_links
             .iter()
             .any(|(n, _, repo, _)| *n == 167 && repo == "utensils/aethon")
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 41 && repo == "utensils/claudex")
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 14 && repo == "utensils/ptywright")
     );
 }
 
@@ -332,13 +345,14 @@ fn pi_extracts_pr_links_from_bash_tool_result_and_assistant_text() {
             r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"gh pr create --fill"}},{"type":"text","text":"opening a PR"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"toolUse"}}"#,
             r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"https://github.com/utensils/claudex/pull/39"}],"isError":false}}"#,
             r#"{"type":"message","id":"a2","timestamp":"2026-05-30T00:03:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Opened https://github.com/utensils/aethon/pull/168"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}"#,
+            r#"{"type":"message","id":"b1","timestamp":"2026-05-30T00:04:00Z","message":{"role":"bashExecution","command":"gh pr view","output":"https://github.com/utensils/ptywright/pull/14"}}"#,
         ],
     );
 
     let provider = PiProvider::at(agent);
     let files = provider.enumerate().unwrap();
     let rec = provider.parse(&files[0]).unwrap();
-    assert_eq!(rec.pr_links.len(), 2);
+    assert_eq!(rec.pr_links.len(), 3);
     assert!(
         rec.pr_links
             .iter()
@@ -348,6 +362,11 @@ fn pi_extracts_pr_links_from_bash_tool_result_and_assistant_text() {
         rec.pr_links
             .iter()
             .any(|(n, _, repo, _)| *n == 168 && repo == "utensils/aethon")
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 14 && repo == "utensils/ptywright")
     );
 }
 
