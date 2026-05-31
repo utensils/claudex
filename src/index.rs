@@ -4,9 +4,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use chrono::{
-    Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
-};
+use chrono::{Datelike, Duration, Local};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, params, params_from_iter};
 
@@ -17,6 +15,7 @@ use crate::providers::pr::{
     extract_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command,
 };
 use crate::stats::percentile_sorted;
+use crate::time_utils::local_day_start_ms;
 use crate::types::ModelPricing;
 use crate::ui;
 
@@ -83,16 +82,6 @@ fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-fn local_day_start_ms(date: NaiveDate) -> i64 {
-    let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("valid time");
-    let local_midnight = NaiveDateTime::new(date, midnight);
-    match Local.from_local_datetime(&local_midnight) {
-        LocalResult::Single(dt) => dt.timestamp_millis(),
-        LocalResult::Ambiguous(a, b) => a.min(b).timestamp_millis(),
-        LocalResult::None => local_midnight.and_utc().timestamp_millis(),
-    }
 }
 
 fn backfill_codex_pr_links(path: &Path) -> Result<Vec<(i64, String, String, String)>> {
@@ -231,7 +220,7 @@ fn backfill_pi_pr_links(path: &Path) -> Result<Vec<(i64, String, String, String)
                     );
                 }
             }
-            Some("bashExecution") if value_has_gh_pr_command(msg) => {
+            Some("bashExecution") if payload_has_gh_pr_command(msg) => {
                 append_links_from_value_fields(
                     &mut links,
                     &mut seen,

@@ -12,6 +12,7 @@ pub mod providers;
 pub mod skill;
 pub mod stats;
 pub mod store;
+pub mod time_utils;
 pub mod types;
 pub mod ui;
 

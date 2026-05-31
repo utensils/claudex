@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, Duration, Local};
 use claudex::cli::ResolvedFilter;
 use claudex::index::IndexStore;
-use claudex::providers::{ClaudeProvider, CodexProvider, Provider};
+use claudex::providers::{ClaudeProvider, CodexProvider, PiProvider, Provider};
 use claudex::store::SessionStore;
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
@@ -31,6 +31,10 @@ fn claude_providers(projects: PathBuf) -> Vec<Provider> {
 
 fn codex_providers(codex: PathBuf) -> Vec<Provider> {
     vec![Provider::Codex(CodexProvider::at(codex))]
+}
+
+fn pi_providers(agent: PathBuf) -> Vec<Provider> {
+    vec![Provider::Pi(PiProvider::at(agent))]
 }
 
 /// Write a JSONL session file under `<projects>/<encoded_project>/<session>.jsonl`.
@@ -409,6 +413,44 @@ fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
     assert_eq!(
         rows[0].pr_url,
         "https://github.com/utensils/claudex/pull/38"
+    );
+}
+
+#[test]
+fn pi_pr_link_backfill_ignores_bash_execution_output_without_command() {
+    let tmp = TempDir::new().unwrap();
+    let agent = tmp.path().join(".pi/agent");
+    write_jsonl(
+        &agent.join("sessions/--repo--/2026-05-30T00-00-00Z_sess-pi-pr.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-pi-pr","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"gh pr create --fill"}}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"https://github.com/utensils/claudex/pull/39"}],"isError":false}}"#,
+            r#"{"type":"message","id":"b1","timestamp":"2026-05-30T00:03:00Z","message":{"role":"bashExecution","output":"docs mention gh pr view https://github.com/utensils/claudex/pull/1"}}"#,
+        ],
+    );
+    let providers = pi_providers(agent);
+    let db_path = tmp.path().join("index.db");
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.sync_now(&providers).unwrap();
+    drop(idx);
+
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute("DELETE FROM pr_links", []).unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('pr_link_derivation_revision:pi', ?)",
+        params!["0"],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.ensure_pr_links_fresh(&providers).unwrap();
+    let rows = idx.query_pr_links(None, &all(), 100).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].pr_url,
+        "https://github.com/utensils/claudex/pull/39"
     );
 }
 

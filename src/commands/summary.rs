@@ -1,16 +1,14 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
-    TimeZone, Utc,
-};
+use chrono::{DateTime, Datelike, Duration, Local, Utc};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::plan::Plan;
 use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, display_project_name};
+use crate::time_utils::local_day_start_ms;
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
@@ -524,16 +522,6 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
 fn section(title: &str) {
     println!("\n{}", ui::section_title(title));
     println!("{}", "─".repeat(title.len()));
-}
-
-fn local_day_start_ms(date: NaiveDate) -> i64 {
-    let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("valid time");
-    let local_midnight = NaiveDateTime::new(date, midnight);
-    match Local.from_local_datetime(&local_midnight) {
-        LocalResult::Single(dt) => dt.timestamp_millis(),
-        LocalResult::Ambiguous(a, b) => a.min(b).timestamp_millis(),
-        LocalResult::None => local_midnight.and_utc().timestamp_millis(),
-    }
 }
 
 /// Render the human-readable cost section, plan-aware. Under `Plan::Api`
