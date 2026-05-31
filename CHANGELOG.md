@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.7.0](https://github.com/utensils/claudex/compare/v0.6.0...v0.7.0) (2026-05-31)
+
+
+### Features
+
+* **prs:** extract provider PR links ([#39](https://github.com/utensils/claudex/issues/39)) ([451877e](https://github.com/utensils/claudex/commit/451877e85451634f13e69ee1af71aeb8b70f5614))
+
 ## [0.6.0](https://github.com/utensils/claudex/compare/v0.5.2...v0.6.0) (2026-05-30)
 
 
