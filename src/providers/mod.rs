@@ -19,6 +19,7 @@ use crate::types::TokenUsage;
 pub mod claude;
 pub mod codex;
 pub mod pi;
+pub(crate) mod pr;
 
 pub use claude::ClaudeProvider;
 pub use codex::CodexProvider;

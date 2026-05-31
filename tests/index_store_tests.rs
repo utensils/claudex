@@ -8,10 +8,12 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use chrono::{Datelike, Duration, Local};
 use claudex::cli::ResolvedFilter;
 use claudex::index::IndexStore;
-use claudex::providers::{ClaudeProvider, Provider};
+use claudex::providers::{ClaudeProvider, CodexProvider, Provider};
 use claudex::store::SessionStore;
+use rusqlite::{Connection, params};
 use tempfile::TempDir;
 
 /// The unfiltered (all-providers, no date/model) filter used by query tests.
@@ -25,6 +27,10 @@ fn claude_providers(projects: PathBuf) -> Vec<Provider> {
     vec![Provider::Claude(ClaudeProvider::at(SessionStore::at(
         projects,
     )))]
+}
+
+fn codex_providers(codex: PathBuf) -> Vec<Provider> {
+    vec![Provider::Codex(CodexProvider::at(codex))]
 }
 
 /// Write a JSONL session file under `<projects>/<encoded_project>/<session>.jsonl`.
@@ -361,6 +367,52 @@ fn query_pr_links_returns_unique_links() {
 }
 
 #[test]
+fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_jsonl(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-codex-pr.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"codex-pr","cwd":"/repo"}}"#,
+            r#"{"timestamp":"2026-05-30T00:01:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr create --fill","stdout":"https://github.com/utensils/claudex/pull/38\n"}}"#,
+            r#"{"timestamp":"2026-05-30T00:02:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":["sed","-n","1,20p","SKILL.md"],"stdout":"example: gh pr view https://github.com/org/repo/pull/123\n"}}"#,
+            r#"{"timestamp":"2026-05-30T00:03:00Z","type":"response_item","payload":{"type":"function_call_output","call_id":"search","output":"src/providers/pr.rs: text contains ::git-create-pr https://github.com/utensils/claudex/pull/1"}}"#,
+        ],
+    );
+    let providers = codex_providers(codex);
+    let db_path = tmp.path().join("index.db");
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.sync_now(&providers).unwrap();
+    assert_eq!(idx.query_pr_links(None, &all(), 100).unwrap().len(), 1);
+    drop(idx);
+
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute("DELETE FROM pr_links", []).unwrap();
+    conn.execute(
+        "INSERT INTO pr_links (session_rowid, pr_number, pr_url, pr_repository, timestamp)
+         SELECT id, 123, 'https://github.com/org/repo/pull/123', 'org/repo', 'bad'
+         FROM sessions WHERE provider = 'codex'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('pr_link_derivation_revision:codex', ?)",
+        params!["0"],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.ensure_pr_links_fresh(&providers).unwrap();
+    let rows = idx.query_pr_links(None, &all(), 100).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].pr_url,
+        "https://github.com/utensils/claudex/pull/38"
+    );
+}
+
+#[test]
 fn query_file_mods_returns_file_counts() {
     let (_tmp, _store, idx) = build_fixture();
     let rows = idx.query_file_mods(None, None, &all(), 100).unwrap();
@@ -394,6 +446,68 @@ fn query_summary_reports_totals() {
     assert!(data.top_projects.iter().any(|(p, _)| p.contains("alpha")));
     // top tools should include Edit (count 2)
     assert!(data.top_tools.iter().any(|(t, _)| t == "Edit"));
+}
+
+#[test]
+fn query_summary_counts_sessions_active_today_by_last_timestamp() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    let now = Local::now();
+    let yesterday = now - Duration::days(1);
+    write_session(
+        &projects,
+        "-Users-test-Projects-active",
+        "sess-active-today",
+        &[
+            &format!(
+                r#"{{"type":"user","sessionId":"sess-active-today","timestamp":"{}","message":{{"content":"started yesterday"}}}}"#,
+                yesterday.to_rfc3339()
+            ),
+            &format!(
+                r#"{{"type":"assistant","sessionId":"sess-active-today","timestamp":"{}","message":{{"model":"claude-sonnet-4-6","usage":{{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[{{"type":"text","text":"active today"}}]}}}}"#,
+                now.to_rfc3339()
+            ),
+        ],
+    );
+
+    let providers = claude_providers(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&providers).unwrap();
+    let data = idx.query_summary().unwrap();
+    assert_eq!(data.total_sessions, 1);
+    assert_eq!(data.sessions_today, 1);
+}
+
+#[test]
+fn query_summary_counts_sessions_active_this_week_by_last_timestamp() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    let now = Local::now();
+    let days_since_monday = now.weekday().num_days_from_monday() as i64;
+    let before_week = now - Duration::days(days_since_monday + 1);
+    write_session(
+        &projects,
+        "-Users-test-Projects-active-week",
+        "sess-active-week",
+        &[
+            &format!(
+                r#"{{"type":"user","sessionId":"sess-active-week","timestamp":"{}","message":{{"content":"started before week"}}}}"#,
+                before_week.to_rfc3339()
+            ),
+            &format!(
+                r#"{{"type":"assistant","sessionId":"sess-active-week","timestamp":"{}","message":{{"model":"claude-sonnet-4-6","usage":{{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[{{"type":"text","text":"active this week"}}]}}}}"#,
+                now.to_rfc3339()
+            ),
+        ],
+    );
+
+    let providers = claude_providers(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&providers).unwrap();
+    let data = idx.query_summary().unwrap();
+    assert_eq!(data.total_sessions, 1);
+    assert_eq!(data.sessions_this_week, 1);
+    assert!(data.week_cost > 0.0);
 }
 
 #[test]

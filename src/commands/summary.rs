@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Utc,
+};
 
 use crate::index::IndexStore;
 use crate::parser::parse_session;
@@ -219,10 +222,11 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
     let store = SessionStore::new()?;
     let files = store.all_session_files(None)?;
 
-    let now = Utc::now();
-    let today = now.date_naive();
+    let today = Local::now().date_naive();
     let days_since_monday = today.weekday().num_days_from_monday() as i64;
     let week_start = today - Duration::days(days_since_monday);
+    let today_start_ms = local_day_start_ms(today);
+    let week_start_ms = local_day_start_ms(week_start);
 
     let mut total_sessions = 0usize;
     let mut sessions_today = 0usize;
@@ -268,19 +272,23 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
         total_turn_count += stats.turn_durations.len() as u64;
 
         if let Some(dt) = stats.first_timestamp {
-            let date = dt.date_naive();
-            if date == today {
+            let active_dt = stats.last_timestamp.unwrap_or(dt);
+            let active_ms = active_dt.timestamp_millis();
+            if active_ms >= today_start_ms {
                 sessions_today += 1;
             }
-            if date >= week_start {
+            if active_ms >= week_start_ms {
                 sessions_this_week += 1;
                 week_cost += session_cost;
             }
 
-            let is_newer = most_recent.as_ref().map(|r| dt > r.date).unwrap_or(true);
+            let is_newer = most_recent
+                .as_ref()
+                .map(|r| active_dt > r.date)
+                .unwrap_or(true);
             if is_newer {
                 most_recent = Some(RecentSession {
-                    date: dt,
+                    date: active_dt,
                     project: display_project_name(&decode_project_name(project_raw)),
                     session_id: stats.session_id.unwrap_or_default(),
                     model: stats.model.clone(),
@@ -516,6 +524,16 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
 fn section(title: &str) {
     println!("\n{}", ui::section_title(title));
     println!("{}", "─".repeat(title.len()));
+}
+
+fn local_day_start_ms(date: NaiveDate) -> i64 {
+    let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("valid time");
+    let local_midnight = NaiveDateTime::new(date, midnight);
+    match Local.from_local_datetime(&local_midnight) {
+        LocalResult::Single(dt) => dt.timestamp_millis(),
+        LocalResult::Ambiguous(a, b) => a.min(b).timestamp_millis(),
+        LocalResult::None => local_midnight.and_utc().timestamp_millis(),
+    }
 }
 
 /// Render the human-readable cost section, plan-aware. Under `Plan::Api`

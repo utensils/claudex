@@ -4,12 +4,14 @@
 //! token usage and trusts Pi's own cost (`embedded_cost`) instead of a pricing
 //! table — which also makes local/free Ollama sessions correctly report $0.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
+use super::pr::{append_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command};
 use super::{DiscoveredFile, MessageForFts, ProviderRecord, SessionProvider};
 use crate::parser::stream_records;
 
@@ -96,11 +98,11 @@ fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
     let mut entry = ProviderRecord::default();
     let mut session_cwd: Option<String> = None;
     let mut current_model: Option<String> = None;
-    let mut total_cost = 0.0f64;
-    let mut saw_cost = false;
+    let mut state = PiParseState::default();
 
     stream_records(path, |record| {
-        if let Some(ts) = record["timestamp"].as_str().and_then(parse_ts) {
+        let timestamp = record["timestamp"].as_str();
+        if let Some(ts) = timestamp.and_then(parse_ts) {
             if entry.first_timestamp.is_none_or(|p| ts < p) {
                 entry.first_timestamp = Some(ts);
             }
@@ -153,12 +155,37 @@ fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
                             &mut entry,
                             msg,
                             current_model.as_deref(),
-                            &mut total_cost,
-                            &mut saw_cost,
+                            &mut state,
+                            timestamp,
                             ts_ms,
                         );
                     }
-                    _ => {} // toolResult etc. — the call was already counted
+                    Some("toolResult") => {
+                        if tool_result_matches(&state.gh_pr_tool_call_ids, msg)
+                            && let Some(text) = content_any_text(&msg["content"])
+                        {
+                            append_github_pr_links(
+                                &mut entry,
+                                &mut state.pr_links_seen,
+                                &text,
+                                timestamp,
+                            );
+                        }
+                    }
+                    Some("bashExecution") => {
+                        if message_command_mentions_gh_pr(msg)
+                            && let Some(text) =
+                                content_any_text(&msg["content"]).or_else(|| output_text(msg))
+                        {
+                            append_github_pr_links(
+                                &mut entry,
+                                &mut state.pr_links_seen,
+                                &text,
+                                timestamp,
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -169,8 +196,8 @@ fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
     if let Some(cwd) = session_cwd {
         entry.project_display = cwd;
     }
-    if saw_cost {
-        entry.embedded_cost = Some(total_cost);
+    if state.saw_cost {
+        entry.embedded_cost = Some(state.total_cost);
     }
 
     let mut extras = serde_json::Map::new();
@@ -190,12 +217,20 @@ fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
     Ok(entry)
 }
 
+#[derive(Default)]
+struct PiParseState {
+    total_cost: f64,
+    saw_cost: bool,
+    pr_links_seen: BTreeSet<String>,
+    gh_pr_tool_call_ids: BTreeSet<String>,
+}
+
 fn accumulate_assistant(
     entry: &mut ProviderRecord,
     msg: &Value,
     fallback_model: Option<&str>,
-    total_cost: &mut f64,
-    saw_cost: &mut bool,
+    state: &mut PiParseState,
+    timestamp: Option<&str>,
     ts_ms: Option<i64>,
 ) {
     // Tool calls, thinking blocks, and assistant text live in the content array.
@@ -209,6 +244,12 @@ fn accumulate_assistant(
                     {
                         entry.tool_names.push(name.to_string());
                     }
+                    if block["name"].as_str().is_some_and(is_shell_tool)
+                        && value_mentions_gh_pr(&block["arguments"])
+                        && let Some(id) = block["id"].as_str()
+                    {
+                        state.gh_pr_tool_call_ids.insert(id.to_string());
+                    }
                 }
                 Some("thinking") => entry.thinking_block_count += 1,
                 Some("text") => {
@@ -220,11 +261,15 @@ fn accumulate_assistant(
             }
         }
         if !text_parts.is_empty() {
+            let text = text_parts.join(" ");
             entry.messages.push(MessageForFts {
                 msg_type: "assistant".to_string(),
-                content: text_parts.join(" "),
+                content: text.clone(),
                 timestamp_ms: ts_ms,
             });
+            if looks_like_final_pr_text(&text) {
+                append_github_pr_links(entry, &mut state.pr_links_seen, &text, timestamp);
+            }
         }
     }
 
@@ -255,8 +300,8 @@ fn accumulate_assistant(
     stats.assistant_message_count += 1;
 
     if let Some(cost) = usage["cost"]["total"].as_f64() {
-        *total_cost += cost;
-        *saw_cost = true;
+        state.total_cost += cost;
+        state.saw_cost = true;
         stats.embedded_cost = Some(stats.embedded_cost.unwrap_or(0.0) + cost);
     }
 }
@@ -283,4 +328,61 @@ fn content_text(content: &Value) -> Option<String> {
     } else {
         Some(parts.join(" "))
     }
+}
+
+fn content_any_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str().filter(|t| !t.is_empty()) {
+        return Some(text.to_string());
+    }
+    content_text(content)
+}
+
+fn output_text(msg: &Value) -> Option<String> {
+    for field in ["output", "stdout", "stderr", "text"] {
+        if let Some(text) = msg[field].as_str().filter(|t| !t.is_empty()) {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
+fn tool_result_matches(gh_pr_tool_call_ids: &BTreeSet<String>, msg: &Value) -> bool {
+    msg["toolName"].as_str().is_some_and(is_shell_tool)
+        && ["toolCallId", "tool_call_id", "callId", "id"]
+            .iter()
+            .filter_map(|field| msg[*field].as_str())
+            .any(|id| gh_pr_tool_call_ids.contains(id))
+}
+
+fn message_command_mentions_gh_pr(msg: &Value) -> bool {
+    ["command", "cmd", "arguments", "args", "input"]
+        .iter()
+        .any(|field| value_mentions_gh_pr(&msg[*field]))
+}
+
+fn value_mentions_gh_pr(value: &Value) -> bool {
+    match value {
+        Value::String(s) => text_mentions_gh_pr(s),
+        Value::Array(items) => {
+            let joined = items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            text_mentions_gh_pr(&joined) || items.iter().any(value_mentions_gh_pr)
+        }
+        Value::Object(map) => map.values().any(value_mentions_gh_pr),
+        _ => false,
+    }
+}
+
+fn text_mentions_gh_pr(text: &str) -> bool {
+    looks_like_gh_pr_command(text)
+}
+
+fn is_shell_tool(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "bash" | "shell" | "exec"
+    )
 }

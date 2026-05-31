@@ -217,6 +217,72 @@ fn codex_enumerate_flags_archived_and_parse_reads_cwd_tokens_tools() {
     assert_eq!(arch.project_display, "/old");
 }
 
+#[test]
+fn codex_extracts_pr_links_from_gh_pr_output_and_agent_marker() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_lines(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-codex-pr.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"codex-pr","cwd":"/repo"}}"#,
+            r#"{"timestamp":"2026-05-30T00:01:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr create --fill","stdout":"https://github.com/utensils/claudex/pull/38\n"}}"#,
+            r#"{"timestamp":"2026-05-30T00:02:00Z","type":"response_item","payload":{"type":"agent_message","message":"::git-create-pr{url=\"https://github.com/utensils/aethon/pull/167\"}"}}"#,
+            r#"{"timestamp":"2026-05-30T00:03:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":"gh pr view","stdout":"https://github.com/utensils/claudex/pull/38"}}"#,
+        ],
+    );
+
+    let provider = CodexProvider::at(codex);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.pr_links.len(), 2);
+    assert!(rec.pr_links.iter().any(|(n, url, repo, _)| *n == 38
+        && url == "https://github.com/utensils/claudex/pull/38"
+        && repo == "utensils/claudex"));
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 167 && repo == "utensils/aethon")
+    );
+}
+
+#[test]
+fn codex_ignores_pr_links_from_unrelated_tool_output() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_lines(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-codex-read.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"codex-read","cwd":"/repo"}}"#,
+            r#"{"timestamp":"2026-05-30T00:01:00Z","type":"response_item","payload":{"type":"function_call","name":"read","call_id":"r1","arguments":"{\"path\":\"CHANGELOG.md\"}"}}"#,
+            r#"{"timestamp":"2026-05-30T00:02:00Z","type":"response_item","payload":{"type":"function_call_output","call_id":"r1","output":"historical note: ::git-create-pr https://github.com/utensils/claudex/pull/1"}}"#,
+        ],
+    );
+
+    let provider = CodexProvider::at(codex);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert!(rec.pr_links.is_empty());
+}
+
+#[test]
+fn codex_ignores_pr_links_from_non_pr_exec_output() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_lines(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-codex-doc.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"codex-doc","cwd":"/repo"}}"#,
+            r#"{"timestamp":"2026-05-30T00:01:00Z","type":"event_msg","payload":{"type":"exec_command_end","command":["sed","-n","1,20p","SKILL.md"],"stdout":"example command: gh pr view https://github.com/utensils/claudex/pull/1\n"}}"#,
+        ],
+    );
+
+    let provider = CodexProvider::at(codex);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert!(rec.pr_links.is_empty());
+}
+
 // --- Pi provider ---
 
 #[test]
@@ -253,6 +319,55 @@ fn pi_enumerate_decodes_cwd_and_parse_uses_embedded_cost() {
     assert_eq!(model_stats.usage.cache_read_tokens, 10);
     assert_eq!(model_stats.embedded_cost, Some(0.42));
     assert_eq!(*rec.stop_reason_counts.get("toolUse").unwrap(), 1);
+}
+
+#[test]
+fn pi_extracts_pr_links_from_bash_tool_result_and_assistant_text() {
+    let tmp = TempDir::new().unwrap();
+    let agent = tmp.path().join(".pi/agent");
+    write_lines(
+        &agent.join("sessions/--repo--/2026-05-30T00-00-00Z_sess-pi-pr.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-pi-pr","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"gh pr create --fill"}},{"type":"text","text":"opening a PR"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"https://github.com/utensils/claudex/pull/39"}],"isError":false}}"#,
+            r#"{"type":"message","id":"a2","timestamp":"2026-05-30T00:03:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Opened https://github.com/utensils/aethon/pull/168"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}"#,
+        ],
+    );
+
+    let provider = PiProvider::at(agent);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert_eq!(rec.pr_links.len(), 2);
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 39 && repo == "utensils/claudex")
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 168 && repo == "utensils/aethon")
+    );
+}
+
+#[test]
+fn pi_ignores_pr_links_from_read_tool_results() {
+    let tmp = TempDir::new().unwrap();
+    let agent = tmp.path().join(".pi/agent");
+    write_lines(
+        &agent.join("sessions/--repo--/2026-05-30T00-00-00Z_sess-pi-read.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-pi-read","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"r1","name":"read","arguments":{"path":"CHANGELOG.md"}}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"toolResult","toolCallId":"r1","toolName":"read","content":[{"type":"text","text":"historical note: https://github.com/utensils/claudex/pull/1"}],"isError":false}}"#,
+        ],
+    );
+
+    let provider = PiProvider::at(agent);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert!(rec.pr_links.is_empty());
 }
 
 #[test]
