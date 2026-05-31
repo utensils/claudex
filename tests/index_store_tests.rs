@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, Duration, Local};
 use claudex::cli::ResolvedFilter;
 use claudex::index::IndexStore;
-use claudex::providers::{ClaudeProvider, CodexProvider, PiProvider, Provider};
+use claudex::providers::{ClaudeProvider, CodexProvider, OpenClawProvider, PiProvider, Provider};
 use claudex::store::SessionStore;
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
@@ -35,6 +35,10 @@ fn codex_providers(codex: PathBuf) -> Vec<Provider> {
 
 fn pi_providers(agent: PathBuf) -> Vec<Provider> {
     vec![Provider::Pi(PiProvider::at(agent))]
+}
+
+fn openclaw_providers(state: PathBuf) -> Vec<Provider> {
+    vec![Provider::OpenClaw(OpenClawProvider::at(state))]
 }
 
 /// Write a JSONL session file under `<projects>/<encoded_project>/<session>.jsonl`.
@@ -622,6 +626,68 @@ fn sync_picks_up_new_sessions() {
     idx.sync_now(&providers).unwrap();
     let after = idx.query_sessions(None, None, &all(), 100).unwrap().len();
     assert_eq!(after, before + 1);
+}
+
+#[test]
+fn openclaw_source_key_reuses_trajectory_row_when_transcript_appears() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+    let state = tmp.path().join(".openclaw");
+    let sessions = state.join("agents/main/sessions");
+    write_jsonl(
+        &sessions.join("sess-open.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-open","source":"runtime","type":"model.completed","ts":"2026-05-30T00:00:00Z","seq":1,"sessionId":"sess-open","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"trajectory","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}}}}"#,
+        ],
+    );
+    let providers = openclaw_providers(state.clone());
+    let mut idx = IndexStore::open_at(&db).unwrap();
+    idx.sync_now(&providers).unwrap();
+
+    let first_row: i64 = {
+        let conn = Connection::open(&db).unwrap();
+        conn.query_row(
+            "SELECT id FROM sessions WHERE provider = 'openclaw' AND source_key = 'agent:main:session:sess-open'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+
+    write_jsonl(
+        &sessions.join("sess-open.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-open","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/classic"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"classic"}],"provider":"openai","model":"gpt-5.2","usage":{"input":10,"output":5,"cacheRead":1,"cacheWrite":0,"cost":{"total":0.20}},"stopReason":"stop"}}"#,
+        ],
+    );
+    idx.sync_now(&providers).unwrap();
+
+    let conn = Connection::open(&db).unwrap();
+    let rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE provider = 'openclaw' AND source_key = 'agent:main:session:sess-open'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let row_id: i64 = conn
+        .query_row(
+            "SELECT id FROM sessions WHERE provider = 'openclaw' AND source_key = 'agent:main:session:sess-open'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let path: String = conn
+        .query_row(
+            "SELECT file_path FROM sessions WHERE id = ?",
+            params![row_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 1);
+    assert_eq!(row_id, first_row);
+    assert!(path.ends_with("sess-open.jsonl"), "{path}");
 }
 
 #[test]

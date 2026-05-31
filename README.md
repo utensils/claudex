@@ -4,9 +4,9 @@
 [![Deploy Docs](https://github.com/utensils/claudex/actions/workflows/pages.yml/badge.svg)](https://github.com/utensils/claudex/actions/workflows/pages.yml)
 [![codecov](https://codecov.io/gh/utensils/claudex/graph/badge.svg)](https://codecov.io/gh/utensils/claudex)
 
-**Query, search, and analyze your Claude Code, OpenAI Codex, and Pi sessions from the command line.**
+**Query, search, and analyze your Claude Code, OpenAI Codex, Pi, and OpenClaw sessions from the command line.**
 
-claudex reads the local transcripts of three coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), and Pi (`~/.pi/agent/`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all three providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
+claudex reads the local transcripts of four coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), Pi (`~/.pi/agent/`), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all four providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
 
 📚 **Docs:** <https://utensils.io/claudex/> — guide, per-command reference, index schema, pricing.
 
@@ -22,7 +22,7 @@ claudex session 3f2a1b                       # drill into one session (ID prefix
 claudex search "migration"                   # full-text search across all transcripts
 claudex cost --per-session                   # token & cost breakdown
 claudex export 3f2a1b --format markdown > session.md
-claudex skills install                       # install the agent skill for Claude Code/Codex/Pi
+claudex skills install                       # install the agent skill for Claude Code/Codex/Pi/OpenClaw
 ```
 
 See the [flag support matrix](https://utensils.io/claudex/commands/) for per-command `--json` / `--no-index` coverage.
@@ -101,7 +101,7 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`). Every report acc
 ## Documentation
 
 - [Quickstart](https://utensils.io/claudex/guide/quickstart) — first five minutes.
-- [Providers & filtering](https://utensils.io/claudex/guide/providers) — the three providers, retention, and the shared filter flags.
+- [Providers & filtering](https://utensils.io/claudex/guide/providers) — the four providers, retention, and the shared filter flags.
 - [How it works](https://utensils.io/claudex/guide/architecture) — data flow, modules, key invariants.
 - [The index](https://utensils.io/claudex/guide/indexing) — sync semantics, staleness window.
 - [JSON output](https://utensils.io/claudex/guide/json-output) — stable shapes for pipelines.

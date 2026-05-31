@@ -2,7 +2,7 @@
 //!
 //! One shared markdown body is wrapped in target-specific frontmatter so each
 //! harness gets a header it understands:
-//! - Claude Code / Codex / Pi: `SKILL.md` (YAML frontmatter + markdown)
+//! - Claude Code / Codex / Pi / OpenClaw: `SKILL.md` (YAML frontmatter + markdown)
 //! - AGENTS.md: plain markdown wrapped in idempotency markers
 //! - Claude Code plugin: `plugin.json` (JSON manifest, no frontmatter)
 //!
@@ -23,11 +23,13 @@ pub enum Flavor {
     Codex,
     /// Pi coding agent: Agent Skills subset plus `allowed-tools`.
     Pi,
+    /// OpenClaw: Agent Skills frontmatter, project/global `skills/` layout.
+    OpenClaw,
 }
 
 /// One-line skill description, reused by every frontmatter generator.
 pub fn description() -> &'static str {
-    "Query, search, and analyze Claude Code, OpenAI Codex, and Pi sessions using the claudex CLI. \
+    "Query, search, and analyze Claude Code, OpenAI Codex, Pi, and OpenClaw sessions using the claudex CLI. \
 Use when asked about session history, token costs, tool usage, search past conversations, export \
 sessions, or inspect agent activity across providers and projects."
 }
@@ -55,14 +57,15 @@ fn body(command_list: &str) -> String {
     format!(
         r#"# claudex — multi-provider agent session analytics
 
-claudex indexes the local session transcripts of three coding agents into a
+claudex indexes the local session transcripts of four coding agents into a
 SQLite database at `~/.claudex/index.db` and reports across all of them:
 
 - **Claude Code** — `~/.claude/projects/**.jsonl`
 - **OpenAI Codex** — `~/.codex/sessions/**` and `~/.codex/archived_sessions/`
 - **Pi** — `~/.pi/agent/sessions/**`
+- **OpenClaw** — `${{OPENCLAW_STATE_DIR:-~/.openclaw}}/agents/*/sessions/`
 
-Every reporting command spans all three providers by default. The index is
+Every reporting command spans all four providers by default. The index is
 **additive**: sessions archived or deleted from disk are retained, so historical
 usage never disappears.
 
@@ -76,7 +79,7 @@ Run `claudex <command> --help` for full flags.
 
 | Flag | Effect |
 | --- | --- |
-| `--provider <claude\|codex\|pi>` | Restrict to provider(s); repeatable or comma-separated. Default: all. |
+| `--provider <claude\|codex\|pi\|openclaw>` | Restrict to provider(s); repeatable or comma-separated. Default: all. |
 | `--project <substr>` | Filter by project path substring. |
 | `--model <substr>` | Filter by model (e.g. `opus`, `gpt-5`). |
 | `--since <when>` / `--until <when>` | Date range. Accepts `YYYY-MM-DD`, RFC3339, or a relative span (`7d`, `12h`, `2w`). |
@@ -88,6 +91,7 @@ Run `claudex <command> --help` for full flags.
 
 - "How much have I spent on Codex this month?" → `claudex cost --provider codex --since 30d`
 - "List my recent Pi sessions" → `claudex sessions --provider pi`
+- "Search OpenClaw trajectory-backed sessions" → `claudex search "tool timeout" --provider openclaw --json`
 - "Find where I discussed schema migrations" → `claudex search "schema migration"`
 - "What did session e1a2f4 do?" → `claudex session e1a2f4`
 - "Overall dashboard" → `claudex summary`
@@ -97,8 +101,9 @@ Run `claudex <command> --help` for full flags.
 
 Add `--json` to any reporting command for stable, scriptable output. Each row
 carries a `"provider"` key so results are unambiguous across providers. Cost is
-in USD; Pi sessions report the provider's own per-message cost (local models are
-$0), Claude/Codex are priced from a built-in per-model table.
+in USD; Pi/OpenClaw sessions report the provider's own per-message cost when
+available (local models are $0), Claude/Codex are priced from a built-in
+per-model table.
 
 ## Notes
 
@@ -122,6 +127,7 @@ pub fn skill_md(flavor: Flavor, command_list: &str) -> String {
         Flavor::Pi => format!(
             "---\nname: claudex\ndescription: {description}\nallowed-tools: Bash(claudex:*)\nlicense: MIT\n---\n"
         ),
+        Flavor::OpenClaw => format!("---\nname: claudex\ndescription: {description}\n---\n"),
     };
     format!("{frontmatter}\n{}", body(command_list))
 }
@@ -132,11 +138,11 @@ pub fn agents_block(command_list: &str) -> String {
         r#"{AGENTS_START}
 ## claudex — agent session analytics
 
-Use the `claudex` CLI to query and analyze local Claude Code, OpenAI Codex, and
-Pi session transcripts: token cost, tool usage, full-text search, per-session
-drill-down, and exports — across all three providers from one index.
+Use the `claudex` CLI to query and analyze local Claude Code, OpenAI Codex, Pi,
+and OpenClaw session transcripts: token cost, tool usage, full-text search,
+per-session drill-down, and exports — across all four providers from one index.
 
-- **Spans providers by default;** narrow with `--provider claude|codex|pi`.
+- **Spans providers by default;** narrow with `--provider claude|codex|pi|openclaw`.
 - **Filter** with `--project`, `--model`, `--since`/`--until` (`7d`/`2w`/dates).
 - **JSON for agents:** add `--json`; every row carries a `provider` key.
 - The index is additive — archived/deleted sessions are retained.
@@ -160,7 +166,7 @@ pub fn plugin_json() -> String {
         "homepage": "https://utensils.io/claudex/",
         "repository": "https://github.com/utensils/claudex",
         "license": "MIT",
-        "keywords": ["claude-code", "codex", "pi", "cli", "agents", "sessions"],
+        "keywords": ["claude-code", "codex", "pi", "openclaw", "cli", "agents", "sessions"],
     });
     serde_json::to_string_pretty(&manifest).unwrap_or_default()
 }

@@ -4,8 +4,8 @@
 //! turn one into a normalized [`ProviderRecord`] (`parse`). The index sync loop
 //! is provider-agnostic: it reconciles the enumerated files against the rows it
 //! already holds for that provider and writes the parsed records, tagging every
-//! row with [`SessionProvider::id`]. Today only [`claude::ClaudeProvider`] is
-//! wired up; Codex and Pi join later behind the same contract.
+//! row with [`SessionProvider::id`]. Claude, Codex, Pi, and OpenClaw all share
+//! this contract.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -18,11 +18,13 @@ use crate::types::TokenUsage;
 
 pub mod claude;
 pub mod codex;
+pub mod openclaw;
 pub mod pi;
 pub(crate) mod pr;
 
 pub use claude::ClaudeProvider;
 pub use codex::CodexProvider;
+pub use openclaw::OpenClawProvider;
 pub use pi::PiProvider;
 
 /// A transcript file discovered by a provider, with the metadata the sync loop
@@ -36,6 +38,9 @@ pub struct DiscoveredFile {
     pub parent_session_id: Option<String>,
     /// True when the source lives in the provider's archive location.
     pub archived: bool,
+    /// Provider-scoped logical source id. OpenClaw uses this to merge a
+    /// trajectory-only row with the canonical transcript row once it appears.
+    pub source_key: Option<String>,
 }
 
 /// One assistant/user message's text, destined for the FTS index.
@@ -76,6 +81,8 @@ pub struct ProviderRecord {
     /// `cwd` inside the file). When non-empty it overrides the
     /// [`DiscoveredFile::project_display`] the enumerator guessed from the path.
     pub project_display: String,
+    /// Provider-scoped logical source id. Existing providers leave this empty.
+    pub source_key: Option<String>,
     /// Cost already computed by the provider (Pi reports per-message cost). When
     /// `Some`, the index trusts it instead of deriving from a pricing table.
     pub embedded_cost: Option<f64>,
@@ -106,6 +113,7 @@ pub trait SessionProvider {
 pub enum Provider {
     Claude(ClaudeProvider),
     Codex(CodexProvider),
+    OpenClaw(OpenClawProvider),
     Pi(PiProvider),
 }
 
@@ -114,6 +122,7 @@ impl Provider {
         match self {
             Provider::Claude(p) => p,
             Provider::Codex(p) => p,
+            Provider::OpenClaw(p) => p,
             Provider::Pi(p) => p,
         }
     }
@@ -146,6 +155,7 @@ pub fn enabled_default() -> Result<Vec<Provider>> {
     let candidates = vec![
         Provider::Claude(ClaudeProvider::new()?),
         Provider::Codex(CodexProvider::new()?),
+        Provider::OpenClaw(OpenClawProvider::new()?),
         Provider::Pi(PiProvider::new()?),
     ];
     Ok(candidates.into_iter().filter(|p| p.enabled()).collect())

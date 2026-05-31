@@ -72,6 +72,7 @@ fn collect_jsonl(dir: &Path, archived: bool, out: &mut Vec<DiscoveredFile>) -> R
                 project_display: String::new(),
                 parent_session_id: None,
                 archived,
+                source_key: None,
             });
         }
     }

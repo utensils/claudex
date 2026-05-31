@@ -7,7 +7,7 @@ directly — it's an implementation detail — but a few things are worth knowin
 
 ```
 ~/.claudex/
-├── index.db          # SQLite, schema_version = 5
+├── index.db          # SQLite, schema_version = 7
 └── debug/            # only when you use `claudex watch`
     └── latest.log
 ```
@@ -17,7 +17,7 @@ on first use.
 
 ## Sync semantics
 
-The index covers all three providers. Each is synced independently with its own
+The index covers all four providers. Each is synced independently with its own
 staleness window and data-root stamp.
 
 | Trigger                            | What happens                                                |
@@ -35,6 +35,10 @@ The staleness window is `STALE_SECS = 300` in `src/index.rs`.
 Each session file is keyed on the tuple `(file_path, file_size, file_mtime)`.
 If any of those change, the file is re-ingested in place. That's why sync is
 fast — claudex never re-parses a file whose bytes haven't changed.
+
+OpenClaw also records a provider-scoped `source_key`, so a runtime trajectory
+captured before its canonical transcript appears can be replaced in place later
+instead of double-counting the same session.
 
 ## Retention: the index is additive
 
@@ -59,7 +63,7 @@ claudex index --force
 ## Bypassing the index
 
 Most Claude Code read commands accept `--no-index` to skip the index and scan
-Claude JSONL files directly. It's a Claude-only escape hatch — Codex and Pi are
+Claude JSONL files directly. It's a Claude-only escape hatch — Codex, Pi, and OpenClaw are
 served from the index. (Note the index is no longer just a cache: it retains
 sessions that have left disk, so `--no-index` can show _fewer_ rows than the
 indexed path.)

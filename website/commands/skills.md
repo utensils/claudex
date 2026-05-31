@@ -1,7 +1,7 @@
 # skills
 
 Generate or install the claudex [agent skill](/guide/skill) for Claude Code,
-OpenAI Codex, or Pi — a `SKILL.md` that teaches an agent how to drive claudex on
+OpenAI Codex, Pi, or OpenClaw — a `SKILL.md` that teaches an agent how to drive claudex on
 your behalf.
 
 ```bash
@@ -34,14 +34,15 @@ Both subcommands accept the same flags:
 
 ## Targets
 
-| Target        | Writes                                                                                               |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `claude-code` | `.claude/skills/claudex/SKILL.md` (with `allowed-tools` + `argument-hint`)                           |
-| `codex`       | `.agents/skills/claudex/SKILL.md` (minimal Agent Skills subset)                                      |
-| `pi`          | `.pi/skills/claudex/SKILL.md`                                                                        |
-| `agents-md`   | An idempotent block spliced into `AGENTS.md` (project root, or `~/.codex/AGENTS.md` with `--global`) |
-| `plugin`      | `.claude-plugin/plugin.json` + skill, as a distributable Claude Code plugin                          |
-| `all`         | Expands to `claude-code` + `codex` + `pi` + `agents-md`                                              |
+| Target        | Writes                                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `claude-code` | `.claude/skills/claudex/SKILL.md` (with `allowed-tools` + `argument-hint`)                                 |
+| `codex`       | `.agents/skills/claudex/SKILL.md` (minimal Agent Skills subset)                                            |
+| `pi`          | `.pi/skills/claudex/SKILL.md`                                                                              |
+| `openclaw`    | `skills/claudex/SKILL.md`, or `${OPENCLAW_STATE_DIR:-~/.openclaw}/skills/claudex/SKILL.md` with `--global` |
+| `agents-md`   | An idempotent block spliced into `AGENTS.md` (project root, or `~/.codex/AGENTS.md` with `--global`)       |
+| `plugin`      | `.claude-plugin/plugin.json` + skill, as a distributable Claude Code plugin                                |
+| `all`         | Expands to `claude-code` + `codex` + `pi` + `openclaw` + `agents-md`                                       |
 
 ## Examples
 
@@ -51,6 +52,9 @@ claudex skills install --target claude-code,codex
 
 # Install globally for Pi
 claudex skills install --target pi --global
+
+# Install globally for OpenClaw
+claudex skills install --target openclaw --global
 
 # Generate a plugin bundle for distribution
 claudex skills generate --target plugin --dir ./dist

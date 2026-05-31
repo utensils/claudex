@@ -35,6 +35,15 @@ fn pi_frontmatter_has_allowed_tools_without_hint() {
 }
 
 #[test]
+fn openclaw_frontmatter_is_agent_skills_compatible() {
+    let md = templates::skill_md(Flavor::OpenClaw, CL);
+    assert!(md.contains("name: claudex"));
+    assert!(md.contains("OpenClaw"));
+    assert!(!md.contains("allowed-tools"));
+    assert!(!md.contains("argument-hint"));
+}
+
+#[test]
 fn agents_block_is_wrapped_in_idempotency_markers() {
     let block = templates::agents_block(CL);
     assert!(block.starts_with(templates::AGENTS_START));

@@ -39,6 +39,14 @@ Pi session transcripts, one directory per working directory. The Pi provider
 ingests per-model token usage and trusts Pi's own per-message cost (local Ollama
 models report `$0`).
 
+### `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/<agent-id>/sessions/`
+
+OpenClaw session stores. claudex reads `sessions.json` for metadata enrichment,
+classic `<session-id>.jsonl` transcripts for canonical message/usage data, and
+`<session-id>.trajectory.jsonl` or pointer-resolved trajectory files for runtime
+status and trajectory-only sessions. Trajectory-only rows are keyed by logical
+OpenClaw session source, so they are reused when the classic transcript appears.
+
 ## Writes
 
 Claudex writes exclusively under `~/.claudex/` (or `$CLAUDEX_DIR`):
@@ -64,9 +72,10 @@ so a two-terminal workflow works without configuration.
 
 ## Nothing in the provider directories belongs to claudex
 
-Claudex is strictly a reader of `~/.claude/projects/`, `~/.codex/`, and
-`~/.pi/agent/`. It never writes there, never modifies transcripts, never
-interferes with Claude Code, Codex, or Pi state. (`claudex skills install` does
+Claudex is strictly a reader of `~/.claude/projects/`, `~/.codex/`,
+`~/.pi/agent/`, and OpenClaw state. It never writes there, never modifies
+transcripts, never interferes with Claude Code, Codex, Pi, or OpenClaw state.
+(`claudex skills install` does
 write `SKILL.md` files into harness config dirs, but only when you ask it to.)
 
 Uninstalling is `rm -rf ~/.claudex` plus `cargo uninstall claudex` (or deleting

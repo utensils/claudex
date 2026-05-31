@@ -1,6 +1,6 @@
 # Index schema
 
-The SQLite index at `~/.claudex/index.db`. **Schema version: 6.**
+The SQLite index at `~/.claudex/index.db`. **Schema version: 7.**
 
 ::: warning Not a stable surface
 Table and column names may change between releases. Use `claudex <cmd> --json`
@@ -25,47 +25,48 @@ Single-row key/value scratchpad.
 
 One row per transcript file, across every provider.
 
-| Column              | Type        | Notes                                                              |
-| ------------------- | ----------- | ------------------------------------------------------------------ |
-| `id`                | INTEGER PK  | Surrogate key.                                                     |
-| `project_name`      | TEXT        | Decoded project name, with `(worktree)` for worktree sessions.     |
-| `file_path`         | TEXT UNIQUE | Absolute path to the transcript.                                   |
-| `file_size`         | INTEGER     | Bytes. Part of the incremental-sync key.                           |
-| `file_mtime`        | INTEGER     | Unix seconds. Part of the sync key.                                |
-| `session_id`        | TEXT        | Session id from the provider.                                      |
-| `parent_session_id` | TEXT        | Set for Claude subagent transcripts (roll up to parent).           |
-| `first_timestamp`   | INTEGER     | Unix ms.                                                           |
-| `last_timestamp`    | INTEGER     | Unix ms.                                                           |
-| `duration_ms`       | INTEGER     | Last minus first.                                                  |
-| `message_count`     | INTEGER     | User + assistant.                                                  |
-| `model`             | TEXT        | Sole model tag, or `mixed` when a session switched models.         |
-| `indexed_at`        | INTEGER     | Unix seconds.                                                      |
-| `provider`          | TEXT        | `claude` / `codex` / `pi`.                                         |
-| `present_on_disk`   | INTEGER     | `1` if the source file still exists, `0` if retained-after-delete. |
-| `archived_at`       | INTEGER     | Unix seconds when the file was archived/removed (NULL if live).    |
-| `last_seen`         | INTEGER     | Unix seconds of the last sync that observed the file.              |
-| `extras`            | TEXT        | Provider-specific metadata as a JSON object (cli_version, git, …). |
+| Column              | Type        | Notes                                                                                                              |
+| ------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| `id`                | INTEGER PK  | Surrogate key.                                                                                                     |
+| `project_name`      | TEXT        | Decoded project name, with `(worktree)` for worktree sessions.                                                     |
+| `file_path`         | TEXT UNIQUE | Absolute path to the transcript.                                                                                   |
+| `file_size`         | INTEGER     | Bytes. Part of the incremental-sync key.                                                                           |
+| `file_mtime`        | INTEGER     | Unix seconds. Part of the sync key.                                                                                |
+| `session_id`        | TEXT        | Session id from the provider.                                                                                      |
+| `parent_session_id` | TEXT        | Set for Claude subagent transcripts (roll up to parent).                                                           |
+| `first_timestamp`   | INTEGER     | Unix ms.                                                                                                           |
+| `last_timestamp`    | INTEGER     | Unix ms.                                                                                                           |
+| `duration_ms`       | INTEGER     | Last minus first.                                                                                                  |
+| `message_count`     | INTEGER     | User + assistant.                                                                                                  |
+| `model`             | TEXT        | Sole model tag, or `mixed` when a session switched models.                                                         |
+| `indexed_at`        | INTEGER     | Unix seconds.                                                                                                      |
+| `provider`          | TEXT        | `claude` / `codex` / `pi` / `openclaw`.                                                                            |
+| `present_on_disk`   | INTEGER     | `1` if the source file still exists, `0` if retained-after-delete.                                                 |
+| `archived_at`       | INTEGER     | Unix seconds when the file was archived/removed (NULL if live).                                                    |
+| `last_seen`         | INTEGER     | Unix seconds of the last sync that observed the file.                                                              |
+| `extras`            | TEXT        | Provider-specific metadata as a JSON object (cli_version, git, …).                                                 |
+| `source_key`        | TEXT        | Provider-scoped logical source id; OpenClaw uses this to de-duplicate trajectory-only rows with later transcripts. |
 
 Indexes: `idx_sessions_project`, `idx_sessions_timestamp`, `idx_sessions_parent`,
-`idx_sessions_provider`, `idx_sessions_present`.
+`idx_sessions_provider`, `idx_sessions_present`, `idx_sessions_source`.
 
 ## `token_usage`
 
 One row per `(session, model)` pair. A session that switched models has
 multiple rows.
 
-| Column                                                                        | Notes                                                                                                                              |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).                                                                                            |
-| `model`                                                                       | Model tag.                                                                                                                         |
-| `assistant_message_count`                                                     | Assistant messages contributing to the row.                                                                                        |
-| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                                                                                                                     |
-| `cost_usd`                                                                    | Pre-computed cost for this row.                                                                                                    |
-| `cost_source`                                                                 | `computed` (priced from the tier table) or `provider` (a provider-reported cost, e.g. Pi). Repricing only touches `computed` rows. |
-| `inference_geo`                                                               | Distinct reported regions for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                            |
-| `speed`                                                                       | Average tokens/sec for the session-model row, if reported.                                                                         |
-| `service_tier`                                                                | Distinct reported service tiers for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                      |
-| `iterations`                                                                  | Count of messages contributing to the row.                                                                                         |
+| Column                                                                        | Notes                                                                                                                                       |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_id`                                                                  | FK → `sessions.id` (ON DELETE CASCADE).                                                                                                     |
+| `model`                                                                       | Model tag.                                                                                                                                  |
+| `assistant_message_count`                                                     | Assistant messages contributing to the row.                                                                                                 |
+| `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Four counters.                                                                                                                              |
+| `cost_usd`                                                                    | Pre-computed cost for this row.                                                                                                             |
+| `cost_source`                                                                 | `computed` (priced from the tier table) or `provider` (a provider-reported cost, e.g. Pi/OpenClaw). Repricing only touches `computed` rows. |
+| `inference_geo`                                                               | Distinct reported regions for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                                     |
+| `speed`                                                                       | Average tokens/sec for the session-model row, if reported.                                                                                  |
+| `service_tier`                                                                | Distinct reported service tiers for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                               |
+| `iterations`                                                                  | Count of messages contributing to the row.                                                                                                  |
 
 Index: `idx_token_usage_session`.
 

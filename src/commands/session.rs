@@ -304,6 +304,7 @@ fn resolve_indexed_session(
 
 fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
     serde_json::json!({
+        "provider": detail.provider,
         "project": detail.project,
         "file_path": detail.file_path,
         "session_id": detail.session_id,

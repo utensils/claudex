@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use claudex::providers::{
-    ClaudeProvider, CodexProvider, DiscoveredFile, PiProvider, SessionProvider,
+    ClaudeProvider, CodexProvider, DiscoveredFile, OpenClawProvider, PiProvider, SessionProvider,
 };
 use claudex::store::SessionStore;
 use tempfile::TempDir;
@@ -408,4 +408,199 @@ fn pi_local_ollama_session_reports_zero_cost() {
     let stats = rec.model_usage.get("ollama/qwen3").unwrap();
     assert_eq!(stats.usage.input_tokens, 6000);
     assert_eq!(stats.embedded_cost, Some(0.0));
+}
+
+// --- OpenClaw provider ---
+
+#[test]
+fn openclaw_enumerates_agents_and_skips_sidecars() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let main = state.join("agents/main/sessions");
+    let ops = state.join("agents/ops/sessions");
+    write_jsonl(
+        &main.join("sess-main.jsonl"),
+        &[
+            r#"{"type":"session","id":"sess-main","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/main"}"#,
+        ],
+    );
+    write_jsonl(
+        &main.join("sess-main.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-main","source":"runtime","type":"session.started","ts":"2026-05-30T00:00:00Z","seq":1,"sessionId":"sess-main"}"#,
+        ],
+    );
+    write_jsonl(
+        &main.join("sess-main.checkpoint.11111111-1111-4111-8111-111111111111.jsonl"),
+        &[],
+    );
+    fs::write(main.join("sessions.json"), "{}\n").unwrap();
+    fs::write(main.join("sess-main.trajectory-path.json"), "{}\n").unwrap();
+    write_jsonl(
+        &ops.join("sess-deleted.jsonl.deleted.2026-05-30T00-00-00Z"),
+        &[
+            r#"{"type":"session","id":"sess-deleted","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/ops"}"#,
+        ],
+    );
+    write_jsonl(
+        &ops.join("trajectory-only.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"trajectory-only","source":"runtime","type":"session.started","ts":"2026-05-30T00:00:00Z","seq":1,"sessionId":"trajectory-only","workspaceDir":"/repo/traj"}"#,
+        ],
+    );
+
+    let provider = OpenClawProvider::at(state);
+    assert_eq!(provider.id(), "openclaw");
+    let files = provider.enumerate().unwrap();
+    let names: Vec<_> = files
+        .iter()
+        .map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert!(names.contains(&"sess-main.jsonl".to_string()));
+    assert!(names.contains(&"sess-deleted.jsonl.deleted.2026-05-30T00-00-00Z".to_string()));
+    assert!(names.contains(&"trajectory-only.trajectory.jsonl".to_string()));
+    assert!(
+        files
+            .iter()
+            .find(|f| f
+                .path
+                .ends_with("sess-deleted.jsonl.deleted.2026-05-30T00-00-00Z"))
+            .unwrap()
+            .archived
+    );
+    assert!(files.iter().all(|f| {
+        f.source_key
+            .as_deref()
+            .is_some_and(|k| k.starts_with("agent:"))
+    }));
+}
+
+#[test]
+fn openclaw_classic_parse_reads_usage_tools_prs_and_store_extras() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let sessions = state.join("agents/main/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("sessions.json"),
+        r#"{"agent:main:telegram:direct:owner":{"sessionId":"sess-open","status":"running","modelProvider":"anthropic","messageProvider":"telegram","workspaceDir":"/repo/open","usageFamilySessionIds":["sess-open"]}}"#,
+    )
+    .unwrap();
+    write_jsonl(
+        &sessions.join("sess-open.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-open","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/open"}"#,
+            r#"{"type":"model_change","provider":"anthropic","modelId":"claude-3-opus","timestamp":"2026-05-30T00:00:01Z"}"#,
+            r#"{"type":"message","id":"u1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"user","content":[{"type":"text","text":"open the pr"}]}}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:02:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"gh pr create --fill"}},{"type":"thinking","text":"hmm"},{"type":"text","text":"on it"}],"provider":"anthropic","model":"claude-3-opus","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{"total":0.42}},"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"t1","timestamp":"2026-05-30T00:03:00Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"https://github.com/utensils/claudex/pull/41"}]}}"#,
+        ],
+    );
+    write_jsonl(
+        &sessions.join("sess-open.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-open","source":"runtime","type":"session.ended","ts":"2026-05-30T00:04:00Z","seq":1,"sessionId":"sess-open","data":{"status":"done"}}"#,
+        ],
+    );
+
+    let provider = OpenClawProvider::at(state);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert_eq!(rec.session_id.as_deref(), Some("sess-open"));
+    assert_eq!(rec.project_display, "/repo/open");
+    assert_eq!(rec.embedded_cost, Some(0.42));
+    assert_eq!(rec.tool_names, vec!["bash".to_string()]);
+    assert_eq!(rec.thinking_block_count, 1);
+    assert_eq!(*rec.stop_reason_counts.get("toolUse").unwrap(), 1);
+    assert_eq!(*rec.stop_reason_counts.get("done").unwrap(), 1);
+    assert!(
+        rec.messages
+            .iter()
+            .any(|m| m.content.contains("open the pr"))
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 41 && repo == "utensils/claudex")
+    );
+    let stats = rec.model_usage.get("anthropic/claude-3-opus").unwrap();
+    assert_eq!(stats.usage.input_tokens, 100);
+    assert_eq!(stats.embedded_cost, Some(0.42));
+    let extras = rec.extras.unwrap();
+    assert!(extras.contains("agent_id"));
+    assert!(extras.contains("session_keys"));
+    assert!(extras.contains("trajectory_path"));
+}
+
+#[test]
+fn openclaw_trajectory_only_parse_reads_runtime_events() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let sessions = state.join("agents/main/sessions");
+    write_jsonl(
+        &sessions.join("traj-only.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"session.started","ts":"2026-05-30T00:00:00Z","seq":1,"sessionId":"traj-only","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2"}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"prompt.submitted","ts":"2026-05-30T00:01:00Z","seq":2,"sessionId":"traj-only","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2","data":{"prompt":"ship it"}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"tool.call","ts":"2026-05-30T00:02:00Z","seq":3,"entryId":"c1","sessionId":"traj-only","provider":"openai","modelId":"gpt-5.2","data":{"name":"bash","arguments":{"command":"gh pr view"}}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"tool.result","ts":"2026-05-30T00:03:00Z","seq":4,"parentEntryId":"c1","sessionId":"traj-only","provider":"openai","modelId":"gpt-5.2","data":{"name":"bash","output":"https://github.com/utensils/aethon/pull/168"}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.completed","ts":"2026-05-30T00:04:00Z","seq":5,"sessionId":"traj-only","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"Opened https://github.com/utensils/claudex/pull/42","usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.12}}}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.fallback_step","ts":"2026-05-30T00:05:00Z","seq":6,"sessionId":"traj-only"}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"session.ended","ts":"2026-05-30T00:06:00Z","seq":7,"sessionId":"traj-only","data":{"status":"done"}}"#,
+        ],
+    );
+
+    let provider = OpenClawProvider::at(state);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert_eq!(rec.session_id.as_deref(), Some("traj-only"));
+    assert_eq!(rec.project_display, "/repo/traj");
+    assert_eq!(rec.tool_names, vec!["bash".to_string()]);
+    assert_eq!(rec.embedded_cost, Some(0.12));
+    assert!(rec.messages.iter().any(|m| m.content.contains("ship it")));
+    assert!(rec.messages.iter().any(|m| m.content.contains("Opened")));
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 168 && repo == "utensils/aethon")
+    );
+    assert!(
+        rec.pr_links
+            .iter()
+            .any(|(n, _, repo, _)| *n == 42 && repo == "utensils/claudex")
+    );
+    assert_eq!(
+        *rec.stop_reason_counts.get("model_fallback_step").unwrap(),
+        1
+    );
+    assert_eq!(*rec.stop_reason_counts.get("done").unwrap(), 1);
+    let stats = rec.model_usage.get("openai/gpt-5.2").unwrap();
+    assert_eq!(stats.usage.cache_read_tokens, 2);
+}
+
+#[test]
+fn openclaw_enumerates_external_trajectory_dir_from_session_store() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let trajectory = tmp.path().join("traces");
+    let sessions = state.join("agents/main/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::create_dir_all(&trajectory).unwrap();
+    fs::write(
+        sessions.join("sessions.json"),
+        r#"{"agent:main:dm":{"sessionId":"external.session","workspaceDir":"/repo/ext"}}"#,
+    )
+    .unwrap();
+    write_jsonl(
+        &trajectory.join("external_session.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"external.session","source":"runtime","type":"session.started","ts":"2026-05-30T00:00:00Z","seq":1,"sessionId":"external.session","workspaceDir":"/repo/ext"}"#,
+        ],
+    );
+    let provider = OpenClawProvider::at_with_trajectory_dir(state, trajectory);
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].path.ends_with("external_session.jsonl"));
+    assert_eq!(files[0].project_display, "/repo/ext");
 }

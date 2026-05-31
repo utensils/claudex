@@ -8,12 +8,13 @@ under the hood — or contribute to it.
 ```
 ~/.claude/projects/**.jsonl   (Claude Code)  ┐
 ~/.codex/sessions|archived/**  (OpenAI Codex) ├─ claudex never modifies these
-~/.pi/agent/sessions/**        (Pi)           ┘
+~/.pi/agent/sessions/**        (Pi)           │
+~/.openclaw/agents/*/sessions  (OpenClaw)     ┘
         │
         ▼
-providers::{claude,codex,pi}  — SessionProvider: enumerate + parse → ProviderRecord
+providers::{claude,codex,pi,openclaw} — SessionProvider: enumerate + parse → ProviderRecord
         ▼
-index::IndexStore             — rusqlite, bundled, schema_version = 5, additive/retentive
+index::IndexStore             — rusqlite, bundled, schema_version = 7, additive/retentive
         ▼
 commands::<name>::run         — reads the index with a shared ResolvedFilter
         ▼
@@ -25,18 +26,18 @@ ui::table() / palette         — comfy-table with dynamic width + owo-colors
 
 ## Modules
 
-| Module               | Purpose                                                                                                                                                                                                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/main.rs`        | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag.                                                                                                          |
-| `src/providers/*.rs` | The provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch). Claude/Codex/Pi each `enumerate` their transcripts and `parse` them into a normalized `ProviderRecord`. `enabled_default()` returns every provider whose root exists. |
-| `src/cli.rs`         | Shared `FilterArgs` → `ResolvedFilter` (`--provider`/`--model`/`--since`/`--until`/`--on-disk-only`); SQL predicate + `--no-index` matcher. Also the `skills` clap types.                                                                                  |
-| `src/store.rs`       | Claude file discovery, project-directory decoding (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), worktree canonicalization.                                                                                                                                   |
-| `src/parser.rs`      | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                                                                             |
-| `src/types.rs`       | `TokenUsage`, `ModelPricing` (Opus/Sonnet/Haiku + gpt-5/gpt-4 tiers). `cost_for_model` is the single source of truth; providers can supply their own `embedded_cost`.                                                                                      |
-| `src/index.rs`       | `IndexStore` (SQLite). Relational report tables plus an FTS5 virtual table. Per-provider incremental sync; additive retention; non-destructive migrations.                                                                                                 |
-| `src/skill/*.rs`     | `claudex skills` — generates the agent skill from the live clap tree.                                                                                                                                                                                      |
-| `src/ui.rs`          | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                                                                                |
-| `src/commands/*.rs`  | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `session`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs`.)                                   |
+| Module               | Purpose                                                                                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.rs`        | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag.                                                                                                                   |
+| `src/providers/*.rs` | The provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch). Claude/Codex/Pi/OpenClaw each `enumerate` their transcripts and `parse` them into a normalized `ProviderRecord`. `enabled_default()` returns every provider whose root exists. |
+| `src/cli.rs`         | Shared `FilterArgs` → `ResolvedFilter` (`--provider`/`--model`/`--since`/`--until`/`--on-disk-only`); SQL predicate + `--no-index` matcher. Also the `skills` clap types.                                                                                           |
+| `src/store.rs`       | Claude file discovery, project-directory decoding (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), worktree canonicalization.                                                                                                                                            |
+| `src/parser.rs`      | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                                                                                      |
+| `src/types.rs`       | `TokenUsage`, `ModelPricing` (Opus/Sonnet/Haiku + gpt-5/gpt-4 tiers). `cost_for_model` is the single source of truth; providers can supply their own `embedded_cost`.                                                                                               |
+| `src/index.rs`       | `IndexStore` (SQLite). Relational report tables plus an FTS5 virtual table. Per-provider incremental sync; additive retention; non-destructive migrations.                                                                                                          |
+| `src/skill/*.rs`     | `claudex skills` — generates the agent skill from the live clap tree.                                                                                                                                                                                               |
+| `src/ui.rs`          | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                                                                                         |
+| `src/commands/*.rs`  | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `session`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs`.)                                            |
 
 ## Key invariants
 
@@ -51,7 +52,7 @@ Force a full rebuild: `claudex index --force`
 
 ### Providers are first-class; filtering happens at query time
 
-All three providers flow through the same `IndexStore` pipeline. `ensure_fresh`
+All four providers flow through the same `IndexStore` pipeline. `ensure_fresh`
 / `sync` / `force_rebuild` take `&[Provider]`, and reports span every provider
 whose data root exists. `--provider` narrows at query time — the index always
 holds everything available, so switching providers never re-syncs.
@@ -74,7 +75,7 @@ applies the shared filter in memory. The indexed path is the multi-provider one.
 Bumping `SCHEMA_VERSION` runs the `migrate_schema` ladder (guarded
 `ALTER TABLE ADD COLUMN`) — never `DROP`, because retained data can't be rebuilt
 from disk. Add a column to the `CREATE TABLE IF NOT EXISTS` block **and** an
-additive migration step, then bump the version. The current version is **5**.
+additive migration step, then bump the version. The current version is **7**.
 
 ### Worktree aggregation
 

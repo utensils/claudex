@@ -53,6 +53,7 @@ impl SessionProvider for ClaudeProvider {
                 project_display,
                 parent_session_id,
                 archived: false,
+                source_key: None,
             });
         }
         Ok(files)

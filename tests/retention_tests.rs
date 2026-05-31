@@ -133,7 +133,7 @@ fn migration_from_v4_preserves_data() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(version, "6", "schema version should be migrated to 6");
+    assert_eq!(version, "7", "schema version should be migrated to 7");
 
     // The retained row survives, with the new columns defaulted.
     let row = retention(&db, "sess-old").expect("legacy session must survive migration");
@@ -486,7 +486,7 @@ fn reprice_corrects_stale_computed_costs() {
         (cost - 5.0).abs() < 1e-9,
         "expected repriced $5.00, got {cost}"
     );
-    assert_eq!(meta_val(&db, "schema_version").as_deref(), Some("6"));
+    assert_eq!(meta_val(&db, "schema_version").as_deref(), Some("7"));
     assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("1"));
 }
 

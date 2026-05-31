@@ -17,6 +17,8 @@ use crate::parser::SessionStats;
 pub enum ProviderArg {
     Claude,
     Codex,
+    #[value(name = "openclaw")]
+    OpenClaw,
     Pi,
 }
 
@@ -25,6 +27,7 @@ impl ProviderArg {
         match self {
             ProviderArg::Claude => "claude",
             ProviderArg::Codex => "codex",
+            ProviderArg::OpenClaw => "openclaw",
             ProviderArg::Pi => "pi",
         }
     }
@@ -222,11 +225,14 @@ pub enum SkillTarget {
     Codex,
     /// Pi — `.pi/skills/claudex/SKILL.md`
     Pi,
+    /// OpenClaw — `skills/claudex/SKILL.md` or `$OPENCLAW_STATE_DIR/skills/claudex/SKILL.md`
+    #[value(name = "openclaw")]
+    OpenClaw,
     /// Idempotent block spliced into `AGENTS.md`
     AgentsMd,
     /// Claude Code plugin — `.claude-plugin/plugin.json` + skill
     Plugin,
-    /// Expand to claude-code + codex + pi + agents-md
+    /// Expand to claude-code + codex + pi + openclaw + agents-md
     All,
 }
 

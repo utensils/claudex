@@ -6,8 +6,8 @@ hero:
   text: Query your AI coding sessions
   tagline:
     A Rust CLI that indexes the local transcripts of Claude Code, OpenAI Codex,
-    and Pi into one SQLite database and turns them into reports — cost, tools,
-    turns, PRs, full-text search, and more, across every provider.
+    Pi, and OpenClaw into one SQLite database and turns them into reports —
+    cost, tools, turns, PRs, full-text search, and more, across every provider.
   actions:
     - theme: brand
       text: Get Started →
@@ -20,10 +20,10 @@ hero:
       link: https://github.com/utensils/claudex
 
 features:
-  - title: Three providers, one index
-    details: Claude Code (~/.claude/projects), OpenAI Codex (~/.codex), and Pi
-      (~/.pi/agent) are all first-class. Every report spans them by default;
-      narrow with --provider claude|codex|pi.
+  - title: Four providers, one index
+    details: Claude Code (~/.claude/projects), OpenAI Codex (~/.codex), Pi
+      (~/.pi/agent), and OpenClaw (~/.openclaw) are all first-class. Every
+      report spans them by default; narrow with --provider claude|codex|pi|openclaw.
   - title: Additive & retentive
     details: Archive or delete a session from disk and its indexed data stays.
       Non-destructive schema migrations and per-provider incremental sync mean
@@ -41,8 +41,8 @@ features:
   - title: Honest pricing math
     details:
       Opus / Sonnet / Haiku and OpenAI gpt-5 / gpt-4 tiers, applied per model.
-      Pi reports its own per-message cost (local models = $0). Sub-cent values
-      fall back to four decimals.
+      Pi and OpenClaw report their own per-message cost when available (local
+      models = $0). Sub-cent values fall back to four decimals.
   - title: FTS5 full-text search
     details:
       The index ships with a messages_fts virtual table. Search across every
@@ -98,12 +98,12 @@ shell-completion setup.
 
 ## Why claudex?
 
-Claude Code, OpenAI Codex, and Pi each persist every conversation as local
+Claude Code, OpenAI Codex, Pi, and OpenClaw each persist every conversation as local
 transcripts — every user turn, every assistant message, every tool call, every
 token-usage block, every file modification — but those files are flat logs in
-three different formats, not a queryable store.
+several different formats, not a queryable store.
 
-claudex reads them once, normalizes all three into one SQLite index, and gives
+claudex reads them once, normalizes them into one SQLite index, and gives
 you a CLI that answers questions like:
 
 - _How much have I spent on Codex versus Claude this month?_
