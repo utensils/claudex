@@ -7,9 +7,13 @@ use crate::store::short_name;
 use crate::ui;
 
 pub fn run(project: Option<&str>, limit: usize, json: bool, filter: &ResolvedFilter) -> Result<()> {
-    let providers = enabled_default()?;
+    let providers: Vec<_> = enabled_default()?
+        .into_iter()
+        .filter(|p| filter.includes_provider(p.id()))
+        .collect();
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
+    idx.ensure_pr_links_fresh(&providers)?;
 
     let rows = idx.query_pr_links(project, filter, limit)?;
 

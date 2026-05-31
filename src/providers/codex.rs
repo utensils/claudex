@@ -3,12 +3,14 @@
 //! project (`cwd`), model, and cumulative token counts inside the transcript,
 //! so [`CodexProvider::parse`] reads them from the file rather than the path.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
+use super::pr::{append_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command};
 use super::{DiscoveredFile, MessageForFts, ProviderRecord, SessionProvider};
 use crate::parser::stream_records;
 
@@ -109,9 +111,13 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
     let mut model_provider: Option<String> = None;
     let mut git_branch: Option<String> = None;
     let mut last_tokens: Option<CodexTokens> = None;
+    let mut pr_links_seen = BTreeSet::new();
+    let mut gh_pr_call_ids = BTreeSet::new();
 
     stream_records(path, |record| {
-        if let Some(ts) = record["timestamp"].as_str().and_then(parse_ts) {
+        let timestamp = record["timestamp"].as_str();
+        let timestamp_ms = timestamp.and_then(|ts| parse_ts(ts).map(|dt| dt.timestamp_millis()));
+        if let Some(ts) = timestamp.and_then(parse_ts) {
             if entry.first_timestamp.is_none_or(|p| ts < p) {
                 entry.first_timestamp = Some(ts);
             }
@@ -143,9 +149,27 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
                 set_if_present(&mut cwd, record["payload"]["cwd"].as_str());
             }
             Some("response_item") | Some("event_msg") => {
-                handle_payload(&mut entry, &mut last_tokens, &record["payload"]);
+                handle_payload(
+                    &mut entry,
+                    &mut last_tokens,
+                    &mut pr_links_seen,
+                    &mut gh_pr_call_ids,
+                    &record["payload"],
+                    timestamp,
+                    timestamp_ms,
+                );
             }
-            Some("message") => handle_payload(&mut entry, &mut last_tokens, record),
+            Some("message") => {
+                handle_payload(
+                    &mut entry,
+                    &mut last_tokens,
+                    &mut pr_links_seen,
+                    &mut gh_pr_call_ids,
+                    record,
+                    timestamp,
+                    timestamp_ms,
+                );
+            }
             Some("compacted") => {
                 *entry
                     .stop_reason_counts
@@ -199,7 +223,11 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
 fn handle_payload(
     entry: &mut ProviderRecord,
     last_tokens: &mut Option<CodexTokens>,
+    pr_links_seen: &mut BTreeSet<String>,
+    gh_pr_call_ids: &mut BTreeSet<String>,
     payload: &Value,
+    timestamp: Option<&str>,
+    timestamp_ms: Option<i64>,
 ) {
     match payload["type"].as_str() {
         Some("token_count") => {
@@ -221,9 +249,12 @@ fn handle_payload(
                 {
                     entry.messages.push(MessageForFts {
                         msg_type: role.to_string(),
-                        content: text,
-                        timestamp_ms: None,
+                        content: text.clone(),
+                        timestamp_ms,
                     });
+                    if role == "assistant" && looks_like_final_pr_text(&text) {
+                        append_github_pr_links(entry, pr_links_seen, &text, timestamp);
+                    }
                 }
             }
         }
@@ -235,7 +266,7 @@ fn handle_payload(
                 entry.messages.push(MessageForFts {
                     msg_type: "user".to_string(),
                     content: text.to_string(),
-                    timestamp_ms: None,
+                    timestamp_ms,
                 });
             }
         }
@@ -247,16 +278,41 @@ fn handle_payload(
                 entry.messages.push(MessageForFts {
                     msg_type: "assistant".to_string(),
                     content: text.to_string(),
-                    timestamp_ms: None,
+                    timestamp_ms,
                 });
+                if looks_like_final_pr_text(text) {
+                    append_github_pr_links(entry, pr_links_seen, text, timestamp);
+                }
             }
         }
         Some("reasoning") | Some("agent_reasoning") => entry.thinking_block_count += 1,
         Some("function_call") | Some("custom_tool_call") => {
             push_tool(entry, payload["name"].as_str().unwrap_or("tool"));
+            if payload_command_mentions_gh_pr(payload)
+                && let Some(call_id) = payload["call_id"]
+                    .as_str()
+                    .or_else(|| payload["id"].as_str())
+            {
+                gh_pr_call_ids.insert(call_id.to_string());
+            }
         }
         Some("web_search_call") => push_tool(entry, "web_search"),
-        Some("exec_command_end") => push_tool(entry, "exec"),
+        Some("exec_command_end") => {
+            push_tool(entry, "exec");
+            if payload_command_mentions_gh_pr(payload) {
+                append_prs_from_fields(entry, pr_links_seen, payload, timestamp);
+            }
+        }
+        Some("function_call_output") | Some("custom_tool_call_output") => {
+            let call_id = payload["call_id"]
+                .as_str()
+                .or_else(|| payload["id"].as_str());
+            let output = output_text(payload);
+            let trusted = call_id.is_some_and(|id| gh_pr_call_ids.contains(id));
+            if trusted && let Some(text) = output {
+                append_github_pr_links(entry, pr_links_seen, &text, timestamp);
+            }
+        }
         Some("patch_apply_end") => push_tool(entry, "apply_patch"),
         Some("turn_aborted") => {
             *entry
@@ -309,4 +365,54 @@ fn set_if_present(slot: &mut Option<String>, value: Option<&str>) {
     {
         *slot = Some(v.to_string());
     }
+}
+
+fn append_prs_from_fields(
+    entry: &mut ProviderRecord,
+    pr_links_seen: &mut BTreeSet<String>,
+    payload: &Value,
+    timestamp: Option<&str>,
+) {
+    for field in ["stdout", "stderr", "aggregated_output", "output"] {
+        if let Some(text) = payload[field].as_str() {
+            append_github_pr_links(entry, pr_links_seen, text, timestamp);
+        }
+    }
+}
+
+fn output_text(payload: &Value) -> Option<String> {
+    for field in ["output", "stdout", "stderr", "aggregated_output"] {
+        if let Some(text) = payload[field].as_str()
+            && !text.is_empty()
+        {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
+fn payload_command_mentions_gh_pr(payload: &Value) -> bool {
+    ["command", "cmd", "parsed_cmd", "arguments", "args", "input"]
+        .iter()
+        .any(|field| value_mentions_gh_pr(&payload[*field]))
+}
+
+fn value_mentions_gh_pr(value: &Value) -> bool {
+    match value {
+        Value::String(s) => text_mentions_gh_pr(s),
+        Value::Array(items) => {
+            let joined = items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            text_mentions_gh_pr(&joined) || items.iter().any(value_mentions_gh_pr)
+        }
+        Value::Object(map) => map.values().any(value_mentions_gh_pr),
+        _ => false,
+    }
+}
+
+fn text_mentions_gh_pr(text: &str) -> bool {
+    looks_like_gh_pr_command(text)
 }

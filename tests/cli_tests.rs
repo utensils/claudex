@@ -124,6 +124,11 @@ fn fixture_home_with_codex() -> TempDir {
         r#"{{"timestamp":"2026-05-05T00:03:00Z","type":"response_item","payload":{{"type":"function_call","name":"shell","arguments":"{{}}","call_id":"c"}}}}"#
     )
     .unwrap();
+    writeln!(
+        f,
+        r#"{{"timestamp":"2026-05-05T00:03:30Z","type":"event_msg","payload":{{"type":"exec_command_end","command":"gh pr create --fill","stdout":"https://github.com/utensils/claudex/pull/38\n"}}}}"#
+    )
+    .unwrap();
     // Cumulative token counts: only the LAST must be used (1,000,000 input of
     // which 200,000 cached, 500,000 output) → gpt-5 pricing.
     writeln!(
@@ -577,7 +582,12 @@ fn fixture_home_with_pi() -> TempDir {
     .unwrap();
     writeln!(
         f,
-        r#"{{"type":"message","id":"a1","timestamp":"2026-05-13T22:05:52Z","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"c1","name":"read"}},{{"type":"text","text":"on it"}}],"provider":"anthropic","model":"claude-3-opus","usage":{{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{{"total":0.75}}}},"stopReason":"toolUse"}}}}"#
+        r#"{{"type":"message","id":"a1","timestamp":"2026-05-13T22:05:52Z","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"c1","name":"bash","arguments":{{"command":"gh pr create --fill"}}}},{{"type":"text","text":"on it"}}],"provider":"anthropic","model":"claude-3-opus","usage":{{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{{"total":0.75}}}},"stopReason":"toolUse"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"t1","timestamp":"2026-05-13T22:06:00Z","message":{{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{{"type":"text","text":"https://github.com/utensils/claudex/pull/40"}}],"isError":false}}}}"#
     )
     .unwrap();
     f.flush().unwrap();
@@ -1323,6 +1333,36 @@ fn prs_json_returns_linked_pr() {
     let arr = json_of(&out).as_array().unwrap().clone();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0].get("pr_number").unwrap().as_i64(), Some(99));
+}
+
+#[test]
+fn prs_provider_filter_returns_codex_extracted_links() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["prs", "--provider", "codex", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1, "expected one Codex PR, got {arr:?}");
+    assert_eq!(arr[0]["provider"].as_str(), Some("codex"));
+    assert_eq!(arr[0]["pr_number"].as_i64(), Some(38));
+    assert_eq!(
+        arr[0]["pr_url"].as_str(),
+        Some("https://github.com/utensils/claudex/pull/38")
+    );
+}
+
+#[test]
+fn prs_provider_filter_returns_pi_extracted_links() {
+    let home = fixture_home_with_pi();
+    let out = run(home.path(), &["prs", "--provider", "pi", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1, "expected one Pi PR, got {arr:?}");
+    assert_eq!(arr[0]["provider"].as_str(), Some("pi"));
+    assert_eq!(arr[0]["pr_number"].as_i64(), Some(40));
+    assert_eq!(
+        arr[0]["pr_url"].as_str(),
+        Some("https://github.com/utensils/claudex/pull/40")
+    );
 }
 
 #[test]

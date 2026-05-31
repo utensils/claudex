@@ -1,16 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::io::BufRead;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, Utc};
+use chrono::{Datelike, Duration, Local};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, params, params_from_iter};
 
 use crate::cli::ResolvedFilter;
 use crate::parser::ModelSessionStats;
 use crate::providers::Provider;
+use crate::providers::pr::{
+    extract_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command,
+};
 use crate::stats::percentile_sorted;
+use crate::time_utils::local_day_start_ms;
 use crate::types::ModelPricing;
 use crate::ui;
 
@@ -35,6 +40,11 @@ const SCHEMA_VERSION: i64 = 6;
 /// row is repriced in place (see `maybe_reprice`). Independent of
 /// `SCHEMA_VERSION`, which tracks table shape rather than cost values.
 const PRICING_REVISION: i64 = 1;
+
+/// Revision for provider-derived PR links. Bump when Codex/Pi PR extraction
+/// changes; `claudex prs` then performs a targeted, line-prefiltered backfill
+/// that only repairs the `pr_links` table.
+const PR_LINK_DERIVATION_REVISION: i64 = 4;
 
 /// Child tables whose rows hang off a single `sessions` row, paired with the
 /// column that references `sessions(id)`. `messages_fts` is a virtual table
@@ -72,6 +82,244 @@ fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn backfill_codex_pr_links(path: &Path) -> Result<Vec<(i64, String, String, String)>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+    let mut gh_pr_call_ids = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut links = Vec::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if !is_pr_candidate_line(&line) {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let timestamp = record["timestamp"].as_str().unwrap_or_default();
+        let payload = match record["type"].as_str() {
+            Some("response_item") | Some("event_msg") => &record["payload"],
+            Some("message") => &record,
+            _ => continue,
+        };
+
+        match payload["type"].as_str() {
+            Some("function_call") | Some("custom_tool_call") => {
+                if payload_has_gh_pr_command(payload)
+                    && let Some(call_id) = payload["call_id"]
+                        .as_str()
+                        .or_else(|| payload["id"].as_str())
+                {
+                    gh_pr_call_ids.insert(call_id.to_string());
+                }
+            }
+            Some("exec_command_end") if payload_has_gh_pr_command(payload) => {
+                append_links_from_value_fields(
+                    &mut links,
+                    &mut seen,
+                    payload,
+                    timestamp,
+                    &["stdout", "stderr", "aggregated_output", "output"],
+                );
+            }
+            Some("function_call_output") | Some("custom_tool_call_output") => {
+                let call_id = payload["call_id"]
+                    .as_str()
+                    .or_else(|| payload["id"].as_str());
+                let trusted = call_id.is_some_and(|id| gh_pr_call_ids.contains(id));
+                if trusted {
+                    append_links_from_value_fields(
+                        &mut links,
+                        &mut seen,
+                        payload,
+                        timestamp,
+                        &["output", "stdout", "stderr", "aggregated_output"],
+                    );
+                }
+            }
+            Some("agent_message") => {
+                if let Some(text) = payload["message"].as_str()
+                    && looks_like_final_pr_text(text)
+                {
+                    append_links_from_text(&mut links, &mut seen, text, timestamp);
+                }
+            }
+            Some("message") if payload["role"].as_str() == Some("assistant") => {
+                if let Some(text) = codex_message_text(payload)
+                    && looks_like_final_pr_text(&text)
+                {
+                    append_links_from_text(&mut links, &mut seen, &text, timestamp);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(links)
+}
+
+fn backfill_pi_pr_links(path: &Path) -> Result<Vec<(i64, String, String, String)>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+    let mut gh_pr_tool_call_ids = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut links = Vec::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if !is_pr_candidate_line(&line) {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if record["type"].as_str() != Some("message") {
+            continue;
+        }
+        let timestamp = record["timestamp"].as_str().unwrap_or_default();
+        let msg = &record["message"];
+        match msg["role"].as_str() {
+            Some("assistant") => {
+                if let Some(content) = msg["content"].as_array() {
+                    for block in content {
+                        match block["type"].as_str() {
+                            Some("toolCall") => {
+                                if block["name"].as_str().is_some_and(is_shell_tool)
+                                    && value_has_gh_pr_command(&block["arguments"])
+                                    && let Some(id) = block["id"].as_str()
+                                {
+                                    gh_pr_tool_call_ids.insert(id.to_string());
+                                }
+                            }
+                            Some("text") => {
+                                if let Some(text) = block["text"].as_str()
+                                    && looks_like_final_pr_text(text)
+                                {
+                                    append_links_from_text(&mut links, &mut seen, text, timestamp);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Some("toolResult") => {
+                let matched_call = ["toolCallId", "tool_call_id", "callId", "id"]
+                    .iter()
+                    .filter_map(|field| msg[*field].as_str())
+                    .any(|id| gh_pr_tool_call_ids.contains(id));
+                if msg["toolName"].as_str().is_some_and(is_shell_tool) && matched_call {
+                    append_links_from_text(
+                        &mut links,
+                        &mut seen,
+                        &content_text_any(&msg["content"]),
+                        timestamp,
+                    );
+                }
+            }
+            Some("bashExecution") if payload_has_gh_pr_command(msg) => {
+                append_links_from_value_fields(
+                    &mut links,
+                    &mut seen,
+                    msg,
+                    timestamp,
+                    &["output", "stdout", "stderr", "text"],
+                );
+            }
+            _ => {}
+        }
+    }
+
+    Ok(links)
+}
+
+fn is_pr_candidate_line(line: &str) -> bool {
+    line.contains("github.com/") || line.to_ascii_lowercase().contains("gh pr")
+}
+
+fn append_links_from_value_fields(
+    links: &mut Vec<(i64, String, String, String)>,
+    seen: &mut BTreeSet<String>,
+    value: &serde_json::Value,
+    timestamp: &str,
+    fields: &[&str],
+) {
+    for field in fields {
+        if let Some(text) = value[*field].as_str() {
+            append_links_from_text(links, seen, text, timestamp);
+        }
+    }
+}
+
+fn append_links_from_text(
+    links: &mut Vec<(i64, String, String, String)>,
+    seen: &mut BTreeSet<String>,
+    text: &str,
+    timestamp: &str,
+) {
+    for link in extract_github_pr_links(text, timestamp) {
+        if seen.insert(link.1.clone()) {
+            links.push(link);
+        }
+    }
+}
+
+fn payload_has_gh_pr_command(payload: &serde_json::Value) -> bool {
+    ["command", "cmd", "parsed_cmd", "arguments", "args", "input"]
+        .iter()
+        .any(|field| value_has_gh_pr_command(&payload[*field]))
+}
+
+fn value_has_gh_pr_command(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => looks_like_gh_pr_command(s),
+        serde_json::Value::Array(items) => {
+            let joined = items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            looks_like_gh_pr_command(&joined) || items.iter().any(value_has_gh_pr_command)
+        }
+        serde_json::Value::Object(map) => map.values().any(value_has_gh_pr_command),
+        _ => false,
+    }
+}
+
+fn codex_message_text(payload: &serde_json::Value) -> Option<String> {
+    if let Some(s) = payload["message"].as_str() {
+        return Some(s.to_string());
+    }
+    let content = payload["content"].as_array()?;
+    let parts: Vec<&str> = content
+        .iter()
+        .filter_map(|b| b["text"].as_str().filter(|t| !t.is_empty()))
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+fn content_text_any(content: &serde_json::Value) -> String {
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["type"].as_str() == Some("text"))
+        .filter_map(|b| b["text"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_shell_tool(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "bash" | "shell" | "exec"
+    )
 }
 
 pub struct IndexStore {
@@ -339,7 +587,9 @@ impl IndexStore {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=30000;",
+        )?;
         let store = Self { conn };
         store.create_schema()?;
         Ok(store)
@@ -618,6 +868,86 @@ impl IndexStore {
             .ok()
     }
 
+    fn pr_link_revision_key(provider_id: &str) -> String {
+        format!("pr_link_derivation_revision:{provider_id}")
+    }
+
+    fn pr_link_derivation_is_stale(&self, provider_id: &str) -> bool {
+        self.meta_get(&Self::pr_link_revision_key(provider_id))
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+            < PR_LINK_DERIVATION_REVISION
+    }
+
+    fn stamp_pr_link_derivation(&self, provider_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            params![
+                Self::pr_link_revision_key(provider_id),
+                PR_LINK_DERIVATION_REVISION.to_string()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Backfill provider-derived PR links without reparsing full sessions. This
+    /// scans only lines containing PR URL candidates or `gh pr` markers, repairs
+    /// just the `pr_links` child table, and is revisioned per provider so large
+    /// histories pay the cost once.
+    pub fn ensure_pr_links_fresh(&mut self, providers: &[Provider]) -> Result<usize> {
+        let mut total = 0usize;
+        for provider in providers {
+            let provider_id = provider.id();
+            if provider_id == "claude" || !self.pr_link_derivation_is_stale(provider_id) {
+                continue;
+            }
+            total += self.backfill_provider_pr_links(provider_id)?;
+            self.stamp_pr_link_derivation(provider_id)?;
+        }
+        Ok(total)
+    }
+
+    fn backfill_provider_pr_links(&mut self, provider_id: &str) -> Result<usize> {
+        let sessions = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, file_path FROM sessions WHERE provider = ?")?;
+            stmt.query_map(params![provider_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM pr_links WHERE session_rowid IN (SELECT id FROM sessions WHERE provider = ?)",
+            params![provider_id],
+        )?;
+        let mut inserted = 0usize;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO pr_links (session_rowid, pr_number, pr_url, pr_repository, timestamp) VALUES (?, ?, ?, ?, ?)",
+            )?;
+            for (session_rowid, file_path) in sessions {
+                let path = Path::new(&file_path);
+                if !path.exists() {
+                    continue;
+                }
+                let links = match provider_id {
+                    "codex" => backfill_codex_pr_links(path)?,
+                    "pi" => backfill_pi_pr_links(path)?,
+                    _ => Vec::new(),
+                };
+                for (number, url, repo, timestamp) in links {
+                    insert.execute(params![session_rowid, number, url, repo, timestamp])?;
+                    inserted += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(inserted)
+    }
+
     /// One-off, idempotent reprice keyed on `pricing_revision`. When the binary's
     /// pricing table has advanced past what this DB was last priced at, recompute
     /// every `cost_source = 'computed'` row, then stamp the new revision so it
@@ -690,7 +1020,10 @@ impl IndexStore {
         self.conn
             .execute_batch("DELETE FROM messages_fts; DELETE FROM sessions;")?;
         self.conn.execute(
-            "DELETE FROM meta WHERE key LIKE 'last_sync:%' OR key LIKE 'sessions_root:%'",
+            "DELETE FROM meta
+             WHERE key LIKE 'last_sync:%'
+                OR key LIKE 'sessions_root:%'
+                OR key LIKE 'pr_link_derivation_revision:%'",
             [],
         )?;
         self.sync(providers)
@@ -2049,17 +2382,12 @@ impl IndexStore {
     }
 
     pub fn query_summary(&self) -> Result<SummaryData> {
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         let days_since_monday = today.weekday().num_days_from_monday() as i64;
         let week_start = today - Duration::days(days_since_monday);
 
-        let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("valid time");
-        let today_start_ms = NaiveDateTime::new(today, midnight)
-            .and_utc()
-            .timestamp_millis();
-        let week_start_ms = NaiveDateTime::new(week_start, midnight)
-            .and_utc()
-            .timestamp_millis();
+        let today_start_ms = local_day_start_ms(today);
+        let week_start_ms = local_day_start_ms(week_start);
 
         let (total_sessions, total_cost, total_in, total_out, total_cc, total_cr): (
             i64,
@@ -2091,13 +2419,13 @@ impl IndexStore {
         )?;
 
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE COALESCE(last_timestamp, first_timestamp) >= ?",
             params![today_start_ms],
             |row| row.get(0),
         )?;
 
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE first_timestamp >= ?",
+            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE COALESCE(last_timestamp, first_timestamp) >= ?",
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -2105,7 +2433,7 @@ impl IndexStore {
         let week_cost: f64 = self.conn.query_row(
             r#"SELECT COALESCE(SUM(t.cost_usd), 0)
                FROM sessions s JOIN token_usage t ON t.session_id = s.id
-               WHERE s.first_timestamp >= ?"#,
+               WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?"#,
             params![week_start_ms],
             |row| row.get(0),
         )?;
@@ -2146,10 +2474,10 @@ impl IndexStore {
         let most_recent: Option<MostRecentSession> = self
             .conn
             .query_row(
-                r#"SELECT project_name, session_id, first_timestamp, model, message_count
+                r#"SELECT project_name, session_id, COALESCE(last_timestamp, first_timestamp), model, message_count
                    FROM sessions
                    WHERE first_timestamp IS NOT NULL
-                   ORDER BY first_timestamp DESC
+                   ORDER BY COALESCE(last_timestamp, first_timestamp) DESC
                    LIMIT 1"#,
                 [],
                 |row| {
