@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.9.0](https://github.com/utensils/claudex/compare/v0.8.2...v0.9.0) (2026-06-01)
+
+
+### Features
+
+* **cli:** add session intelligence reports ([#59](https://github.com/utensils/claudex/issues/59)) ([7750aed](https://github.com/utensils/claudex/commit/7750aeda68b03fa679639a09ead6259ab03ad7e9))
+
 ## [0.8.2](https://github.com/utensils/claudex/compare/v0.8.1...v0.8.2) (2026-06-01)
 
 
