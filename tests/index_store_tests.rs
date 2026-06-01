@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Duration, Local};
 use claudex::cli::ResolvedFilter;
-use claudex::index::IndexStore;
+use claudex::index::{IndexStore, SearchFtsOptions};
 use claudex::providers::{ClaudeProvider, CodexProvider, OpenClawProvider, PiProvider, Provider};
 use claudex::store::SessionStore;
 use rusqlite::{Connection, params};
@@ -171,8 +171,19 @@ fn sync_indexes_subagent_transcripts_and_rolls_up_parent_reports() {
     let indexed_sessions = idx.query_sessions(None, None, &all(), 10).unwrap();
     assert_eq!(indexed_sessions.len(), 2);
 
+    let filter = all();
     let hits = idx
-        .search_fts("Authenticated the dev app", None, &all(), 10)
+        .search_fts(SearchFtsOptions {
+            query: "Authenticated the dev app",
+            project_filter: None,
+            filter: &filter,
+            role_filter: None,
+            tool_filter: None,
+            file_filter: None,
+            pr_filter: None,
+            context: 0,
+            limit: 10,
+        })
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].session_id.as_deref(), Some("child-1"));
@@ -329,7 +340,20 @@ fn query_tools_per_session_breaks_down_by_session() {
 #[test]
 fn search_fts_finds_terms_in_user_messages() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("foo", None, &all(), 10).unwrap();
+    let filter = all();
+    let hits = idx
+        .search_fts(SearchFtsOptions {
+            query: "foo",
+            project_filter: None,
+            filter: &filter,
+            role_filter: None,
+            tool_filter: None,
+            file_filter: None,
+            pr_filter: None,
+            context: 0,
+            limit: 10,
+        })
+        .unwrap();
     assert!(!hits.is_empty());
     assert!(
         hits.iter().any(|h| h.snippet.contains("foo")),
@@ -341,14 +365,40 @@ fn search_fts_finds_terms_in_user_messages() {
 #[test]
 fn search_fts_filters_by_project() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("alpha", Some("alpha"), &all(), 10).unwrap();
+    let filter = all();
+    let hits = idx
+        .search_fts(SearchFtsOptions {
+            query: "alpha",
+            project_filter: Some("alpha"),
+            filter: &filter,
+            role_filter: None,
+            tool_filter: None,
+            file_filter: None,
+            pr_filter: None,
+            context: 0,
+            limit: 10,
+        })
+        .unwrap();
     assert!(hits.iter().all(|h| h.project_name.contains("alpha")));
 }
 
 #[test]
 fn search_fts_respects_limit() {
     let (_tmp, _store, idx) = build_fixture();
-    let hits = idx.search_fts("the", None, &all(), 1).unwrap();
+    let filter = all();
+    let hits = idx
+        .search_fts(SearchFtsOptions {
+            query: "the",
+            project_filter: None,
+            filter: &filter,
+            role_filter: None,
+            tool_filter: None,
+            file_filter: None,
+            pr_filter: None,
+            context: 0,
+            limit: 1,
+        })
+        .unwrap();
     assert!(hits.len() <= 1);
 }
 
@@ -362,6 +412,43 @@ fn query_turn_stats_returns_percentiles() {
     assert!(alpha.max_duration_ms >= 10000);
     assert!(alpha.avg_duration_ms > 0.0);
     assert!(alpha.p50_duration_ms > 0.0);
+}
+
+#[test]
+fn query_timeline_turn_average_is_weighted_by_turn_count() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-weighted",
+        "sess-one-turn",
+        &[
+            r#"{"type":"user","sessionId":"sess-one-turn","timestamp":"2026-05-01T10:00:00Z","message":{"content":"one"}}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":1000,"timestamp":"2026-05-01T10:01:00Z","sessionId":"sess-one-turn"}"#,
+        ],
+    );
+    write_session(
+        &projects,
+        "-Users-test-Projects-weighted",
+        "sess-three-turns",
+        &[
+            r#"{"type":"user","sessionId":"sess-three-turns","timestamp":"2026-05-01T11:00:00Z","message":{"content":"three"}}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":9000,"timestamp":"2026-05-01T11:01:00Z","sessionId":"sess-three-turns"}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":9000,"timestamp":"2026-05-01T11:02:00Z","sessionId":"sess-three-turns"}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":9000,"timestamp":"2026-05-01T11:03:00Z","sessionId":"sess-three-turns"}"#,
+        ],
+    );
+    let providers = claude_providers(projects);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&providers).unwrap();
+
+    let rows = idx.query_timeline(&all(), false, 10).unwrap();
+    let row = rows.iter().find(|r| r.bucket == "2026-05-01").unwrap();
+    let avg = row.avg_turn_duration_ms.unwrap();
+    assert!(
+        (avg - 7000.0).abs() < 0.001,
+        "expected weighted turn average, got {avg}"
+    );
 }
 
 #[test]

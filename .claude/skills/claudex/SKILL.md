@@ -31,6 +31,10 @@ usage never disappears.
 - `claudex session` — Detailed report for a single session
 - `claudex export` — Export session transcripts to markdown or JSON
 - `claudex index` — Manage the session index (normally updated automatically)
+- `claudex providers` — Provider health, roots, sync status, and parse diagnostics
+- `claudex timeline` — Daily or weekly usage trend
+- `claudex budget` — Budget view for monthly usage
+- `claudex activity` — Recent sessions, PRs, files, and slow projects in one report
 - `claudex turns` — Per-turn timing analysis (avg, p50, p95, max duration)
 - `claudex prs` — PR linkage report — sessions linked to pull requests
 - `claudex files` — Most frequently modified files across sessions

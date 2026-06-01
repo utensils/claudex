@@ -13,7 +13,7 @@ use claudex::ui::{self, ColorChoice};
 #[derive(Parser)]
 #[command(
     name = "claudex",
-    about = "Query, search, and analyze Claude Code sessions",
+    about = "Query, search, and analyze agent coding sessions",
     version,
     arg_required_else_help = true
 )]
@@ -87,6 +87,21 @@ enum Commands {
         /// Case-sensitive matching
         #[arg(long)]
         case_sensitive: bool,
+        /// Only match user or assistant messages
+        #[arg(long)]
+        role: Option<String>,
+        /// Only sessions that used a matching tool name
+        #[arg(long)]
+        tool: Option<String>,
+        /// Only sessions that touched a matching file path
+        #[arg(long)]
+        file: Option<String>,
+        /// Only sessions linked to a matching PR URL, repository, or number
+        #[arg(long)]
+        pr: Option<String>,
+        /// Include N neighboring messages before and after each indexed hit
+        #[arg(long, default_value = "0")]
+        context: usize,
         /// Skip index, scan files directly
         #[arg(long)]
         no_index: bool,
@@ -183,6 +198,66 @@ enum Commands {
         /// Force a full rebuild instead of an incremental update
         #[arg(long)]
         force: bool,
+        /// Show index retention and provider sync status
+        #[arg(long)]
+        status: bool,
+        /// Delete retained off-disk sessions older than this many days
+        #[arg(long)]
+        prune_retained_days: Option<u64>,
+        /// Run SQLite VACUUM after index maintenance
+        #[arg(long)]
+        vacuum: bool,
+    },
+    /// Provider health, roots, sync status, and parse diagnostics
+    #[command(after_long_help = cli_help::PROVIDERS_EXAMPLES)]
+    Providers {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Parse every discovered transcript and count failures
+        #[arg(long)]
+        deep: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+    /// Daily or weekly usage trend
+    #[command(after_long_help = cli_help::TIMELINE_EXAMPLES)]
+    Timeline {
+        /// Group by week instead of day
+        #[arg(long)]
+        weekly: bool,
+        /// Maximum number of buckets to show
+        #[arg(short, long, default_value = "30")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+    /// Budget view for monthly usage
+    #[command(after_long_help = cli_help::BUDGET_EXAMPLES)]
+    Budget {
+        /// Monthly budget in USD
+        #[arg(long)]
+        monthly: f64,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+    /// Recent sessions, PRs, files, and slow projects in one report
+    #[command(after_long_help = cli_help::ACTIVITY_EXAMPLES)]
+    Activity {
+        /// Maximum number of rows per section
+        #[arg(short, long, default_value = "5")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Per-turn timing analysis (avg, p50, p95, max duration)
     #[command(after_long_help = cli_help::TURNS_EXAMPLES)]
@@ -365,18 +440,28 @@ fn main() {
             limit,
             json,
             case_sensitive,
+            role,
+            tool,
+            file,
+            pr,
+            context,
             no_index,
             filter,
         } => filter.resolve().and_then(|f| {
-            commands::search::run(
-                &query,
-                project.as_deref(),
+            commands::search::run(commands::search::SearchCommand {
+                query: &query,
+                project: project.as_deref(),
                 limit,
                 json,
                 case_sensitive,
+                role: role.as_deref(),
+                tool: tool.as_deref(),
+                file: file.as_deref(),
+                pr: pr.as_deref(),
+                context,
                 no_index,
-                &f,
-            )
+                filter: &f,
+            })
         }),
         Commands::Tools {
             project,
@@ -414,7 +499,37 @@ fn main() {
             output.as_deref(),
             project.as_deref(),
         ),
-        Commands::Index { force } => commands::index::run(force),
+        Commands::Index {
+            force,
+            status,
+            prune_retained_days,
+            vacuum,
+        } => commands::index::run(force, status, prune_retained_days, vacuum),
+        Commands::Providers { json, deep, filter } => filter
+            .resolve()
+            .and_then(|f| commands::providers::run(json, deep, &f)),
+        Commands::Timeline {
+            weekly,
+            limit,
+            json,
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::timeline::run(weekly, limit, json, &f)),
+        Commands::Budget {
+            monthly,
+            json,
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::budget::run(monthly, json, &f)),
+        Commands::Activity {
+            limit,
+            json,
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::activity::run(limit, json, &f)),
         Commands::Turns {
             project,
             limit,

@@ -330,14 +330,19 @@ pub struct IndexStore {
 
 #[derive(Clone)]
 pub struct IndexedSession {
+    pub rowid: i64,
     pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
     pub file_path: String,
     pub first_timestamp_ms: Option<i64>,
+    pub last_timestamp_ms: Option<i64>,
     pub message_count: i64,
     pub duration_ms: i64,
     pub model: Option<String>,
+    pub extras: Option<String>,
+    pub present_on_disk: bool,
+    pub archived_at: Option<i64>,
 }
 
 pub struct ProjectCostRow {
@@ -398,6 +403,8 @@ pub struct SessionToolRow {
 }
 
 pub struct SearchHit {
+    pub session_rowid: i64,
+    pub message_rowid: i64,
     pub provider: String,
     pub project_name: String,
     pub session_id: Option<String>,
@@ -405,6 +412,26 @@ pub struct SearchHit {
     pub message_type: String,
     pub snippet: String,
     pub rank: f64,
+    pub context_before: Vec<SearchContextMessage>,
+    pub context_after: Vec<SearchContextMessage>,
+}
+
+pub struct SearchContextMessage {
+    pub message_type: String,
+    pub content: String,
+    pub timestamp_ms: Option<i64>,
+}
+
+pub struct SearchFtsOptions<'a> {
+    pub query: &'a str,
+    pub project_filter: Option<&'a str>,
+    pub filter: &'a ResolvedFilter,
+    pub role_filter: Option<&'a str>,
+    pub tool_filter: Option<&'a str>,
+    pub file_filter: Option<&'a str>,
+    pub pr_filter: Option<&'a str>,
+    pub context: usize,
+    pub limit: usize,
 }
 
 pub struct SummaryData {
@@ -534,6 +561,50 @@ pub struct SessionDetail {
     pub permission_changes: Vec<PermissionChangeRow>,
     pub model_usage: Vec<SessionModelUsageRow>,
     pub subagent_files: Vec<String>,
+    pub extras: Option<String>,
+    pub present_on_disk: bool,
+    pub archived_at: Option<i64>,
+}
+
+pub struct ProviderStatusRow {
+    pub provider: String,
+    pub root_dir: String,
+    pub enabled: bool,
+    pub discovered_files: usize,
+    pub parse_failures: Option<usize>,
+    pub indexed_sessions: i64,
+    pub live_sessions: i64,
+    pub retained_sessions: i64,
+    pub archived_sessions: i64,
+    pub last_sync: Option<i64>,
+}
+
+pub struct RetentionStats {
+    pub total_sessions: i64,
+    pub live_sessions: i64,
+    pub retained_sessions: i64,
+    pub archived_sessions: i64,
+}
+
+pub struct TimelineRow {
+    pub bucket: String,
+    pub session_count: i64,
+    pub cost_usd: f64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub tool_calls: i64,
+    pub pr_count: i64,
+    pub avg_turn_duration_ms: Option<f64>,
+}
+
+pub struct ActivityData {
+    pub summary: SummaryData,
+    pub recent_sessions: Vec<IndexedSession>,
+    pub recent_prs: Vec<PrLinkRow>,
+    pub hot_files: Vec<FileModRow>,
+    pub slow_projects: Vec<TurnStatsRow>,
 }
 
 type SessionRow = (
@@ -548,6 +619,9 @@ type SessionRow = (
     i64,
     i64,
     Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
 );
 
 #[derive(Default)]
@@ -1443,8 +1517,9 @@ impl IndexStore {
         let file = opt_like(file_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT s.provider, s.project_name, s.session_id, s.file_path, s.first_timestamp,
-                      s.message_count, s.duration_ms, s.model
+            r#"SELECT s.id, s.provider, s.project_name, s.session_id, s.file_path,
+                      s.first_timestamp, s.last_timestamp, s.message_count, s.duration_ms,
+                      s.model, s.extras, s.present_on_disk, s.archived_at
                FROM sessions s
                WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
                  AND (? IS NULL OR EXISTS (
@@ -1468,14 +1543,19 @@ impl IndexStore {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(IndexedSession {
-                provider: row.get(0)?,
-                project_name: row.get(1)?,
-                session_id: row.get(2)?,
-                file_path: row.get(3)?,
-                first_timestamp_ms: row.get(4)?,
-                message_count: row.get(5)?,
-                duration_ms: row.get(6)?,
-                model: row.get(7)?,
+                rowid: row.get(0)?,
+                provider: row.get(1)?,
+                project_name: row.get(2)?,
+                session_id: row.get(3)?,
+                file_path: row.get(4)?,
+                first_timestamp_ms: row.get(5)?,
+                last_timestamp_ms: row.get(6)?,
+                message_count: row.get(7)?,
+                duration_ms: row.get(8)?,
+                model: row.get(9)?,
+                extras: row.get(10)?,
+                present_on_disk: row.get::<_, i64>(11)? != 0,
+                archived_at: row.get(12)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1488,22 +1568,28 @@ impl IndexStore {
         project_filter: Option<&str>,
     ) -> Result<Vec<IndexedSession>> {
         let mut stmt = self.conn.prepare(
-            r#"SELECT provider, project_name, session_id, file_path, first_timestamp,
-                      message_count, duration_ms, model
+            r#"SELECT id, provider, project_name, session_id, file_path, first_timestamp,
+                      last_timestamp, message_count, duration_ms, model, extras,
+                      present_on_disk, archived_at
                FROM sessions
                ORDER BY first_timestamp DESC, file_path ASC"#,
         )?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(IndexedSession {
-                    provider: row.get(0)?,
-                    project_name: row.get(1)?,
-                    session_id: row.get(2)?,
-                    file_path: row.get(3)?,
-                    first_timestamp_ms: row.get(4)?,
-                    message_count: row.get(5)?,
-                    duration_ms: row.get(6)?,
-                    model: row.get(7)?,
+                    rowid: row.get(0)?,
+                    provider: row.get(1)?,
+                    project_name: row.get(2)?,
+                    session_id: row.get(3)?,
+                    file_path: row.get(4)?,
+                    first_timestamp_ms: row.get(5)?,
+                    last_timestamp_ms: row.get(6)?,
+                    message_count: row.get(7)?,
+                    duration_ms: row.get(8)?,
+                    model: row.get(9)?,
+                    extras: row.get(10)?,
+                    present_on_disk: row.get::<_, i64>(11)? != 0,
+                    archived_at: row.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1791,44 +1877,114 @@ impl IndexStore {
         Ok(result)
     }
 
-    pub fn search_fts(
-        &self,
-        query: &str,
-        project_filter: Option<&str>,
-        filter: &ResolvedFilter,
-        limit: usize,
-    ) -> Result<Vec<SearchHit>> {
-        let fts_query = fts_escape(query);
-        let fp = opt_like(project_filter);
-        let (pred, pred_params) = filter.sql_predicates("s");
+    pub fn search_fts(&self, opts: SearchFtsOptions<'_>) -> Result<Vec<SearchHit>> {
+        let fts_query = fts_escape(opts.query);
+        let fp = opt_like(opts.project_filter);
+        let role = opt_like(opts.role_filter);
+        let tool = opt_like(opts.tool_filter);
+        let file = opt_like(opts.file_filter);
+        let pr = opt_like(opts.pr_filter);
+        let (pred, pred_params) = opts.filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT s.provider, s.project_name, s.session_id, f.timestamp, f.message_type,
+            r#"SELECT s.id, f.rowid, s.provider, s.project_name, s.session_id, f.timestamp, f.message_type,
                       snippet(messages_fts, 2, '[[', ']]', '...', 20),
                       bm25(messages_fts)
                FROM messages_fts f
                JOIN sessions s ON s.id = f.session_id
                WHERE messages_fts MATCH ?
-                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?)
+                 AND (? IS NULL OR f.message_type LIKE ?)
+                 AND (? IS NULL OR EXISTS (
+                       SELECT 1 FROM tool_calls tc
+                       WHERE tc.session_id = s.id AND tc.tool_name LIKE ?
+                 ))
+                 AND (? IS NULL OR EXISTS (
+                       SELECT 1 FROM file_modifications fm
+                       WHERE fm.session_rowid = s.id AND fm.file_path LIKE ?
+                 ))
+                 AND (? IS NULL OR EXISTS (
+                       SELECT 1 FROM pr_links pl
+                       WHERE pl.session_rowid = s.id
+                         AND (pl.pr_url LIKE ? OR pl.pr_repository LIKE ? OR CAST(pl.pr_number AS TEXT) LIKE ?)
+                 )){pred}
                ORDER BY bm25(messages_fts)
                LIMIT ?"#
         );
-        let mut binds: Vec<SqlValue> = vec![SqlValue::Text(fts_query), fp.clone(), fp.clone(), fp];
+        let mut binds: Vec<SqlValue> = vec![
+            SqlValue::Text(fts_query),
+            fp.clone(),
+            fp.clone(),
+            fp,
+            role.clone(),
+            role,
+            tool.clone(),
+            tool,
+            file.clone(),
+            file,
+            pr.clone(),
+            pr.clone(),
+            pr.clone(),
+            pr,
+        ];
         binds.extend(pred_params);
-        binds.push(SqlValue::Integer(limit as i64));
+        binds.push(SqlValue::Integer(opts.limit as i64));
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok(SearchHit {
-                provider: row.get(0)?,
-                project_name: row.get(1)?,
-                session_id: row.get(2)?,
-                message_timestamp_ms: row.get(3)?,
-                message_type: row.get(4)?,
-                snippet: row.get(5)?,
-                rank: row.get(6)?,
+                session_rowid: row.get(0)?,
+                message_rowid: row.get(1)?,
+                provider: row.get(2)?,
+                project_name: row.get(3)?,
+                session_id: row.get(4)?,
+                message_timestamp_ms: row.get(5)?,
+                message_type: row.get(6)?,
+                snippet: row.get(7)?,
+                rank: row.get(8)?,
+                context_before: Vec::new(),
+                context_after: Vec::new(),
             })
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        let mut hits = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if opts.context > 0 {
+            for hit in &mut hits {
+                hit.context_before =
+                    self.search_context(hit.session_rowid, hit.message_rowid, opts.context, true)?;
+                hit.context_after =
+                    self.search_context(hit.session_rowid, hit.message_rowid, opts.context, false)?;
+            }
+        }
+        Ok(hits)
+    }
+
+    fn search_context(
+        &self,
+        session_rowid: i64,
+        message_rowid: i64,
+        limit: usize,
+        before: bool,
+    ) -> Result<Vec<SearchContextMessage>> {
+        let comparator = if before { "<" } else { ">" };
+        let direction = if before { "DESC" } else { "ASC" };
+        let sql = format!(
+            r#"SELECT message_type, content, timestamp
+               FROM messages_fts
+               WHERE session_id = ? AND rowid {comparator} ?
+               ORDER BY rowid {direction}
+               LIMIT ?"#
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![session_rowid, message_rowid, limit as i64], |row| {
+            Ok(SearchContextMessage {
+                message_type: row.get(0)?,
+                content: row.get(1)?,
+                timestamp_ms: row.get(2)?,
+            })
+        })?;
+        let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if before {
+            out.reverse();
+        }
+        Ok(out)
     }
 
     pub fn query_turn_stats(
@@ -2118,7 +2274,8 @@ impl IndexStore {
             .conn
             .query_row(
                 r#"SELECT id, provider, project_name, file_path, session_id, parent_session_id,
-                          first_timestamp, last_timestamp, duration_ms, message_count, model
+                          first_timestamp, last_timestamp, duration_ms, message_count, model,
+                          extras, present_on_disk, archived_at
                    FROM sessions
                    WHERE file_path = ?"#,
                 params![file_path],
@@ -2135,6 +2292,9 @@ impl IndexStore {
                         row.get(8)?,
                         row.get(9)?,
                         row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
                     ))
                 },
             )
@@ -2152,6 +2312,9 @@ impl IndexStore {
             _duration_ms,
             _message_count,
             model,
+            extras,
+            present_on_disk,
+            archived_at,
         )) = session_row
         else {
             return Ok(None);
@@ -2422,6 +2585,9 @@ impl IndexStore {
             permission_changes,
             model_usage,
             subagent_files,
+            extras,
+            present_on_disk: present_on_disk != 0,
+            archived_at,
         }))
     }
 
@@ -2660,6 +2826,217 @@ impl IndexStore {
             pr_count,
             files_modified_count,
             model_distribution,
+        })
+    }
+
+    pub fn provider_status(
+        &self,
+        providers: &[Provider],
+        deep: bool,
+        filter: &ResolvedFilter,
+    ) -> Result<Vec<ProviderStatusRow>> {
+        let mut rows = Vec::new();
+        for provider in providers {
+            let id = provider.id();
+            let discovered = provider.enumerate().unwrap_or_default();
+            let parse_failures = if deep {
+                let mut failures = 0usize;
+                for file in &discovered {
+                    if provider.parse(file).is_err() {
+                        failures += 1;
+                    }
+                }
+                Some(failures)
+            } else {
+                None
+            };
+            let (pred, pred_params) = filter.sql_predicates("s");
+            let mut params = vec![SqlValue::Text(id.to_string())];
+            params.extend(pred_params);
+            let (indexed, live, retained, archived): (i64, i64, i64, i64) =
+                self.conn.query_row(
+                    &format!(
+                        r#"SELECT COUNT(*),
+                                  SUM(CASE WHEN s.present_on_disk = 1 AND s.archived_at IS NULL THEN 1 ELSE 0 END),
+                                  SUM(CASE WHEN s.present_on_disk = 0 THEN 1 ELSE 0 END),
+                                  SUM(CASE WHEN s.archived_at IS NOT NULL THEN 1 ELSE 0 END)
+                           FROM sessions s WHERE s.provider = ?{pred}"#
+                    ),
+                    params_from_iter(params),
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                            row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                        ))
+                    },
+                )?;
+            rows.push(ProviderStatusRow {
+                provider: id.to_string(),
+                root_dir: provider.root_dir().to_string_lossy().into_owned(),
+                enabled: provider.enabled(),
+                discovered_files: discovered.len(),
+                parse_failures,
+                indexed_sessions: indexed,
+                live_sessions: live,
+                retained_sessions: retained,
+                archived_sessions: archived,
+                last_sync: self
+                    .meta_get(&format!("last_sync:{id}"))
+                    .and_then(|s| s.parse::<i64>().ok()),
+            });
+        }
+        Ok(rows)
+    }
+
+    pub fn retention_stats(&self, filter: &ResolvedFilter) -> Result<RetentionStats> {
+        let (pred, pred_params) = filter.sql_predicates("s");
+        self.conn
+            .query_row(
+                &format!(
+                    r#"SELECT COUNT(*),
+                              SUM(CASE WHEN s.present_on_disk = 1 AND s.archived_at IS NULL THEN 1 ELSE 0 END),
+                              SUM(CASE WHEN s.present_on_disk = 0 THEN 1 ELSE 0 END),
+                              SUM(CASE WHEN s.archived_at IS NOT NULL THEN 1 ELSE 0 END)
+                       FROM sessions s WHERE 1 = 1 {pred}"#
+                ),
+                params_from_iter(pred_params),
+                |row| {
+                    Ok(RetentionStats {
+                        total_sessions: row.get(0)?,
+                        live_sessions: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                        retained_sessions: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                        archived_sessions: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn prune_retained(
+        &mut self,
+        older_than_secs: i64,
+        filter: &ResolvedFilter,
+    ) -> Result<usize> {
+        let cutoff = now_unix_secs() as i64 - older_than_secs;
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"SELECT s.id FROM sessions s
+               WHERE s.present_on_disk = 0
+                 AND COALESCE(s.archived_at, 0) > 0
+                 AND s.archived_at < ?{pred}"#
+        );
+        let mut binds = vec![SqlValue::Integer(cutoff)];
+        binds.extend(pred_params);
+        let ids = {
+            let mut stmt = self.conn.prepare(&sql)?;
+            stmt.query_map(params_from_iter(binds), |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let tx = self.conn.transaction()?;
+        for id in &ids {
+            delete_session_derived(&tx, *id)?;
+            tx.execute("DELETE FROM sessions WHERE id = ?", params![id])?;
+        }
+        tx.commit()?;
+        Ok(ids.len())
+    }
+
+    pub fn vacuum(&self) -> Result<()> {
+        self.conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
+    pub fn query_timeline(
+        &self,
+        filter: &ResolvedFilter,
+        weekly: bool,
+        limit: usize,
+    ) -> Result<Vec<TimelineRow>> {
+        let bucket_expr = if weekly {
+            "strftime('%Y-W%W', datetime(COALESCE(s.last_timestamp, s.first_timestamp) / 1000, 'unixepoch'))"
+        } else {
+            "date(COALESCE(s.last_timestamp, s.first_timestamp) / 1000, 'unixepoch')"
+        };
+        let (pred, pred_params) = filter.sql_predicates("s");
+        let sql = format!(
+            r#"WITH token_by_session AS (
+                   SELECT session_id,
+                          SUM(cost_usd) AS cost_usd,
+                          SUM(input_tokens) AS input_tokens,
+                          SUM(output_tokens) AS output_tokens,
+                          SUM(cache_creation_tokens) AS cache_creation_tokens,
+                          SUM(cache_read_tokens) AS cache_read_tokens
+                   FROM token_usage GROUP BY session_id
+               ),
+               tools_by_session AS (
+                   SELECT session_id, SUM(count) AS tool_calls
+                   FROM tool_calls GROUP BY session_id
+               ),
+               prs_by_session AS (
+                   SELECT session_rowid, COUNT(DISTINCT pr_url) AS pr_count
+                   FROM pr_links GROUP BY session_rowid
+               ),
+               turns_by_session AS (
+                   SELECT session_rowid,
+                          SUM(CAST(duration_ms AS REAL)) AS total_turn_duration_ms,
+                          COUNT(*) AS turn_count
+                   FROM turn_durations GROUP BY session_rowid
+               )
+               SELECT {bucket_expr} AS bucket,
+                      COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) AS sessions,
+                      COALESCE(SUM(t.cost_usd), 0),
+                      COALESCE(SUM(t.input_tokens), 0),
+                      COALESCE(SUM(t.output_tokens), 0),
+                      COALESCE(SUM(t.cache_creation_tokens), 0),
+                      COALESCE(SUM(t.cache_read_tokens), 0),
+                      COALESCE(SUM(tb.tool_calls), 0),
+                      COALESCE(SUM(pb.pr_count), 0),
+                      CASE WHEN COALESCE(SUM(ts.turn_count), 0) > 0
+                           THEN SUM(ts.total_turn_duration_ms) / SUM(ts.turn_count)
+                           ELSE NULL
+                      END
+               FROM sessions s
+               LEFT JOIN token_by_session t ON t.session_id = s.id
+               LEFT JOIN tools_by_session tb ON tb.session_id = s.id
+               LEFT JOIN prs_by_session pb ON pb.session_rowid = s.id
+               LEFT JOIN turns_by_session ts ON ts.session_rowid = s.id
+               WHERE COALESCE(s.last_timestamp, s.first_timestamp) IS NOT NULL{pred}
+               GROUP BY bucket
+               ORDER BY bucket DESC
+               LIMIT ?"#
+        );
+        let mut binds = pred_params;
+        binds.push(SqlValue::Integer(limit as i64));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |row| {
+            Ok(TimelineRow {
+                bucket: row
+                    .get::<_, Option<String>>(0)?
+                    .unwrap_or_else(|| "-".to_string()),
+                session_count: row.get(1)?,
+                cost_usd: row.get(2)?,
+                input_tokens: row.get(3)?,
+                output_tokens: row.get(4)?,
+                cache_creation_tokens: row.get(5)?,
+                cache_read_tokens: row.get(6)?,
+                tool_calls: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                pr_count: row.get(8)?,
+                avg_turn_duration_ms: row.get(9)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn query_activity(&self, filter: &ResolvedFilter, limit: usize) -> Result<ActivityData> {
+        Ok(ActivityData {
+            summary: self.query_summary(filter)?,
+            recent_sessions: self.query_sessions(None, None, filter, limit)?,
+            recent_prs: self.query_pr_links(None, filter, limit)?,
+            hot_files: self.query_file_mods(None, None, filter, limit)?,
+            slow_projects: self.query_turn_stats(None, filter, limit)?,
         })
     }
 }

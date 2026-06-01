@@ -1,6 +1,7 @@
 # `export`
 
-Export a session transcript as Markdown or JSON.
+Export a session transcript as Markdown or JSON across Claude Code, Codex, Pi,
+and OpenClaw.
 
 ## Usage
 
@@ -72,8 +73,9 @@ shape you want for pasting into docs, wikis, or PR descriptions.
 If the selector resolves to one session, JSON export is one object. If it
 resolves to multiple sessions, JSON export is an array of those objects.
 Each object has top-level keys: `session_id`, `project`, `date`, `model`,
-`message_count`, `messages`. The `messages` array preserves every raw JSONL
-record from the source session file, in chronological order — no flattening.
+`message_count`, `messages`, `normalized_messages`, and `records`. `messages`
+and `records` preserve every raw JSONL record from the source session file, in
+chronological order; `normalized_messages` is the cross-provider role/text view.
 
 ```json
 {
@@ -82,7 +84,31 @@ record from the source session file, in chronological order — no flattening.
   "date": "<iso-8601>",
   "model": "<model>",
   "message_count": 14,
+  "provider": "claude",
+  "file_path": "<absolute-path>",
+  "extras": null,
+  "normalized_messages": [
+    { "role": "user", "timestamp": "<iso-8601>", "text": "..." }
+  ],
   "messages": [
+    {
+      "type": "user",
+      "uuid": "...",
+      "parentUuid": null,
+      "sessionId": "<uuid>",
+      "timestamp": "<iso-8601>",
+      "cwd": "<path>",
+      "gitBranch": "<branch>",
+      "version": "<claude-code-version>",
+      "userType": "external",
+      "isSidechain": false,
+      "permissionMode": "default",
+      "entrypoint": "cli",
+      "promptId": "...",
+      "message": { "role": "user", "content": "..." }
+    }
+  ],
+  "records": [
     {
       "type": "user",
       "uuid": "...",
@@ -103,20 +129,19 @@ record from the source session file, in chronological order — no flattening.
 }
 ```
 
-Each record's `message.role` is `user` or `assistant`. `message.content` is
-either a string (user prompts) or an array of typed blocks (assistant
-responses — text, tool_use, thinking, etc.) per the Anthropic API shape.
+For Claude, raw records keep the Anthropic-shaped `message` payload. Codex, Pi,
+and OpenClaw records keep their native provider shapes.
 
 Useful jq:
 
 ```bash
 # Count messages by role
 claudex export <sid> --format json \
-  | jq '[.messages[].message.role] | group_by(.) | map({role: .[0], count: length})'
+  | jq '[.normalized_messages[].role] | group_by(.) | map({role: .[0], count: length})'
 
 # Extract only the text content
 claudex export <sid> --format json \
-  | jq -r '.messages[] | select(.message.role == "assistant") | .message.content | if type == "string" then . else (.[] | select(.type == "text") | .text) end'
+  | jq -r '.normalized_messages[] | select(.role == "assistant") | .text'
 ```
 
 ## Notes

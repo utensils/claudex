@@ -2,45 +2,59 @@ use anyhow::Result;
 use chrono::DateTime;
 
 use crate::cli::ResolvedFilter;
-use crate::index::IndexStore;
+use crate::index::{IndexStore, SearchFtsOptions};
 use crate::parser::{parse_session, stream_records};
 use crate::providers::enabled_default;
 use crate::store::{SessionStore, decode_project_name, short_name};
 use crate::ui;
 
-pub fn run(
-    query: &str,
-    project: Option<&str>,
-    limit: usize,
-    json: bool,
-    case_sensitive: bool,
-    no_index: bool,
-    filter: &ResolvedFilter,
-) -> Result<()> {
+pub struct SearchCommand<'a> {
+    pub query: &'a str,
+    pub project: Option<&'a str>,
+    pub limit: usize,
+    pub json: bool,
+    pub case_sensitive: bool,
+    pub role: Option<&'a str>,
+    pub tool: Option<&'a str>,
+    pub file: Option<&'a str>,
+    pub pr: Option<&'a str>,
+    pub context: usize,
+    pub no_index: bool,
+    pub filter: &'a ResolvedFilter,
+}
+
+pub fn run(opts: SearchCommand<'_>) -> Result<()> {
     // FTS5 is case-insensitive; fall back to file scan for case-sensitive queries
-    if !no_index
-        && !case_sensitive
-        && let Ok(()) = run_indexed(query, project, limit, json, filter)
+    if !opts.no_index
+        && !opts.case_sensitive
+        && let Ok(()) = run_indexed(&opts)
     {
         return Ok(());
     }
-    run_from_files(query, project, limit, json, case_sensitive, filter)
+    run_from_files(&opts)
 }
 
-fn run_indexed(
-    query: &str,
-    project: Option<&str>,
-    limit: usize,
-    json: bool,
-    filter: &ResolvedFilter,
-) -> Result<()> {
+fn run_indexed(opts: &SearchCommand<'_>) -> Result<()> {
     let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
+    if opts.pr.is_some() {
+        idx.ensure_pr_links_fresh(&providers)?;
+    }
 
-    let hits = idx.search_fts(query, project, filter, limit)?;
+    let hits = idx.search_fts(SearchFtsOptions {
+        query: opts.query,
+        project_filter: opts.project,
+        filter: opts.filter,
+        role_filter: opts.role,
+        tool_filter: opts.tool,
+        file_filter: opts.file,
+        pr_filter: opts.pr,
+        context: opts.context,
+        limit: opts.limit,
+    })?;
 
-    if json {
+    if opts.json {
         let output: Vec<_> = hits
             .iter()
             .map(|hit| {
@@ -56,6 +70,8 @@ fn run_indexed(
                     "message_type": hit.message_type,
                     "snippet": hit.snippet,
                     "rank": hit.rank,
+                    "context_before": hit.context_before.iter().map(context_json).collect::<Vec<_>>(),
+                    "context_after": hit.context_after.iter().map(context_json).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -64,7 +80,7 @@ fn run_indexed(
     }
 
     if hits.is_empty() {
-        println!("No matches found for {query:?}");
+        println!("No matches found for {:?}", opts.query);
         return Ok(());
     }
 
@@ -97,28 +113,35 @@ fn run_indexed(
             ui::role(&hit.message_type),
         );
         println!("  {}", render_indexed_snippet(&hit.snippet));
+        for ctx in &hit.context_before {
+            println!(
+                "  {} {}",
+                ui::role(&ctx.message_type),
+                truncate_context(&ctx.content)
+            );
+        }
+        for ctx in &hit.context_after {
+            println!(
+                "  {} {}",
+                ui::role(&ctx.message_type),
+                truncate_context(&ctx.content)
+            );
+        }
         println!();
     }
     Ok(())
 }
 
-fn run_from_files(
-    query: &str,
-    project: Option<&str>,
-    limit: usize,
-    json: bool,
-    case_sensitive: bool,
-    filter: &ResolvedFilter,
-) -> Result<()> {
-    filter.ensure_no_index_supported()?;
+fn run_from_files(opts: &SearchCommand<'_>) -> Result<()> {
+    opts.filter.ensure_no_index_supported()?;
 
     let store = SessionStore::new()?;
-    let files = store.all_session_files(project)?;
+    let files = store.all_session_files(opts.project)?;
 
-    let query_cmp = if case_sensitive {
-        query.to_string()
+    let query_cmp = if opts.case_sensitive {
+        opts.query.to_string()
     } else {
-        query.to_lowercase()
+        opts.query.to_lowercase()
     };
 
     let mut found = 0usize;
@@ -128,9 +151,50 @@ fn run_from_files(
         // Apply the cross-cutting --since/--until/--model filters at the session
         // level (the indexed path filters sessions the same way). Skip the parse
         // when no filter is active so an unfiltered search stays single-pass.
-        if !filter.is_unfiltered()
-            && let Ok(stats) = parse_session(path)
-            && !filter.matches("claude", &stats, false)
+        let stats = if !opts.filter.is_unfiltered()
+            || opts.tool.is_some()
+            || opts.file.is_some()
+            || opts.pr.is_some()
+        {
+            match parse_session(path) {
+                Ok(stats) => Some(stats),
+                Err(_) => continue,
+            }
+        } else {
+            None
+        };
+        if let Some(stats) = &stats
+            && !opts.filter.matches("claude", stats, false)
+        {
+            continue;
+        }
+        if let Some(tool) = opts.tool
+            && stats.as_ref().is_none_or(|s| {
+                !s.tool_names
+                    .iter()
+                    .any(|name| name.to_lowercase().contains(&tool.to_lowercase()))
+            })
+        {
+            continue;
+        }
+        if let Some(file) = opts.file
+            && stats.as_ref().is_none_or(|s| {
+                !s.file_paths_modified
+                    .iter()
+                    .any(|path| path.to_lowercase().contains(&file.to_lowercase()))
+            })
+        {
+            continue;
+        }
+        if let Some(pr) = opts.pr
+            && stats.as_ref().is_none_or(|s| {
+                let needle = pr.to_lowercase();
+                !s.pr_links.iter().any(|(number, url, repo, _)| {
+                    number.to_string().contains(&needle)
+                        || url.to_lowercase().contains(&needle)
+                        || repo.to_lowercase().contains(&needle)
+                })
+            })
         {
             continue;
         }
@@ -174,12 +238,17 @@ fn run_from_files(
                 }
                 _ => return true,
             };
+            if let Some(role_filter) = opts.role
+                && role != role_filter
+            {
+                return true;
+            }
 
             if text.is_empty() {
                 return true;
             }
 
-            let haystack = if case_sensitive {
+            let haystack = if opts.case_sensitive {
                 text.as_str().to_string()
             } else {
                 text.to_lowercase()
@@ -199,7 +268,7 @@ fn run_from_files(
                 .take(8)
                 .collect();
 
-            if !json {
+            if !opts.json {
                 println!(
                     "{} {} [{}] {}",
                     ui::project_headline(&project_display),
@@ -210,14 +279,14 @@ fn run_from_files(
             }
 
             for line in text.lines() {
-                let line_cmp = if case_sensitive {
+                let line_cmp = if opts.case_sensitive {
                     line.to_string()
                 } else {
                     line.to_lowercase()
                 };
                 if line_cmp.contains(&query_cmp) {
-                    let snippet = build_file_scan_snippet(line, query, case_sensitive);
-                    if json {
+                    let snippet = build_file_scan_snippet(line, opts.query, opts.case_sensitive);
+                    if opts.json {
                         json_hits.push(serde_json::json!({
                             "project": decode_project_name(project_raw),
                             "session_id": session_id,
@@ -227,11 +296,11 @@ fn run_from_files(
                             "rank": serde_json::Value::Null,
                         }));
                     } else {
-                        print_highlighted(line, query, case_sensitive);
+                        print_highlighted(line, opts.query, opts.case_sensitive);
                         println!();
                     }
                     found += 1;
-                    if found >= limit {
+                    if found >= opts.limit {
                         stop = true;
                         return false;
                     }
@@ -245,15 +314,41 @@ fn run_from_files(
         }
     }
 
-    if json {
+    if opts.json {
         println!("{}", serde_json::to_string_pretty(&json_hits)?);
         return Ok(());
     }
 
     if found == 0 {
-        println!("No matches found for {query:?}");
+        println!("No matches found for {:?}", opts.query);
     }
     Ok(())
+}
+
+fn context_json(ctx: &crate::index::SearchContextMessage) -> serde_json::Value {
+    let message_timestamp = ctx
+        .timestamp_ms
+        .and_then(DateTime::from_timestamp_millis)
+        .map(|d| d.to_rfc3339());
+    serde_json::json!({
+        "message_timestamp": message_timestamp,
+        "message_type": ctx.message_type,
+        "content": ctx.content,
+    })
+}
+
+fn truncate_context(content: &str) -> String {
+    const MAX: usize = 180;
+    let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.len() <= MAX {
+        compact
+    } else {
+        let mut end = MAX;
+        while !compact.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &compact[..end])
+    }
 }
 
 fn print_highlighted(line: &str, query: &str, case_sensitive: bool) {

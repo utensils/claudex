@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -814,6 +815,135 @@ fn pi_search_finds_indexed_content() {
     );
 }
 
+#[test]
+fn multi_provider_export_codex_json_includes_records_and_metadata() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["export", "codex-a", "--format", "json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let v = json_of(&out);
+    assert_eq!(v["provider"], "codex");
+    assert_eq!(v["session_id"], "codex-a");
+    assert!(v["records"].as_array().is_some_and(|rows| rows.len() >= 4));
+    assert_eq!(v["extras"]["cli_version"], "0.99.0");
+}
+
+#[test]
+fn search_facets_and_context_are_available_in_json() {
+    let home = fixture_home_with_codex();
+    let out = run(
+        home.path(),
+        &[
+            "search",
+            "hello",
+            "--provider",
+            "codex",
+            "--role",
+            "user",
+            "--tool",
+            "shell",
+            "--context",
+            "1",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert_eq!(arr.len(), 1, "expected one faceted hit: {arr:?}");
+    assert_eq!(arr[0]["provider"], "codex");
+    assert_eq!(arr[0]["message_type"], "user");
+    assert!(arr[0].get("context_before").is_some());
+    assert!(arr[0].get("context_after").is_some());
+}
+
+#[test]
+fn provider_timeline_budget_and_activity_reports_emit_json() {
+    let home = fixture_home_with_codex();
+
+    let providers = run(home.path(), &["providers", "--json"]);
+    assert!(
+        providers.status.success(),
+        "stderr: {}",
+        stderr_of(&providers)
+    );
+    let providers_json = json_of(&providers).as_array().unwrap().clone();
+    assert!(providers_json.iter().any(|r| r["provider"] == "codex"));
+    assert!(providers_json.iter().all(|r| r["parse_failures"].is_null()));
+
+    let providers_since = run(
+        home.path(),
+        &[
+            "providers",
+            "--provider",
+            "codex",
+            "--since",
+            "2026-05-01",
+            "--json",
+        ],
+    );
+    assert!(
+        providers_since.status.success(),
+        "stderr: {}",
+        stderr_of(&providers_since)
+    );
+    let providers_since_json = json_of(&providers_since).as_array().unwrap().clone();
+    assert_eq!(providers_since_json.len(), 1);
+    assert_eq!(providers_since_json[0]["provider"], "codex");
+    assert_eq!(providers_since_json[0]["indexed_sessions"], 1);
+
+    let timeline = run(home.path(), &["timeline", "--json", "--limit", "2"]);
+    assert!(
+        timeline.status.success(),
+        "stderr: {}",
+        stderr_of(&timeline)
+    );
+    let timeline_json = json_of(&timeline).as_array().unwrap().clone();
+    assert!(timeline_json.iter().any(|r| r.get("bucket").is_some()));
+
+    let budget = run(home.path(), &["budget", "--monthly", "250", "--json"]);
+    assert!(budget.status.success(), "stderr: {}", stderr_of(&budget));
+    let budget_json = json_of(&budget);
+    assert_eq!(budget_json["monthly_budget_usd"], 250.0);
+    assert!(budget_json.get("projected_month_end_usd").is_some());
+
+    let scoped_budget = run(
+        home.path(),
+        &[
+            "budget",
+            "--monthly",
+            "250",
+            "--since",
+            "2026-05-01",
+            "--until",
+            "2026-05-31",
+            "--json",
+        ],
+    );
+    assert!(
+        scoped_budget.status.success(),
+        "stderr: {}",
+        stderr_of(&scoped_budget)
+    );
+    let scoped_budget_json = json_of(&scoped_budget);
+    assert_eq!(scoped_budget_json["period_start"], "2026-05-01");
+    assert_eq!(scoped_budget_json["period_end"], "2026-05-31");
+    assert_eq!(scoped_budget_json["days_elapsed"], 31);
+    assert_eq!(scoped_budget_json["days_in_month"], 31);
+    assert_eq!(
+        scoped_budget_json["spent_usd"],
+        scoped_budget_json["projected_month_end_usd"]
+    );
+
+    let activity = run(home.path(), &["activity", "--json", "--limit", "2"]);
+    assert!(
+        activity.status.success(),
+        "stderr: {}",
+        stderr_of(&activity)
+    );
+    let activity_json = json_of(&activity);
+    assert!(activity_json.get("summary").is_some());
+    assert!(activity_json.get("recent_sessions").is_some());
+}
+
 // --- sessions ---
 
 #[test]
@@ -1250,6 +1380,76 @@ fn search_json_returns_structured_hits() {
 }
 
 #[test]
+fn search_pr_facet_refreshes_stale_codex_pr_derivation() {
+    let home = fixture_home_with_codex();
+    let indexed = run(home.path(), &["index"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+
+    let db = home.path().join(".claudex/index.db");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute(
+        "DELETE FROM pr_links WHERE pr_url = 'https://github.com/utensils/claudex/pull/38'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('pr_link_derivation_revision:codex', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let out = run(
+        home.path(),
+        &[
+            "search",
+            "hello",
+            "--provider",
+            "codex",
+            "--pr",
+            "38",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert!(
+        arr.iter()
+            .any(|h| h["session_id"].as_str() == Some("codex-a")),
+        "expected stale PR links to be backfilled before search: {arr:?}"
+    );
+}
+
+#[test]
+fn timeline_refreshes_stale_codex_pr_derivation() {
+    let home = fixture_home_with_codex();
+    let indexed = run(home.path(), &["index"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+
+    let db = home.path().join(".claudex/index.db");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute(
+        "DELETE FROM pr_links WHERE pr_url = 'https://github.com/utensils/claudex/pull/38'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('pr_link_derivation_revision:codex', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let out = run(home.path(), &["timeline", "--provider", "codex", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let arr = json_of(&out).as_array().unwrap().clone();
+    assert!(
+        arr.iter().any(|row| row["pr_count"].as_i64() == Some(1)),
+        "expected stale PR links to be backfilled before timeline: {arr:?}"
+    );
+}
+
+#[test]
 fn subagent_transcripts_are_indexed_and_scanned() {
     let home = TempDir::new().unwrap();
     let projects = home.path().join(".claude/projects");
@@ -1610,6 +1810,10 @@ fn export_markdown_by_project() {
     let s = stdout_of(&out);
     // Markdown transcript should include the user message content.
     assert!(s.contains("foo bug"), "got: {s}");
+    assert!(
+        s.contains("**Tool: Bash**"),
+        "indexed Claude markdown should preserve tool-use blocks: {s}"
+    );
 }
 
 #[test]
@@ -1643,6 +1847,71 @@ fn export_to_file() {
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     let contents = fs::read_to_string(&out_path).expect("output file");
     assert!(contents.contains("foo bug"));
+}
+
+#[test]
+fn export_missing_selector_does_not_truncate_output_file() {
+    let home = fixture_home();
+    let out_path = home.path().join("keep.md");
+    fs::write(&out_path, "keep me").unwrap();
+
+    let out = run(
+        home.path(),
+        &[
+            "export",
+            "this-session-does-not-exist",
+            "--output",
+            out_path.to_str().unwrap(),
+        ],
+    );
+    assert!(!out.status.success(), "expected missing selector to fail");
+    assert_eq!(fs::read_to_string(&out_path).unwrap(), "keep me");
+}
+
+#[test]
+fn export_falls_back_to_files_when_index_is_unreadable() {
+    let home = fixture_home();
+    let claudex_dir = home.path().join(".claudex");
+    fs::create_dir_all(&claudex_dir).unwrap();
+    fs::write(claudex_dir.join("index.db"), "not a sqlite database").unwrap();
+
+    let out = run(home.path(), &["export", "alpha"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("foo bug"));
+}
+
+#[test]
+fn export_project_skips_retained_index_rows() {
+    let home = fixture_home();
+    let retained = write_session(
+        &home.path().join(".claude/projects"),
+        "-Users-test-Projects-alpha",
+        "sess-retained",
+        &[
+            r#"{"type":"user","sessionId":"sess-retained","timestamp":"2026-04-11T10:00:00Z","message":{"content":"deleted but retained"}}"#,
+        ],
+    );
+    let indexed = run(home.path(), &["index"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    fs::remove_file(&retained).unwrap();
+    let retained_marked = run(home.path(), &["index"]);
+    assert!(
+        retained_marked.status.success(),
+        "stderr: {}",
+        stderr_of(&retained_marked)
+    );
+
+    let out = run(home.path(), &["export", "alpha"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(
+        s.contains("foo bug"),
+        "live matching session should export: {s}"
+    );
+    assert!(
+        !s.contains("deleted but retained"),
+        "retained off-disk rows should not be read from raw files: {s}"
+    );
 }
 
 // --- color flag ---

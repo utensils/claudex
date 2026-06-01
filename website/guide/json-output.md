@@ -121,6 +121,28 @@ Array. Each entry: `provider`, `project`, `session_id`, `timestamp`,
 Array. Each entry: `file_path`, `modification_count`,
 `distinct_session_count`, `last_touched_at`, `top_project`.
 
+### `providers`
+
+Array. Each entry: `provider`, `root_dir`, `enabled`, `discovered_files`,
+`parse_failures`, `indexed_sessions`, `live_sessions`, `retained_sessions`,
+`archived_sessions`, `last_sync`.
+
+### `timeline`
+
+Array. Each entry: `bucket`, `sessions`, `cost_usd`, token totals,
+`tool_calls`, `pr_count`, `avg_turn_duration_ms`.
+
+### `budget`
+
+Single object. Keys: `monthly_budget_usd`, `period_start`, `period_end`,
+`days_elapsed`, `days_in_month`, `spent_usd`, `remaining_usd`, `used_percent`,
+`projected_month_end_usd`, `projected_over_budget_usd`, `sessions`.
+
+### `activity`
+
+Single object with `summary`, `recent_sessions`, `recent_prs`, `hot_files`,
+and `slow_projects`.
+
 ## Why not CSV?
 
 JSON round-trips nested structures (token breakdowns, model distributions)
