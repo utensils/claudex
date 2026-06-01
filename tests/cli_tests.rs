@@ -369,20 +369,20 @@ fn skills_generate_writes_all_targets() {
 #[test]
 fn skills_install_global_openclaw_uses_state_dir() {
     let home = fixture_home();
-    let state = TempDir::new().unwrap();
     let out = Command::new(BIN)
         .env("HOME", home.path())
         .env("NO_COLOR", "1")
-        .env("OPENCLAW_STATE_DIR", state.path())
+        .env("OPENCLAW_STATE_DIR", "~/openclaw-state")
         .args(["skills", "install", "--global", "--target", "openclaw"])
         .output()
         .expect("spawn claudex");
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
-    let skill = state.path().join("skills/claudex/SKILL.md");
+    let skill = home.path().join("openclaw-state/skills/claudex/SKILL.md");
     assert!(skill.exists());
     let md = fs::read_to_string(skill).unwrap();
     assert!(md.contains("OpenClaw"));
     assert!(!md.contains("allowed-tools"));
+    assert!(!Path::new("~/openclaw-state/skills/claudex/SKILL.md").exists());
 }
 
 #[test]
@@ -471,6 +471,7 @@ fn skills_command_list_includes_skills_itself() {
     // The command list is clap-derived, so every subcommand appears.
     assert!(md.contains("`claudex sessions`"));
     assert!(md.contains("`claudex skills`"));
+    assert!(md.contains("Claude Code, Codex, Pi, or OpenClaw"));
     assert!(md.contains("`claudex cost`"));
 }
 

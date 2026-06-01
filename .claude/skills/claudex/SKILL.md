@@ -37,7 +37,7 @@ usage never disappears.
 - `claudex models` — Model usage breakdown — call counts, token usage, cost per model
 - `claudex update` — Self-update to the latest claudex release (or a specific tag)
 - `claudex completions` — Generate shell completions
-- `claudex skills` — Generate or install the claudex agent skill for Claude Code, Codex, or Pi
+- `claudex skills` — Generate or install the claudex agent skill for Claude Code, Codex, Pi, or OpenClaw
 
 Run `claudex <command> --help` for full flags.
 

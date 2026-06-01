@@ -94,7 +94,7 @@ Source builds require Rust 1.95+. Prebuilt binaries have no runtime dependencies
 | [`index`](https://utensils.io/claudex/commands/index-cmd)                 | Manage the session index (normally updated automatically)                 |
 | [`update`](https://utensils.io/claudex/commands/update)                   | Self-update claudex, or print the right upgrade recipe for Nix/cargo/brew |
 | [`completions <shell>`](https://utensils.io/claudex/commands/completions) | Generate shell completions (bash, zsh, fish, elvish, powershell)          |
-| [`skills`](https://utensils.io/claudex/commands/skills)                   | Generate or install the agent skill for Claude Code, Codex, or Pi         |
+| [`skills`](https://utensils.io/claudex/commands/skills)                   | Generate or install the agent skill for Claude Code, Codex, Pi, or OpenClaw |
 
 Global flag: `--color auto|always|never` (respects `NO_COLOR`). Every report accepts the shared `--provider` / `--model` / `--since` / `--until` / `--on-disk-only` [filters](https://utensils.io/claudex/guide/providers); `--project` is a separate per-command filter.
 

@@ -206,7 +206,7 @@ fn openclaw_base_dir(mode: Mode, args: &SkillArgs) -> Result<PathBuf> {
             if let Ok(state_dir) = std::env::var("OPENCLAW_STATE_DIR")
                 && !state_dir.trim().is_empty()
             {
-                return Ok(PathBuf::from(state_dir));
+                return expand_home(state_dir.trim());
             }
             Ok(home_dir()?.join(".openclaw"))
         }
@@ -224,6 +224,16 @@ fn join_prefix(root: PathBuf, prefix: &str) -> PathBuf {
 
 fn home_dir() -> Result<PathBuf> {
     dirs::home_dir().context("could not determine your home directory for --global install")
+}
+
+fn expand_home(value: &str) -> Result<PathBuf> {
+    if let Some(rest) = value.strip_prefix("~/") {
+        Ok(home_dir()?.join(rest))
+    } else if value == "~" {
+        home_dir()
+    } else {
+        Ok(PathBuf::from(value))
+    }
 }
 
 fn write_artifact(artifact: &Artifact, force: bool) -> Result<()> {

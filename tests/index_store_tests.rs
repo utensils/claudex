@@ -658,7 +658,6 @@ fn openclaw_source_key_reuses_trajectory_row_when_transcript_appears() {
         &sessions.join("sess-open.jsonl"),
         &[
             r#"{"type":"session","version":3,"id":"sess-open","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/classic"}"#,
-            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"classic"}],"provider":"openai","model":"gpt-5.2","usage":{"input":10,"output":5,"cacheRead":1,"cacheWrite":0,"cost":{"total":0.20}},"stopReason":"stop"}}"#,
         ],
     );
     idx.sync_now(&providers).unwrap();
@@ -688,6 +687,22 @@ fn openclaw_source_key_reuses_trajectory_row_when_transcript_appears() {
     assert_eq!(rows, 1);
     assert_eq!(row_id, first_row);
     assert!(path.ends_with("sess-open.jsonl"), "{path}");
+    let cost: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM token_usage WHERE session_id = ?",
+            params![row_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let fts_hits: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages_fts WHERE session_id = ? AND content MATCH 'trajectory'",
+            params![row_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cost, 0.01);
+    assert_eq!(fts_hits, 1);
 }
 
 #[test]

@@ -690,12 +690,70 @@ fn trajectory_model_key(event: &Value) -> Option<String> {
     Some(model_key(provider, model))
 }
 
-fn merge_trajectory_metadata(entry: &mut ProviderRecord, trajectory: ProviderRecord, path: &Path) {
+fn merge_trajectory_metadata(
+    entry: &mut ProviderRecord,
+    mut trajectory: ProviderRecord,
+    path: &Path,
+) {
     if entry.project_display.is_empty() {
-        entry.project_display = trajectory.project_display;
+        entry.project_display = std::mem::take(&mut trajectory.project_display);
     }
     if entry.model.is_none() {
-        entry.model = trajectory.model;
+        entry.model = trajectory.model.take();
+    }
+    if entry.first_timestamp.is_none_or(|first| {
+        trajectory
+            .first_timestamp
+            .is_some_and(|trajectory_first| trajectory_first < first)
+    }) {
+        entry.first_timestamp = trajectory.first_timestamp;
+    }
+    if entry.last_timestamp.is_none_or(|last| {
+        trajectory
+            .last_timestamp
+            .is_some_and(|trajectory_last| trajectory_last > last)
+    }) {
+        entry.last_timestamp = trajectory.last_timestamp;
+    }
+    if entry.messages.is_empty() {
+        entry.messages = std::mem::take(&mut trajectory.messages);
+    }
+    if entry.message_count == 0 {
+        entry.message_count = trajectory.message_count;
+    }
+    if entry.model_usage.is_empty() && trajectory.embedded_cost.is_some() {
+        entry.embedded_cost = trajectory.embedded_cost;
+    }
+    if entry.model_usage.is_empty() {
+        entry.model_usage = std::mem::take(&mut trajectory.model_usage);
+        entry.usage = std::mem::take(&mut trajectory.usage);
+    }
+    if entry.tool_names.is_empty() {
+        entry.tool_names = std::mem::take(&mut trajectory.tool_names);
+    }
+    if entry.pr_links.is_empty() {
+        entry.pr_links = std::mem::take(&mut trajectory.pr_links);
+    }
+    if entry.file_paths_modified.is_empty() {
+        entry.file_paths_modified = std::mem::take(&mut trajectory.file_paths_modified);
+    }
+    if entry.attachments.is_empty() {
+        entry.attachments = std::mem::take(&mut trajectory.attachments);
+    }
+    if entry.permission_modes.is_empty() {
+        entry.permission_modes = std::mem::take(&mut trajectory.permission_modes);
+    }
+    if entry.inference_geo.is_none() {
+        entry.inference_geo = trajectory.inference_geo.take();
+    }
+    if entry.speed.is_none() {
+        entry.speed = trajectory.speed;
+    }
+    if entry.service_tier.is_none() {
+        entry.service_tier = trajectory.service_tier.take();
+    }
+    if entry.iterations == 0 {
+        entry.iterations = trajectory.iterations;
     }
     for (reason, count) in trajectory.stop_reason_counts {
         *entry.stop_reason_counts.entry(reason).or_insert(0) += count;

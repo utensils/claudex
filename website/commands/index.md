@@ -65,7 +65,7 @@ Notes:
 | [`index`](/commands/index-cmd)         | Manage the SQLite index — force sync or full rebuild.                                   |
 | [`update`](/commands/update)           | Self-update claudex, or print the right upgrade recipe for Nix / cargo / brew installs. |
 | [`completions`](/commands/completions) | Generate shell completion scripts.                                                      |
-| [`skills`](/commands/skills)           | Generate or install the claudex agent skill for Claude Code, Codex, or Pi.              |
+| [`skills`](/commands/skills)           | Generate or install the claudex agent skill for Claude Code, Codex, Pi, or OpenClaw.    |
 
 ## Conventions
 
