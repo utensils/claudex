@@ -124,6 +124,11 @@ fn fixture_home_with_codex() -> TempDir {
     .unwrap();
     writeln!(
         f,
+        r#"{{"timestamp":"2026-05-05T00:01:30Z","type":"response_item","payload":{{"type":"agent_message","message":"codex says hello back"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
         r#"{{"timestamp":"2026-05-05T00:03:00Z","type":"response_item","payload":{{"type":"function_call","name":"shell","arguments":"{{}}","call_id":"c"}}}}"#
     )
     .unwrap();
@@ -224,6 +229,19 @@ fn codex_session_drilldown_resolves_indexed_id() {
             .is_some_and(|p| p.contains("codexproj")),
         "expected codex project, got {v}"
     );
+}
+
+#[test]
+fn indexed_session_drilldown_renders_text_metadata() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["session", "codex-a"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(s.contains("Overview"), "overview section missing: {s}");
+    assert!(s.contains("Source:"), "source state missing: {s}");
+    assert!(s.contains("live"), "live source missing: {s}");
+    assert!(s.contains("Metadata:"), "metadata line missing: {s}");
+    assert!(s.contains("0.99.0"), "extras metadata missing: {s}");
 }
 
 // --- openclaw provider (unified index) ---
@@ -828,6 +846,32 @@ fn multi_provider_export_codex_json_includes_records_and_metadata() {
 }
 
 #[test]
+fn multi_provider_export_codex_markdown_includes_normalized_messages() {
+    let home = fixture_home_with_codex();
+    let out = run(home.path(), &["export", "codex-a"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(
+        s.contains("# Session: codex-a"),
+        "session heading missing: {s}"
+    );
+    assert!(
+        s.contains("**Provider:** codex"),
+        "provider metadata missing: {s}"
+    );
+    assert!(
+        s.contains("**Model:** gpt-5-codex"),
+        "model metadata missing: {s}"
+    );
+    assert!(s.contains("**Metadata:**"), "extras metadata missing: {s}");
+    assert!(
+        s.contains("## User"),
+        "normalized user heading missing: {s}"
+    );
+    assert!(s.contains("hello from codex"), "message text missing: {s}");
+}
+
+#[test]
 fn search_facets_and_context_are_available_in_json() {
     let home = fixture_home_with_codex();
     let out = run(
@@ -853,6 +897,72 @@ fn search_facets_and_context_are_available_in_json() {
     assert_eq!(arr[0]["message_type"], "user");
     assert!(arr[0].get("context_before").is_some());
     assert!(arr[0].get("context_after").is_some());
+}
+
+#[test]
+fn indexed_search_facets_and_context_render_text() {
+    let home = fixture_home_with_codex();
+    let out = run(
+        home.path(),
+        &[
+            "search",
+            "hello",
+            "--provider",
+            "codex",
+            "--role",
+            "user",
+            "--tool",
+            "shell",
+            "--context",
+            "1",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let s = stdout_of(&out);
+    assert!(s.contains("codexproj"), "project headline missing: {s}");
+    assert!(s.contains("user"), "role missing: {s}");
+    assert!(s.contains("hello from codex"), "hit snippet missing: {s}");
+    assert!(
+        s.contains("assistant") || s.contains("shell"),
+        "context output missing: {s}"
+    );
+}
+
+#[test]
+fn no_index_search_facets_filter_file_scan() {
+    let home = fixture_home();
+    let matched = run(
+        home.path(),
+        &[
+            "search",
+            "foo",
+            "--no-index",
+            "--role",
+            "assistant",
+            "--tool",
+            "Edit",
+            "--file",
+            "src/a.rs",
+            "--pr",
+            "99",
+            "--limit",
+            "1",
+        ],
+    );
+    assert!(matched.status.success(), "stderr: {}", stderr_of(&matched));
+    let s = stdout_of(&matched);
+    assert!(s.contains("alpha"), "expected filtered hit: {s}");
+    assert!(
+        s.contains("follow up on foo"),
+        "expected assistant text: {s}"
+    );
+
+    let missed = run(
+        home.path(),
+        &["search", "foo", "--no-index", "--tool", "MissingTool"],
+    );
+    assert!(missed.status.success(), "stderr: {}", stderr_of(&missed));
+    assert!(stdout_of(&missed).contains("No matches"));
 }
 
 #[test]
@@ -942,6 +1052,107 @@ fn provider_timeline_budget_and_activity_reports_emit_json() {
     let activity_json = json_of(&activity);
     assert!(activity_json.get("summary").is_some());
     assert!(activity_json.get("recent_sessions").is_some());
+}
+
+#[test]
+fn provider_timeline_budget_and_activity_reports_render_text() {
+    let home = fixture_home_with_codex();
+
+    let providers = run(home.path(), &["providers", "--deep"]);
+    assert!(
+        providers.status.success(),
+        "stderr: {}",
+        stderr_of(&providers)
+    );
+    let provider_text = stdout_of(&providers);
+    assert!(
+        provider_text.contains("Provider"),
+        "missing header: {provider_text}"
+    );
+    assert!(
+        provider_text.contains("Parse Failures"),
+        "missing deep column: {provider_text}"
+    );
+    assert!(
+        provider_text.contains("codex"),
+        "missing codex row: {provider_text}"
+    );
+
+    let timeline = run(home.path(), &["timeline", "--weekly", "--limit", "4"]);
+    assert!(
+        timeline.status.success(),
+        "stderr: {}",
+        stderr_of(&timeline)
+    );
+    let timeline_text = stdout_of(&timeline);
+    assert!(
+        timeline_text.contains("Week"),
+        "missing weekly column: {timeline_text}"
+    );
+    assert!(
+        timeline_text.contains("Sessions"),
+        "missing sessions column: {timeline_text}"
+    );
+    assert!(
+        timeline_text.contains("Cost"),
+        "missing cost column: {timeline_text}"
+    );
+
+    let budget = run(
+        home.path(),
+        &[
+            "budget",
+            "--monthly",
+            "250",
+            "--since",
+            "2026-05-01",
+            "--until",
+            "2026-05-31",
+        ],
+    );
+    assert!(budget.status.success(), "stderr: {}", stderr_of(&budget));
+    let budget_text = stdout_of(&budget);
+    assert!(
+        budget_text.contains("Budget"),
+        "missing budget table: {budget_text}"
+    );
+    assert!(
+        budget_text.contains("Projected"),
+        "missing projected column: {budget_text}"
+    );
+
+    let invalid_budget = run(home.path(), &["budget", "--monthly", "0"]);
+    assert!(
+        !invalid_budget.status.success(),
+        "zero monthly budget should fail"
+    );
+    assert!(
+        stderr_of(&invalid_budget).contains("--monthly must be greater than 0"),
+        "missing validation message: {}",
+        stderr_of(&invalid_budget)
+    );
+
+    let activity = run(home.path(), &["activity", "--limit", "3"]);
+    assert!(
+        activity.status.success(),
+        "stderr: {}",
+        stderr_of(&activity)
+    );
+    let activity_text = stdout_of(&activity);
+    for label in [
+        "Sessions",
+        "Cost",
+        "Tokens",
+        "Recent sessions",
+        "Recent PRs",
+        "Hot files",
+        "Slow projects",
+    ] {
+        assert!(
+            activity_text.contains(label),
+            "missing {label}: {activity_text}"
+        );
+    }
 }
 
 // --- sessions ---
@@ -1798,6 +2009,64 @@ fn index_command_force_rebuild() {
     let out = run(home.path(), &["index", "--force"]);
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     assert!(stdout_of(&out).contains("Indexed"));
+}
+
+#[test]
+fn index_status_prune_and_vacuum_report_retention() {
+    let home = fixture_home();
+    let retained = write_session(
+        &home.path().join(".claude/projects"),
+        "-Users-test-Projects-alpha",
+        "sess-prune",
+        &[
+            r#"{"type":"user","sessionId":"sess-prune","timestamp":"2026-04-11T10:00:00Z","message":{"content":"old retained session"}}"#,
+        ],
+    );
+
+    let indexed = run(home.path(), &["index"]);
+    assert!(indexed.status.success(), "stderr: {}", stderr_of(&indexed));
+    fs::remove_file(&retained).unwrap();
+    let retained_marked = run(home.path(), &["index", "--status"]);
+    assert!(
+        retained_marked.status.success(),
+        "stderr: {}",
+        stderr_of(&retained_marked)
+    );
+    let status = stdout_of(&retained_marked);
+    assert!(
+        status.contains("Retained"),
+        "retention status missing: {status}"
+    );
+
+    let db_path = home.path().join(".claudex/index.db");
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE sessions SET archived_at = 1 WHERE session_id = 'sess-prune'",
+        [],
+    )
+    .unwrap();
+
+    let pruned = run(
+        home.path(),
+        &[
+            "index",
+            "--prune-retained-days",
+            "0",
+            "--vacuum",
+            "--status",
+        ],
+    );
+    assert!(pruned.status.success(), "stderr: {}", stderr_of(&pruned));
+    let s = stdout_of(&pruned);
+    assert!(
+        s.contains("Pruned 1 retained sessions"),
+        "prune line missing: {s}"
+    );
+    assert!(
+        s.contains("Vacuumed index database"),
+        "vacuum line missing: {s}"
+    );
+    assert!(s.contains("Total"), "status table missing: {s}");
 }
 
 // --- export ---
