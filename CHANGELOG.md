@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.8.1](https://github.com/utensils/claudex/compare/v0.8.0...v0.8.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **providers:** address openclaw smoke gaps ([6b4985e](https://github.com/utensils/claudex/commit/6b4985e951422be472afe41486473d384cea201b))
+
 ## [0.8.0](https://github.com/utensils/claudex/compare/v0.7.0...v0.8.0) (2026-06-01)
 
 
