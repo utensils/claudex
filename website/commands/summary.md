@@ -1,12 +1,12 @@
 # `summary`
 
-One-screen dashboard of your Claude Code usage. This is the command you run
+One-screen dashboard of your agent-session usage. This is the command you run
 first.
 
 ## Usage
 
 ```bash
-claudex summary [--json] [--no-index] [--plan <api|flat-monthly:USD>]
+claudex summary [--json] [--no-index] [--plan <api|flat-monthly:USD>] [filters]
 ```
 
 ## What it shows
@@ -32,6 +32,9 @@ claudex summary [--json] [--no-index] [--plan <api|flat-monthly:USD>]
 | `--json`                         | Emit JSON (see shape below).                                                                                          |
 | `--no-index`                     | Scan JSONL files directly; don't touch the index.                                                                     |
 | `--plan <api\|flat-monthly:USD>` | Cost-reporting mode. `api` (default) prices tokens at API rates. `flat-monthly:250` reframes for a flat subscription. |
+
+Also accepts the shared [filter flags](/guide/providers): `--provider`,
+`--model`, `--since`, `--until`, and `--on-disk-only`.
 
 ## Example
 

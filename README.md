@@ -20,8 +20,13 @@ claudex cost --provider codex --since 30d    # Codex spend over the last 30 days
 claudex sessions --limit 10                  # recent sessions across every provider
 claudex session 3f2a1b                       # drill into one session (ID prefix or project name)
 claudex search "migration"                   # full-text search across all transcripts
+claudex search "migration" --tool Bash --context 1
 claudex cost --per-session                   # token & cost breakdown
 claudex export 3f2a1b --format markdown > session.md
+claudex providers                            # provider roots, sync state, retention
+claudex timeline --since 30d                 # daily usage trend
+claudex budget --monthly 250                 # budget burn and projection
+claudex activity --since 24h                 # recent sessions, PRs, files, slow turns
 claudex skills install                       # install the agent skill for Claude Code/Codex/Pi/OpenClaw
 ```
 
@@ -89,6 +94,10 @@ Source builds require Rust 1.95+. Prebuilt binaries have no runtime dependencies
 | [`turns`](https://utensils.io/claudex/commands/turns)                     | Per-turn timing (avg / p50 / p95 / max)                                   |
 | [`prs`](https://utensils.io/claudex/commands/prs)                         | Sessions linked to pull requests                                          |
 | [`files`](https://utensils.io/claudex/commands/files)                     | Most frequently modified files across sessions                            |
+| [`providers`](https://utensils.io/claudex/commands/providers)             | Provider roots, sync status, retention, and optional parse diagnostics     |
+| [`timeline`](https://utensils.io/claudex/commands/timeline)               | Daily or weekly usage trend                                                |
+| [`budget`](https://utensils.io/claudex/commands/budget)                   | Monthly budget burn and projection                                         |
+| [`activity`](https://utensils.io/claudex/commands/activity)               | Recent sessions, PRs, hot files, and slow projects                         |
 | [`export <selector>`](https://utensils.io/claudex/commands/export)        | Export a session transcript as Markdown or JSON                           |
 | [`watch`](https://utensils.io/claudex/commands/watch)                     | Tail Claude Code's debug log in real time                                 |
 | [`index`](https://utensils.io/claudex/commands/index-cmd)                 | Manage the session index (normally updated automatically)                 |

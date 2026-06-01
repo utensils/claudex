@@ -8,6 +8,9 @@ Full-text search across every user and assistant message in every session.
 claudex search <query> [-p/--project <substr>]
                         [-l/--limit <n>] [--json]
                         [--case-sensitive]
+                        [--role user|assistant]
+                        [--tool <substr>] [--file <substr>] [--pr <substr>]
+                        [--context <n>]
                         [--no-index]
 ```
 
@@ -20,6 +23,11 @@ claudex search <query> [-p/--project <substr>]
 | `-l`, `--limit <n>`        | `20`    | Maximum hits to print.                               |
 | `--json`                   | off     | Emit structured hits instead of highlighted text.    |
 | `--case-sensitive`         | off     | Drop back to a file scan (FTS5 is case-insensitive). |
+| `--role <role>`            | —       | Only match `user` or `assistant` messages.           |
+| `--tool <substr>`          | —       | Only sessions that used a matching tool.             |
+| `--file <substr>`          | —       | Only sessions that touched a matching file path.     |
+| `--pr <substr>`            | —       | Only sessions linked to a matching PR/repo/number.   |
+| `--context <n>`            | `0`     | Include neighboring indexed messages around hits.    |
 | `--no-index`               | off     | Scan JSONL files directly.                           |
 
 ### Shared filters
@@ -39,6 +47,9 @@ claudex search serde --project claudex --limit 50
 
 # Case-sensitive (slower)
 claudex search CamelCaseThing --case-sensitive
+
+# Assistant hits in sessions that ran Bash, with nearby context
+claudex search migration --role assistant --tool Bash --context 1
 ```
 
 ## How it works
@@ -79,7 +90,9 @@ keeps output scannable.
     "message_timestamp": "2026-04-19T02:50:53.545+00:00",
     "message_type": "assistant",
     "snippet": "…fixing the [[migration]] query path…",
-    "rank": -7.28401
+    "rank": -7.28401,
+    "context_before": [],
+    "context_after": []
   }
 ]
 ```

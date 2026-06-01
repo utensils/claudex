@@ -7,14 +7,17 @@ want to.
 ## Usage
 
 ```bash
-claudex index [--force]
+claudex index [--force] [--status] [--prune-retained-days N] [--vacuum]
 ```
 
 ## Flags
 
-| Flag      | Description                                                                         |
-| --------- | ----------------------------------------------------------------------------------- |
-| `--force` | Wipe the database and rebuild from scratch. Otherwise performs an incremental sync. |
+| Flag                        | Description                                                                         |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `--force`                   | Wipe the database and rebuild from scratch. Otherwise performs an incremental sync. |
+| `--status`                  | Print live/retained/archive counts after maintenance.                               |
+| `--prune-retained-days <n>` | Delete retained off-disk sessions older than `n` days.                              |
+| `--vacuum`                  | Run SQLite `VACUUM` after maintenance or pruning.                                   |
 
 ## Example
 
@@ -24,6 +27,12 @@ claudex index
 
 # Full rebuild (same as deleting ~/.claudex/index.db and running any command)
 claudex index --force
+
+# Inspect retention counts
+claudex index --status
+
+# Prune retained sessions older than six months and compact the DB
+claudex index --prune-retained-days 180 --vacuum
 ```
 
 ## When to use it
@@ -43,7 +52,8 @@ claudex index --force
 
 Each session file is keyed on `(file_path, file_size, file_mtime)`. Files
 whose tuple hasn't changed are skipped. New files are ingested. Files that
-vanished from disk are removed from the index.
+vanished from disk are retained and marked off-disk; only `--force` or
+`--prune-retained-days` removes historical rows.
 
 This is why sync is fast: a typical run touches only a handful of sessions
 even across hundreds of project histories.

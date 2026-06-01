@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   title: 'claudex',
   description:
-    'Query, search, and analyze Claude Code, OpenAI Codex, and Pi sessions from the command line. A Rust CLI that indexes all three providers into one SQLite database and exposes reports as subcommands.',
+    'Query, search, and analyze Claude Code, OpenAI Codex, Pi, and OpenClaw sessions from the command line. A Rust CLI that indexes all four providers into one SQLite database and exposes reports as subcommands.',
   base: '/claudex/',
 
   vite: {
@@ -27,7 +27,7 @@ export default defineConfig({
       {
         property: 'og:description',
         content:
-          'Query, search, and analyze Claude Code, OpenAI Codex, and Pi sessions from the command line.',
+          'Query, search, and analyze Claude Code, OpenAI Codex, Pi, and OpenClaw sessions from the command line.',
       },
     ],
   ],
@@ -117,6 +117,10 @@ export default defineConfig({
             { text: 'turns', link: '/commands/turns' },
             { text: 'prs', link: '/commands/prs' },
             { text: 'files', link: '/commands/files' },
+            { text: 'providers', link: '/commands/providers' },
+            { text: 'timeline', link: '/commands/timeline' },
+            { text: 'budget', link: '/commands/budget' },
+            { text: 'activity', link: '/commands/activity' },
             { text: 'export', link: '/commands/export' },
             { text: 'watch', link: '/commands/watch' },
             { text: 'index', link: '/commands/index-cmd' },

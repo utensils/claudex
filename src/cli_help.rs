@@ -22,7 +22,8 @@ pub const SEARCH_EXAMPLES: &str = "\
 Examples:
   claudex search \"panic\" --since 7d
   claudex search \"release please\" --provider claude --case-sensitive
-  claudex search \"todo\" --project claudex --json";
+  claudex search \"migration\" --role assistant --tool Bash --context 1
+  claudex search \"todo\" --project claudex --file src/ --json";
 
 pub const TOOLS_EXAMPLES: &str = "\
 Examples:
@@ -75,7 +76,34 @@ Examples:
 pub const INDEX_EXAMPLES: &str = "\
 Examples:
   claudex index
+  claudex index --status
+  claudex index --prune-retained-days 180 --vacuum
   claudex index --force";
+
+pub const PROVIDERS_EXAMPLES: &str = "\
+Examples:
+  claudex providers
+  claudex providers --json
+  claudex providers --deep
+  claudex providers --provider codex,openclaw";
+
+pub const TIMELINE_EXAMPLES: &str = "\
+Examples:
+  claudex timeline --since 30d
+  claudex timeline --weekly --limit 12
+  claudex timeline --provider codex --json";
+
+pub const BUDGET_EXAMPLES: &str = "\
+Examples:
+  claudex budget --monthly 250
+  claudex budget --monthly 50 --provider codex --json
+  claudex budget --monthly 250 --since 30d";
+
+pub const ACTIVITY_EXAMPLES: &str = "\
+Examples:
+  claudex activity --since 24h
+  claudex activity --limit 10
+  claudex activity --provider claude,codex --json";
 
 pub const TURNS_EXAMPLES: &str = "\
 Examples:
@@ -162,6 +190,10 @@ pub fn examples_for_bin(bin: &str) -> Option<&'static str> {
         "session" => Some(SESSION_EXAMPLES),
         "export" => Some(EXPORT_EXAMPLES),
         "index" => Some(INDEX_EXAMPLES),
+        "providers" => Some(PROVIDERS_EXAMPLES),
+        "timeline" => Some(TIMELINE_EXAMPLES),
+        "budget" => Some(BUDGET_EXAMPLES),
+        "activity" => Some(ACTIVITY_EXAMPLES),
         "turns" => Some(TURNS_EXAMPLES),
         "prs" => Some(PRS_EXAMPLES),
         "files" => Some(FILES_EXAMPLES),
@@ -178,7 +210,18 @@ pub fn examples_for_bin(bin: &str) -> Option<&'static str> {
 pub fn uses_shared_filters(bin: &str) -> bool {
     matches!(
         bin.strip_prefix("claudex ").unwrap_or(bin),
-        "sessions" | "cost" | "search" | "tools" | "turns" | "prs" | "files" | "models"
+        "sessions"
+            | "cost"
+            | "search"
+            | "tools"
+            | "turns"
+            | "prs"
+            | "files"
+            | "models"
+            | "providers"
+            | "timeline"
+            | "budget"
+            | "activity"
     )
 }
 

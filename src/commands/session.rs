@@ -73,6 +73,14 @@ fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
     println!("  Project:      {}", ui::project(&detail.project));
     println!("  File:         {}", detail.file_path);
     println!(
+        "  Source:       {}",
+        if detail.present_on_disk {
+            "live"
+        } else {
+            "retained"
+        }
+    );
+    println!(
         "  Session:      {}",
         ui::session_id(short_session_id(detail.session_id.as_deref()))
     );
@@ -110,6 +118,9 @@ fn render_indexed(detail: SessionDetail, json: bool) -> Result<()> {
             "  Subagents:    {}",
             ui::fmt_count(detail.subagent_files.len() as u64)
         );
+    }
+    if let Some(extras) = &detail.extras {
+        println!("  Metadata:     {extras}");
     }
 
     print_tokens(
@@ -313,6 +324,9 @@ fn indexed_json(detail: &SessionDetail) -> serde_json::Value {
         "duration_ms": detail.duration_ms,
         "message_count": detail.message_count,
         "model": detail.model,
+        "extras": detail.extras.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+        "present_on_disk": detail.present_on_disk,
+        "archived_at": detail.archived_at.and_then(|s| DateTime::from_timestamp(s, 0)).map(|d| d.to_rfc3339()),
         "input_tokens": detail.input_tokens,
         "output_tokens": detail.output_tokens,
         "cache_creation_tokens": detail.cache_creation_tokens,

@@ -12,36 +12,44 @@ filter (it has its own column in the matrix below).
 
 ## Read-only reports
 
-| Command                          | What it does                                                     |
-| -------------------------------- | ---------------------------------------------------------------- |
-| [`summary`](/commands/summary)   | Dashboard — sessions, cost, top projects/tools, model mix.       |
-| [`sessions`](/commands/sessions) | List sessions grouped by project (all providers).                |
-| [`session`](/commands/session)   | Drill into one session: spend, files, tools, PRs, turns.         |
-| [`cost`](/commands/cost)         | Token usage and approximate cost per project (or per session).   |
-| [`search`](/commands/search)     | Full-text search across session messages (FTS5), with JSON hits. |
-| [`tools`](/commands/tools)       | Tool-usage frequency, optionally per session.                    |
-| [`models`](/commands/models)     | Call counts, token usage, and cost per model.                    |
-| [`turns`](/commands/turns)       | Per-turn timing (avg / p50 / p95 / max).                         |
-| [`prs`](/commands/prs)           | Sessions linked to pull requests.                                |
-| [`files`](/commands/files)       | Most frequently modified files across sessions.                  |
+| Command                            | What it does                                                     |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| [`summary`](/commands/summary)     | Dashboard — sessions, cost, top projects/tools, model mix.       |
+| [`sessions`](/commands/sessions)   | List sessions grouped by project (all providers).                |
+| [`session`](/commands/session)     | Drill into one session: spend, files, tools, PRs, turns.         |
+| [`cost`](/commands/cost)           | Token usage and approximate cost per project (or per session).   |
+| [`search`](/commands/search)       | Full-text search across session messages (FTS5), with JSON hits. |
+| [`tools`](/commands/tools)         | Tool-usage frequency, optionally per session.                    |
+| [`models`](/commands/models)       | Call counts, token usage, and cost per model.                    |
+| [`turns`](/commands/turns)         | Per-turn timing (avg / p50 / p95 / max).                         |
+| [`prs`](/commands/prs)             | Sessions linked to pull requests.                                |
+| [`files`](/commands/files)         | Most frequently modified files across sessions.                  |
+| [`providers`](/commands/providers) | Provider roots, sync status, retention, and parse diagnostics.   |
+| [`timeline`](/commands/timeline)   | Daily or weekly usage trend.                                     |
+| [`budget`](/commands/budget)       | Monthly budget burn and projection.                              |
+| [`activity`](/commands/activity)   | Recent sessions, PRs, files, and slow projects.                  |
 
 ### Flag support matrix
 
 Not every report accepts every flag. Consult the per-command page for exact
 usage; the matrix below is the quick overview.
 
-| Command    | filters | `--project` | `--limit` | `--json` | `--no-index` |
-| ---------- | :-----: | :---------: | :-------: | :------: | :----------: |
-| `summary`  |    —    |      —      |     —     |    ✓     |      ✓       |
-| `sessions` |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
-| `session`  |    —    |      ✓      |     —     |    ✓     |      ✓       |
-| `cost`     |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
-| `search`   |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
-| `tools`    |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
-| `models`   |    ✓    |      ✓      |     —     |    ✓     |      —       |
-| `turns`    |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
-| `prs`      |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
-| `files`    |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| Command     | filters | `--project` | `--limit` | `--json` | `--no-index` |
+| ----------- | :-----: | :---------: | :-------: | :------: | :----------: |
+| `summary`   |    ✓    |      —      |     —     |    ✓     |      ✓       |
+| `sessions`  |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `session`   |    —    |      ✓      |     —     |    ✓     |      ✓       |
+| `cost`      |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `search`    |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `tools`     |    ✓    |      ✓      |     ✓     |    ✓     |      ✓       |
+| `models`    |    ✓    |      ✓      |     —     |    ✓     |      —       |
+| `turns`     |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| `prs`       |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| `files`     |    ✓    |      ✓      |     ✓     |    ✓     |      —       |
+| `providers` |    ✓    |      —      |     —     |    ✓     |      —       |
+| `timeline`  |    ✓    |      —      |     ✓     |    ✓     |      —       |
+| `budget`    |    ✓    |      —      |     —     |    ✓     |      —       |
+| `activity`  |    ✓    |      —      |     ✓     |    ✓     |      —       |
 
 Notes:
 
@@ -52,7 +60,7 @@ Notes:
 - `turns`, `prs`, `files`, and `models` derive their data from the index
   only — there's no file-scan fallback path, so `--no-index` isn't accepted.
 - `summary` is a whole-index dashboard spanning all providers; the shared
-  filters and row limit don't apply.
+  filters apply, but there is no row limit.
 - `summary` also accepts `--plan <api|flat-monthly:USD>` to reframe the cost
   section for flat-fee subscribers. See [`summary`](/commands/summary).
 
@@ -82,18 +90,22 @@ Notes:
 
 ## Quick alphabetical index
 
+- [activity](/commands/activity)
+- [budget](/commands/budget)
 - [completions](/commands/completions)
 - [cost](/commands/cost)
 - [export](/commands/export)
 - [files](/commands/files)
 - [index](/commands/index-cmd)
 - [models](/commands/models)
+- [providers](/commands/providers)
 - [prs](/commands/prs)
 - [search](/commands/search)
 - [session](/commands/session)
 - [sessions](/commands/sessions)
 - [skills](/commands/skills)
 - [summary](/commands/summary)
+- [timeline](/commands/timeline)
 - [tools](/commands/tools)
 - [turns](/commands/turns)
 - [update](/commands/update)

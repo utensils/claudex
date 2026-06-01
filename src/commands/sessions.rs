@@ -52,6 +52,9 @@ fn run_indexed(
                     "message_count": s.message_count,
                     "duration_ms": s.duration_ms,
                     "model": s.model,
+                    "extras": s.extras.as_deref().and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok()),
+                    "present_on_disk": s.present_on_disk,
+                    "archived_at": s.archived_at.and_then(|secs| DateTime::from_timestamp(secs, 0)).map(|d| d.to_rfc3339()),
                 })
             })
             .collect();

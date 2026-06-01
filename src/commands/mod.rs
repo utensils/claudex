@@ -1,13 +1,17 @@
+pub mod activity;
+pub mod budget;
 pub mod cost;
 pub mod export;
 pub mod files;
 pub mod index;
 pub mod models;
+pub mod providers;
 pub mod prs;
 pub mod search;
 pub mod session;
 pub mod sessions;
 pub mod summary;
+pub mod timeline;
 pub mod tools;
 pub mod turns;
 pub mod update;
