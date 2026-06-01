@@ -218,6 +218,29 @@ fn codex_enumerate_flags_archived_and_parse_reads_cwd_tokens_tools() {
 }
 
 #[test]
+fn codex_parse_records_fork_parent_and_structured_source() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_lines(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-child.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"child","forked_from_id":"parent","cwd":"/repo","originator":"codex_exec","source":{"subagent":"review"},"model_provider":"openai"}}"#,
+            r#"{"timestamp":"2026-05-30T00:00:30Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+        ],
+    );
+
+    let provider = CodexProvider::at(codex);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.session_id.as_deref(), Some("child"));
+    assert_eq!(rec.parent_session_id.as_deref(), Some("parent"));
+    let extras: serde_json::Value = serde_json::from_str(rec.extras.as_deref().unwrap()).unwrap();
+    assert_eq!(extras["forked_from_id"].as_str(), Some("parent"));
+    assert_eq!(extras["source"]["subagent"].as_str(), Some("review"));
+}
+
+#[test]
 fn codex_extracts_pr_links_from_gh_pr_output_and_agent_marker() {
     let tmp = TempDir::new().unwrap();
     let codex = tmp.path().join(".codex");

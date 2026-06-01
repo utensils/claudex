@@ -108,8 +108,9 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
     let mut cwd: Option<String> = None;
     let mut cli_version: Option<String> = None;
     let mut originator: Option<String> = None;
-    let mut source: Option<String> = None;
+    let mut source: Option<Value> = None;
     let mut model_provider: Option<String> = None;
+    let mut forked_from_id: Option<String> = None;
     let mut git_branch: Option<String> = None;
     let mut last_tokens: Option<CodexTokens> = None;
     let mut pr_links_seen = BTreeSet::new();
@@ -136,8 +137,9 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
                 set_if_present(&mut cwd, p["cwd"].as_str());
                 set_if_present(&mut cli_version, p["cli_version"].as_str());
                 set_if_present(&mut originator, p["originator"].as_str());
-                set_if_present(&mut source, p["source"].as_str());
+                set_json_if_present(&mut source, &p["source"]);
                 set_if_present(&mut model_provider, p["model_provider"].as_str());
+                set_if_present(&mut forked_from_id, p["forked_from_id"].as_str());
                 set_if_present(&mut git_branch, p["git"]["branch"].as_str());
             }
             Some("turn_context") => {
@@ -187,6 +189,7 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
         entry.session_id = session_id_from_path(path);
     }
     entry.project_display = cwd.clone().unwrap_or_else(|| "unknown".to_string());
+    entry.parent_session_id = forked_from_id.clone();
 
     if let Some(t) = last_tokens {
         entry.usage.input_tokens = t.input.saturating_sub(t.cached_input);
@@ -200,13 +203,16 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
     for (k, v) in [
         ("cli_version", cli_version),
         ("originator", originator),
-        ("source", source),
         ("model_provider", model_provider),
+        ("forked_from_id", forked_from_id),
         ("git_branch", git_branch),
     ] {
         if let Some(v) = v {
             extras.insert(k.to_string(), json!(v));
         }
+    }
+    if let Some(v) = source {
+        extras.insert("source".to_string(), v);
     }
     if !extras.is_empty() {
         entry.extras = Some(Value::Object(extras).to_string());
@@ -365,6 +371,14 @@ fn set_if_present(slot: &mut Option<String>, value: Option<&str>) {
         && !v.is_empty()
     {
         *slot = Some(v.to_string());
+    }
+}
+
+fn set_json_if_present(slot: &mut Option<Value>, value: &Value) {
+    match value {
+        Value::Null => {}
+        Value::String(s) if s.is_empty() => {}
+        _ => *slot = Some(value.clone()),
     }
 }
 

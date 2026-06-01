@@ -462,6 +462,74 @@ fn query_pr_links_returns_unique_links() {
 }
 
 #[test]
+fn codex_exec_wrapper_inherits_model_from_single_forked_child() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_jsonl(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-00-00-parent.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:00:00Z","type":"session_meta","payload":{"id":"parent","cwd":"/repo","originator":"codex_exec","source":"exec","model_provider":"openai"}}"#,
+            r#"{"timestamp":"2026-05-30T00:00:05Z","type":"event_msg","payload":{"type":"entered_review_mode"}}"#,
+            r#"{"timestamp":"2026-05-30T00:00:10Z","type":"event_msg","payload":{"type":"task_started"}}"#,
+        ],
+    );
+    write_jsonl(
+        &codex.join("sessions/2026/05/30/rollout-2026-05-30T00-01-00-child.jsonl"),
+        &[
+            r#"{"timestamp":"2026-05-30T00:01:00Z","type":"session_meta","payload":{"id":"child","forked_from_id":"parent","cwd":"/repo","originator":"codex_exec","source":{"subagent":"review"},"model_provider":"openai"}}"#,
+            r#"{"timestamp":"2026-05-30T00:01:30Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            r#"{"timestamp":"2026-05-30T00:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":5}}}}"#,
+        ],
+    );
+
+    let providers = codex_providers(codex);
+    let db_path = tmp.path().join("index.db");
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.sync_now(&providers).unwrap();
+
+    let rows = idx.query_sessions(None, None, &all(), 10).unwrap();
+    let parent = rows
+        .iter()
+        .find(|row| row.session_id.as_deref() == Some("parent"))
+        .unwrap();
+    assert_eq!(parent.model.as_deref(), Some("gpt-5.5"));
+    let child = rows
+        .iter()
+        .find(|row| row.session_id.as_deref() == Some("child"))
+        .unwrap();
+    assert_eq!(child.model.as_deref(), Some("gpt-5.5"));
+    drop(idx);
+
+    // Simulate an older index that had already seen both files but had not
+    // persisted `forked_from_id`; opening the DB repairs it without a rebuild.
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE sessions SET model = NULL WHERE provider = 'codex' AND session_id = 'parent'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE sessions SET parent_session_id = NULL WHERE provider = 'codex' AND session_id = 'child'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_fork_model_revision', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let idx = IndexStore::open_at(&db_path).unwrap();
+    let rows = idx.query_sessions(None, None, &all(), 10).unwrap();
+    let parent = rows
+        .iter()
+        .find(|row| row.session_id.as_deref() == Some("parent"))
+        .unwrap();
+    assert_eq!(parent.model.as_deref(), Some("gpt-5.5"));
+}
+
+#[test]
 fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
     let tmp = TempDir::new().unwrap();
     let codex = tmp.path().join(".codex");
