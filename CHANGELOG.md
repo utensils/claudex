@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.8.0](https://github.com/utensils/claudex/compare/v0.7.0...v0.8.0) (2026-06-01)
+
+
+### Features
+
+* **providers:** add OpenClaw session indexing ([#42](https://github.com/utensils/claudex/issues/42)) ([cfd0fe5](https://github.com/utensils/claudex/commit/cfd0fe59d285c4a9030a53210f1cea2d7b4830f9))
+
 ## [0.7.0](https://github.com/utensils/claudex/compare/v0.6.0...v0.7.0) (2026-05-31)
 
 
