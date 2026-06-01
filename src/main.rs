@@ -262,7 +262,7 @@ enum Commands {
         #[arg(value_enum)]
         shell: CompletionShell,
     },
-    /// Generate or install the claudex agent skill for Claude Code, Codex, or Pi
+    /// Generate or install the claudex agent skill for Claude Code, Codex, Pi, or OpenClaw
     #[command(after_long_help = cli_help::SKILLS_EXAMPLES)]
     Skills {
         #[command(subcommand)]

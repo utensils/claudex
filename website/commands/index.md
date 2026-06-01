@@ -5,7 +5,7 @@ flags, examples, and the JSON shape.
 
 Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
-Reports span Claude Code, OpenAI Codex, and Pi by default. Every report accepts
+Reports span Claude Code, OpenAI Codex, Pi, and OpenClaw by default. Every report accepts
 the shared [filter flags](/guide/providers) — `--provider`, `--model`,
 `--since`/`--until`, `--on-disk-only`. `--project` is a separate per-command
 filter (it has its own column in the matrix below).
@@ -65,7 +65,7 @@ Notes:
 | [`index`](/commands/index-cmd)         | Manage the SQLite index — force sync or full rebuild.                                   |
 | [`update`](/commands/update)           | Self-update claudex, or print the right upgrade recipe for Nix / cargo / brew installs. |
 | [`completions`](/commands/completions) | Generate shell completion scripts.                                                      |
-| [`skills`](/commands/skills)           | Generate or install the claudex agent skill for Claude Code, Codex, or Pi.              |
+| [`skills`](/commands/skills)           | Generate or install the claudex agent skill for Claude Code, Codex, Pi, or OpenClaw.    |
 
 ## Conventions
 

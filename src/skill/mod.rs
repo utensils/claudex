@@ -85,6 +85,7 @@ fn expand_targets(requested: &[SkillTarget]) -> Vec<SkillTarget> {
                 push(SkillTarget::ClaudeCode, &mut targets);
                 push(SkillTarget::Codex, &mut targets);
                 push(SkillTarget::Pi, &mut targets);
+                push(SkillTarget::OpenClaw, &mut targets);
                 push(SkillTarget::AgentsMd, &mut targets);
             }
             other => push(other, &mut targets),
@@ -120,6 +121,13 @@ fn plan_target(
             Ok(vec![Artifact {
                 path: base.join("skills").join("claudex").join("SKILL.md"),
                 content: Content::Text(templates::skill_md(Flavor::Pi, command_list)),
+            }])
+        }
+        SkillTarget::OpenClaw => {
+            let base = openclaw_base_dir(mode, args)?;
+            Ok(vec![Artifact {
+                path: base.join("skills").join("claudex").join("SKILL.md"),
+                content: Content::Text(templates::skill_md(Flavor::OpenClaw, command_list)),
             }])
         }
         SkillTarget::AgentsMd => {
@@ -185,6 +193,27 @@ fn bundle_base(mode: Mode, args: &SkillArgs) -> PathBuf {
     args.dir.clone().unwrap_or(default)
 }
 
+fn openclaw_base_dir(mode: Mode, args: &SkillArgs) -> Result<PathBuf> {
+    match mode {
+        Mode::Generate => Ok(args
+            .dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("claudex-skills"))),
+        Mode::Install if args.global => {
+            if let Some(dir) = &args.dir {
+                return Ok(dir.clone());
+            }
+            if let Ok(state_dir) = std::env::var("OPENCLAW_STATE_DIR")
+                && !state_dir.trim().is_empty()
+            {
+                return expand_home(state_dir.trim());
+            }
+            Ok(home_dir()?.join(".openclaw"))
+        }
+        Mode::Install => Ok(args.dir.clone().unwrap_or_else(|| PathBuf::from("."))),
+    }
+}
+
 fn join_prefix(root: PathBuf, prefix: &str) -> PathBuf {
     if prefix.is_empty() {
         root
@@ -195,6 +224,16 @@ fn join_prefix(root: PathBuf, prefix: &str) -> PathBuf {
 
 fn home_dir() -> Result<PathBuf> {
     dirs::home_dir().context("could not determine your home directory for --global install")
+}
+
+fn expand_home(value: &str) -> Result<PathBuf> {
+    if let Some(rest) = value.strip_prefix("~/") {
+        Ok(home_dir()?.join(rest))
+    } else if value == "~" {
+        home_dir()
+    } else {
+        Ok(PathBuf::from(value))
+    }
 }
 
 fn write_artifact(artifact: &Artifact, force: bool) -> Result<()> {

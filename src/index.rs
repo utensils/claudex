@@ -33,7 +33,7 @@ fn looks_like_session_id_prefix(selector: &str) -> bool {
 }
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// Pricing-table revision. Bump this in any change that alters
 /// `ModelPricing::for_model`; on the next open, every `cost_source = 'computed'`
@@ -510,6 +510,7 @@ pub struct PermissionChangeRow {
 }
 
 pub struct SessionDetail {
+    pub provider: String,
     pub project: String,
     pub file_path: String,
     pub session_id: Option<String>,
@@ -537,6 +538,7 @@ pub struct SessionDetail {
 
 type SessionRow = (
     i64,
+    String,
     String,
     String,
     Option<String>,
@@ -567,11 +569,13 @@ struct ModelUsageAccumulator {
 
 /// A `sessions` row's identity and on-disk fingerprint, loaded at the start of
 /// a sync so changed/unchanged/missing files can be reconciled in one pass.
+#[derive(Clone)]
 struct KnownFile {
     id: i64,
     size: i64,
     mtime: i64,
     present: i64,
+    file_path: String,
 }
 
 impl IndexStore {
@@ -640,7 +644,8 @@ impl IndexStore {
                 present_on_disk INTEGER NOT NULL DEFAULT 1,
                 archived_at     INTEGER,
                 last_seen       INTEGER,
-                extras          TEXT
+                extras          TEXT,
+                source_key      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_project   ON sessions(project_name);
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(first_timestamp DESC);
@@ -798,6 +803,16 @@ impl IndexStore {
                 [],
             )?;
         }
+        // v6 → v7: provider-scoped logical source keys. OpenClaw can emit a
+        // runtime trajectory before the canonical transcript is visible; this
+        // lets a later transcript reuse the same retained row instead of
+        // double-counting the session.
+        if from.unwrap_or(0) < 7 {
+            self.add_column_if_missing("sessions", "source_key", "TEXT")?;
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(provider, source_key);",
+            )?;
+        }
         Ok(())
     }
 
@@ -898,7 +913,9 @@ impl IndexStore {
         let mut total = 0usize;
         for provider in providers {
             let provider_id = provider.id();
-            if provider_id == "claude" || !self.pr_link_derivation_is_stale(provider_id) {
+            if matches!(provider_id, "claude" | "openclaw")
+                || !self.pr_link_derivation_is_stale(provider_id)
+            {
                 continue;
             }
             total += self.backfill_provider_pr_links(provider_id)?;
@@ -1051,24 +1068,31 @@ impl IndexStore {
         // Load known file states for THIS provider only. `id`/`present_on_disk`
         // let us re-index in place and un-archive a file that reappears.
         let mut known: HashMap<String, KnownFile> = HashMap::new();
+        let mut known_by_source: HashMap<String, KnownFile> = HashMap::new();
         {
             let mut stmt = self.conn.prepare(
-                "SELECT file_path, id, file_size, file_mtime, present_on_disk
+                "SELECT file_path, id, file_size, file_mtime, present_on_disk, source_key
                  FROM sessions WHERE provider = ?",
             )?;
             let rows = stmt.query_map(params![provider_id], |row| {
+                let file_path = row.get::<_, String>(0)?;
                 Ok((
-                    row.get::<_, String>(0)?,
+                    file_path.clone(),
                     KnownFile {
                         id: row.get::<_, i64>(1)?,
                         size: row.get::<_, i64>(2)?,
                         mtime: row.get::<_, i64>(3)?,
                         present: row.get::<_, i64>(4)?,
+                        file_path,
                     },
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })?;
             for row in rows {
-                let (p, k) = row?;
+                let (p, k, source_key) = row?;
+                if let Some(source_key) = source_key {
+                    known_by_source.insert(source_key, k.clone());
+                }
                 known.insert(p, k);
             }
         }
@@ -1097,6 +1121,7 @@ impl IndexStore {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
 
+            let discovered_source_key = discovered.source_key.clone();
             let prior = known.get(&path_str);
             let reuse_id = match prior {
                 Some(k) if k.size == size && k.mtime == mtime => {
@@ -1118,7 +1143,18 @@ impl IndexStore {
                     delete_session_derived(&tx, k.id)?;
                     Some(k.id)
                 }
-                None => None,
+                None => {
+                    if let Some(k) = discovered_source_key
+                        .as_ref()
+                        .and_then(|source_key| known_by_source.get(source_key))
+                    {
+                        delete_session_derived(&tx, k.id)?;
+                        seen.insert(k.file_path.clone());
+                        Some(k.id)
+                    } else {
+                        None
+                    }
+                }
             };
 
             let parent_session_id = discovered.parent_session_id.clone();
@@ -1142,6 +1178,7 @@ impl IndexStore {
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned());
             }
+            let source_key = entry.source_key.or(discovered_source_key);
 
             // A transcript living in the provider's archive location is indexed
             // but stamped archived from the start.
@@ -1161,7 +1198,8 @@ impl IndexStore {
                            project_name = ?, file_size = ?, file_mtime = ?, session_id = ?,
                            parent_session_id = ?, first_timestamp = ?, last_timestamp = ?,
                            duration_ms = ?, message_count = ?, model = ?, indexed_at = ?,
-                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?, extras = ?
+                           provider = ?, present_on_disk = 1, archived_at = ?, last_seen = ?, extras = ?,
+                           source_key = ?, file_path = ?
                        WHERE id = ?"#,
                     params![
                         project_display,
@@ -1179,6 +1217,8 @@ impl IndexStore {
                         archived_at,
                         now_secs,
                         entry.extras,
+                        source_key,
+                        path_str,
                         old_id,
                     ],
                 )?;
@@ -1188,8 +1228,8 @@ impl IndexStore {
                     r#"INSERT INTO sessions
                        (project_name, file_path, file_size, file_mtime, session_id, parent_session_id,
                         first_timestamp, last_timestamp, duration_ms, message_count, model, indexed_at,
-                        provider, present_on_disk, archived_at, last_seen, extras)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#,
+                        provider, present_on_disk, archived_at, last_seen, extras, source_key)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"#,
                     params![
                         project_display,
                         path_str,
@@ -1207,6 +1247,7 @@ impl IndexStore {
                         archived_at,
                         now_secs,
                         entry.extras,
+                        source_key,
                     ],
                 )?;
                 tx.last_insert_rowid()
@@ -2076,7 +2117,7 @@ impl IndexStore {
         let session_row: Option<SessionRow> = self
             .conn
             .query_row(
-                r#"SELECT id, project_name, file_path, session_id, parent_session_id,
+                r#"SELECT id, provider, project_name, file_path, session_id, parent_session_id,
                           first_timestamp, last_timestamp, duration_ms, message_count, model
                    FROM sessions
                    WHERE file_path = ?"#,
@@ -2093,6 +2134,7 @@ impl IndexStore {
                         row.get(7)?,
                         row.get(8)?,
                         row.get(9)?,
+                        row.get(10)?,
                     ))
                 },
             )
@@ -2100,6 +2142,7 @@ impl IndexStore {
 
         let Some((
             session_rowid,
+            provider,
             project,
             file_path,
             session_id,
@@ -2355,6 +2398,7 @@ impl IndexStore {
         };
 
         Ok(Some(SessionDetail {
+            provider,
             project,
             file_path,
             session_id,

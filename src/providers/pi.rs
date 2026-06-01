@@ -64,6 +64,7 @@ impl SessionProvider for PiProvider {
                             project_display: project.clone(),
                             parent_session_id: None,
                             archived: false,
+                            source_key: None,
                         });
                     }
                 }

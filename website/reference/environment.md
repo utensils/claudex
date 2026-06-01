@@ -4,11 +4,13 @@ Environment variables and paths claudex reads.
 
 ## Variables
 
-| Var              | Effect                                                                        |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `CLAUDEX_DIR`    | Override the location of `~/.claudex/` (index, debug logs).                   |
-| `NO_COLOR`       | Disable color when `--color` is `auto`. [no-color.org](https://no-color.org). |
-| `RUST_BACKTRACE` | Rust panic behavior. `1` for a backtrace, `full` for a symbol-rich one.       |
+| Var                       | Effect                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| `CLAUDEX_DIR`             | Override the location of `~/.claudex/` (index, debug logs).                                 |
+| `NO_COLOR`                | Disable color when `--color` is `auto`. [no-color.org](https://no-color.org).               |
+| `OPENCLAW_STATE_DIR`      | OpenClaw state root to read for the `openclaw` provider. Default `~/.openclaw`.             |
+| `OPENCLAW_TRAJECTORY_DIR` | Optional OpenClaw runtime trajectory directory to merge when session metadata points to it. |
+| `RUST_BACKTRACE`          | Rust panic behavior. `1` for a backtrace, `full` for a symbol-rich one.                     |
 
 Table width is detected automatically from the terminal (via the
 `terminal_size` crate); claudex does not read `$COLUMNS`.
@@ -25,12 +27,13 @@ by the `claudex` binary:
 
 ## Paths
 
-| Path                          | Purpose                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------- |
-| `~/.claude/projects/`         | Source of truth — Claude Code's session transcripts. **Read-only for claudex.** |
-| `~/.claudex/index.db`         | SQLite index.                                                                   |
-| `~/.claudex/debug/latest.log` | Default target for `claudex watch` + `claude --debug-file`.                     |
-| `~/.cargo/bin/claudex`        | Binary, if installed via `cargo install`.                                       |
+| Path                                                    | Purpose                                                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `~/.claude/projects/`                                   | Source of truth — Claude Code's session transcripts. **Read-only for claudex.**            |
+| `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/` | Source of truth — OpenClaw transcripts and trajectory sidecars. **Read-only for claudex.** |
+| `~/.claudex/index.db`                                   | SQLite index.                                                                              |
+| `~/.claudex/debug/latest.log`                           | Default target for `claudex watch` + `claude --debug-file`.                                |
+| `~/.cargo/bin/claudex`                                  | Binary, if installed via `cargo install`.                                                  |
 
 ## Running under direnv
 

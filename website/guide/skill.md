@@ -1,8 +1,7 @@
 # Agent Skill
 
 claudex ships an [agent skill](https://docs.anthropic.com/en/docs/claude-code/skills) that lets
-Claude Code, OpenAI Codex, and Pi — and agents like
-[openclaw](https://github.com/utensils/openclaw) — run claudex commands on your behalf without
+Claude Code, OpenAI Codex, Pi, and OpenClaw run claudex commands on your behalf without
 extra setup. Generate and install it with [`claudex skills`](/commands/skills).
 
 ## What is a skill?
@@ -16,12 +15,12 @@ middleware" by running the right `claudex` command and interpreting the result.
 
 The easiest way is the built-in [`skills`](/commands/skills) command, which
 generates the skill from the live CLI (so it never drifts) and writes it into
-the right place for your harness — Claude Code, OpenAI Codex, or Pi.
+the right place for your harness — Claude Code, OpenAI Codex, Pi, or OpenClaw.
 
 ```bash
 claudex skills install --global              # personal: ~/.claude/skills/claudex
 claudex skills install                       # project-local: ./.claude/skills/claudex
-claudex skills install --target codex,pi     # also install for Codex and Pi
+claudex skills install --target codex,pi,openclaw
 ```
 
 Run `claudex skills generate` first if you want to review the files before they

@@ -3,7 +3,7 @@
 pub const FILTER_FORMATS: &str = "\
 Accepted filter formats:
   --since/--until: YYYY-MM-DD, RFC3339, or a relative span like 7d, 12h, 2w, 30m
-  --provider: claude, codex, pi (repeat the flag or comma-separate values)
+  --provider: claude, codex, pi, openclaw (repeat the flag or comma-separate values)
   --model: substring match, for example opus or gpt-5";
 
 pub const SESSIONS_EXAMPLES: &str = "\
@@ -134,7 +134,7 @@ Examples:
 
 pub const SKILLS_GENERATE_EXAMPLES: &str = "\
 Accepted targets:
-  claude-code, codex, pi, agents-md, plugin, all
+  claude-code, codex, pi, openclaw, agents-md, plugin, all
 
 Examples:
   claudex skills generate
@@ -143,7 +143,7 @@ Examples:
 
 pub const SKILLS_INSTALL_EXAMPLES: &str = "\
 Accepted targets:
-  claude-code, codex, pi, agents-md, plugin, all
+  claude-code, codex, pi, openclaw, agents-md, plugin, all
 
 Examples:
   claudex skills install

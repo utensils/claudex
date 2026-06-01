@@ -73,6 +73,8 @@ fn run(home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(BIN)
         .env("HOME", home)
         .env("NO_COLOR", "1")
+        .env_remove("OPENCLAW_STATE_DIR")
+        .env_remove("OPENCLAW_TRAJECTORY_DIR")
         .args(args)
         .output()
         .expect("spawn claudex")
@@ -223,6 +225,117 @@ fn codex_session_drilldown_resolves_indexed_id() {
     );
 }
 
+// --- openclaw provider (unified index) ---
+
+fn fixture_home_with_openclaw() -> TempDir {
+    let tmp = fixture_home();
+    let sessions = tmp
+        .path()
+        .join(".openclaw")
+        .join("agents")
+        .join("main")
+        .join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("sessions.json"),
+        r#"{"agent:main:dm":{"sessionId":"sess-open","status":"running","workspaceDir":"/Users/test/openapp","modelProvider":"openai"}}"#,
+    )
+    .unwrap();
+    let mut f = fs::File::create(sessions.join("sess-open.jsonl")).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"session","version":3,"id":"sess-open","timestamp":"2026-05-30T00:00:00Z","cwd":"/Users/test/openapp"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"u1","timestamp":"2026-05-30T00:01:00Z","message":{{"role":"user","content":[{{"type":"text","text":"openclaw indexing"}}]}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"a1","timestamp":"2026-05-30T00:02:00Z","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"c1","name":"bash","arguments":{{"command":"gh pr create --fill"}}}},{{"type":"text","text":"opened"}}],"provider":"openai","model":"gpt-5.2","usage":{{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"cost":{{"total":0.33}}}},"stopReason":"toolUse"}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"message","id":"t1","timestamp":"2026-05-30T00:03:00Z","message":{{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{{"type":"text","text":"https://github.com/utensils/claudex/pull/41"}}]}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+    write_jsonl(
+        &sessions.join("sess-traj.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-traj","source":"runtime","type":"session.started","ts":"2026-05-30T01:00:00Z","seq":1,"sessionId":"sess-traj","workspaceDir":"/Users/test/trajapp","provider":"openai","modelId":"gpt-5.2"}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-traj","source":"runtime","type":"prompt.submitted","ts":"2026-05-30T01:01:00Z","seq":2,"sessionId":"sess-traj","workspaceDir":"/Users/test/trajapp","provider":"openai","modelId":"gpt-5.2","data":{"prompt":"find trajectory"}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"sess-traj","source":"runtime","type":"model.completed","ts":"2026-05-30T01:02:00Z","seq":3,"sessionId":"sess-traj","workspaceDir":"/Users/test/trajapp","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"trajectory done","usage":{"input":5,"output":4,"cacheRead":1,"cacheWrite":0,"cost":{"total":0.07}}}}"#,
+        ],
+    );
+    tmp
+}
+
+#[test]
+fn openclaw_sessions_appear_in_unified_index_with_embedded_cost() {
+    let home = fixture_home_with_openclaw();
+    let out = run(
+        home.path(),
+        &["cost", "--per-session", "--provider", "openclaw", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let arr = rows.as_array().unwrap();
+    assert_eq!(
+        arr.len(),
+        2,
+        "classic and trajectory sessions indexed: {rows}"
+    );
+    assert!(arr.iter().all(|r| r["provider"] == "openclaw"));
+    let classic = arr
+        .iter()
+        .find(|r| r["project"].as_str().is_some_and(|p| p.contains("openapp")))
+        .expect("classic openclaw session");
+    assert_eq!(classic["input_tokens"].as_i64(), Some(100));
+    assert_eq!(classic["cache_read_tokens"].as_i64(), Some(10));
+    assert_eq!(classic["cost_usd"].as_f64(), Some(0.33));
+}
+
+#[test]
+fn openclaw_search_session_tools_and_prs_work() {
+    let home = fixture_home_with_openclaw();
+    let out = run(
+        home.path(),
+        &["search", "trajectory", "--provider", "openclaw", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(!json_of(&out).as_array().unwrap().is_empty());
+
+    let out = run(home.path(), &["session", "sess-open", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let session = json_of(&out);
+    assert_eq!(session["provider"].as_str(), Some("openclaw"));
+    assert_eq!(session["cost_usd"].as_f64(), Some(0.33));
+
+    let out = run(home.path(), &["tools", "--provider", "openclaw", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(
+        json_of(&out)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["tool"] == "bash")
+    );
+
+    let out = run(home.path(), &["prs", "--provider", "openclaw", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(
+        json_of(&out)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["pr_url"] == "https://github.com/utensils/claudex/pull/41")
+    );
+}
+
 // --- skills subcommand ---
 
 #[test]
@@ -243,6 +356,7 @@ fn skills_generate_writes_all_targets() {
         ".claude/skills/claudex/SKILL.md",
         ".agents/skills/claudex/SKILL.md",
         ".pi/skills/claudex/SKILL.md",
+        "skills/claudex/SKILL.md",
         "AGENTS.md",
     ] {
         assert!(
@@ -250,6 +364,25 @@ fn skills_generate_writes_all_targets() {
             "{rel} should have been written"
         );
     }
+}
+
+#[test]
+fn skills_install_global_openclaw_uses_state_dir() {
+    let home = fixture_home();
+    let out = Command::new(BIN)
+        .env("HOME", home.path())
+        .env("NO_COLOR", "1")
+        .env("OPENCLAW_STATE_DIR", "~/openclaw-state")
+        .args(["skills", "install", "--global", "--target", "openclaw"])
+        .output()
+        .expect("spawn claudex");
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let skill = home.path().join("openclaw-state/skills/claudex/SKILL.md");
+    assert!(skill.exists());
+    let md = fs::read_to_string(skill).unwrap();
+    assert!(md.contains("OpenClaw"));
+    assert!(!md.contains("allowed-tools"));
+    assert!(!Path::new("~/openclaw-state/skills/claudex/SKILL.md").exists());
 }
 
 #[test]
@@ -338,6 +471,7 @@ fn skills_command_list_includes_skills_itself() {
     // The command list is clap-derived, so every subcommand appears.
     assert!(md.contains("`claudex sessions`"));
     assert!(md.contains("`claudex skills`"));
+    assert!(md.contains("Claude Code, Codex, Pi, or OpenClaw"));
     assert!(md.contains("`claudex cost`"));
 }
 
@@ -910,7 +1044,7 @@ fn invalid_skills_target_shows_target_examples() {
     let err = stderr_of(&out);
     assert!(err.contains("invalid value 'nope'"));
     assert!(err.contains("Accepted targets:"));
-    assert!(err.contains("claude-code, codex, pi, agents-md, plugin, all"));
+    assert!(err.contains("claude-code, codex, pi, openclaw, agents-md, plugin, all"));
 }
 
 #[test]

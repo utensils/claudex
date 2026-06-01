@@ -3,7 +3,7 @@
 Every read command supports `--json`, emitting a pretty-printed, stable shape.
 This is the recommended contract for automation — it doesn't change between
 patch releases. Every per-row report includes a `"provider"` key
-(`claude` / `codex` / `pi`) so results are unambiguous across providers.
+(`claude` / `codex` / `pi` / `openclaw`) so results are unambiguous across providers.
 
 ## Examples
 
@@ -74,7 +74,7 @@ Array. Each entry: `provider`, `project`, `session_id`, `file_path`, `date`,
 
 ### `session`
 
-Single object. Keys include `project`, `file_path`, `session_id`, `date`,
+Single object. Keys include `provider`, `project`, `file_path`, `session_id`, `date`,
 `last_activity`, token totals, `cost_usd`, `turn_stats`, `models`, `tools`,
 `files_modified`, `pr_links`, `stop_reasons`, `attachments`,
 `permission_changes`.
