@@ -88,7 +88,7 @@ enum Commands {
         #[arg(long)]
         case_sensitive: bool,
         /// Only match user or assistant messages
-        #[arg(long)]
+        #[arg(long, value_parser = ["user", "assistant"])]
         role: Option<String>,
         /// Only sessions that used a matching tool name
         #[arg(long)]
@@ -198,7 +198,7 @@ enum Commands {
         /// Force a full rebuild instead of an incremental update
         #[arg(long)]
         force: bool,
-        /// Show index retention and provider sync status
+        /// Show index retention status
         #[arg(long)]
         status: bool,
         /// Delete retained off-disk sessions older than this many days

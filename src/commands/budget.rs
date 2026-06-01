@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use chrono::{Datelike, Local, TimeZone, Utc};
+use chrono::{Datelike, Local, NaiveTime, TimeZone, Timelike, Utc};
 
 use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
@@ -90,8 +90,21 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 }
 
 fn date_from_ms(ms: i64) -> chrono::NaiveDate {
-    Utc.timestamp_millis_opt(ms)
+    let utc = Utc
+        .timestamp_millis_opt(ms)
         .single()
-        .unwrap_or_else(Utc::now)
+        .unwrap_or_else(Utc::now);
+    let time = utc.time();
+    if time == NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        || (time.hour(), time.minute(), time.second(), time.nanosecond())
+            == (23, 59, 59, 999_000_000)
+    {
+        return utc.date_naive();
+    }
+
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .unwrap_or_else(Local::now)
         .date_naive()
 }

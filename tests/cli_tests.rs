@@ -1457,6 +1457,17 @@ fn invalid_export_format_is_usage_error_with_examples() {
 }
 
 #[test]
+fn invalid_search_role_is_usage_error() {
+    let home = fixture_home();
+    let out = run(home.path(), &["search", "foo", "--role", "system"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr_of(&out);
+    assert!(err.contains("invalid value 'system'"));
+    assert!(err.contains("possible values: user, assistant"));
+    assert!(err.contains("Usage: claudex search"));
+}
+
+#[test]
 fn invalid_completions_shell_is_usage_error_with_examples() {
     let home = fixture_home();
     let out = run(home.path(), &["completions", "nope"]);

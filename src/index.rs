@@ -2838,7 +2838,7 @@ impl IndexStore {
         let mut rows = Vec::new();
         for provider in providers {
             let id = provider.id();
-            let discovered = provider.enumerate().unwrap_or_default();
+            let discovered = provider.enumerate()?;
             let parse_failures = if deep {
                 let mut failures = 0usize;
                 for file in &discovered {
