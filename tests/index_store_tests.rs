@@ -503,7 +503,7 @@ fn query_model_usage_groups_by_model_family() {
 #[test]
 fn query_summary_reports_totals() {
     let (_tmp, _store, idx) = build_fixture();
-    let data = idx.query_summary().unwrap();
+    let data = idx.query_summary(&all()).unwrap();
     assert_eq!(data.total_sessions, 4);
     assert!(data.total_cost > 0.0);
     assert_eq!(data.pr_count, 1);
@@ -540,7 +540,7 @@ fn query_summary_counts_sessions_active_today_by_last_timestamp() {
     let providers = claude_providers(projects);
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
     idx.sync_now(&providers).unwrap();
-    let data = idx.query_summary().unwrap();
+    let data = idx.query_summary(&all()).unwrap();
     assert_eq!(data.total_sessions, 1);
     assert_eq!(data.sessions_today, 1);
 }
@@ -571,7 +571,7 @@ fn query_summary_counts_sessions_active_this_week_by_last_timestamp() {
     let providers = claude_providers(projects);
     let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
     idx.sync_now(&providers).unwrap();
-    let data = idx.query_summary().unwrap();
+    let data = idx.query_summary(&all()).unwrap();
     assert_eq!(data.total_sessions, 1);
     assert_eq!(data.sessions_this_week, 1);
     assert!(data.week_cost > 0.0);

@@ -336,6 +336,51 @@ fn openclaw_search_session_tools_and_prs_work() {
     );
 }
 
+#[test]
+fn summary_accepts_openclaw_provider_filter() {
+    let home = fixture_home_with_openclaw();
+    let out = run(
+        home.path(),
+        &["summary", "--provider", "openclaw", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let summary = json_of(&out);
+    assert_eq!(summary["total_sessions"].as_i64(), Some(2));
+    assert_eq!(summary["total_input_tokens"].as_i64(), Some(105));
+    assert_eq!(summary["total_output_tokens"].as_i64(), Some(54));
+    assert_eq!(summary["total_cache_read_tokens"].as_i64(), Some(11));
+
+    let projects: Vec<&str> = summary["top_projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["project"].as_str())
+        .collect();
+    assert!(
+        projects.iter().any(|p| p.contains("openapp")),
+        "OpenClaw classic project should be present: {summary}"
+    );
+    assert!(
+        projects
+            .iter()
+            .all(|p| !p.contains("alpha") && !p.contains("beta")),
+        "Claude projects should be filtered out: {summary}"
+    );
+}
+
+#[test]
+fn no_index_rejects_non_claude_provider_filter() {
+    let home = fixture_home_with_openclaw();
+    let out = run(
+        home.path(),
+        &["sessions", "--provider", "openclaw", "--no-index", "--json"],
+    );
+    assert!(!out.status.success(), "stdout: {}", stdout_of(&out));
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("--no-index only scans Claude transcripts"));
+    assert!(stderr.contains("remove --no-index"));
+}
+
 // --- skills subcommand ---
 
 #[test]

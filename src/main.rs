@@ -144,6 +144,8 @@ enum Commands {
         /// `total_cost_usd` / `cost_this_week_usd` keys.
         #[arg(long, value_parser = Plan::from_str, default_value = "api")]
         plan: Plan,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Detailed report for a single session
     #[command(after_long_help = cli_help::SESSION_EXAMPLES)]
@@ -391,7 +393,10 @@ fn main() {
             json,
             no_index,
             plan,
-        } => commands::summary::run(json, no_index, plan),
+            filter,
+        } => filter
+            .resolve()
+            .and_then(|f| commands::summary::run(json, no_index, plan, &f)),
         Commands::Session {
             selector,
             project,

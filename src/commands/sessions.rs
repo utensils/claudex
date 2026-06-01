@@ -113,6 +113,8 @@ fn run_from_files(
     json: bool,
     filter: &ResolvedFilter,
 ) -> Result<()> {
+    filter.ensure_no_index_supported()?;
+
     let store = SessionStore::new()?;
     let mut sessions: Vec<SessionInfo> = Vec::new();
 

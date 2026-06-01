@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, Local, Utc};
 
+use crate::cli::ResolvedFilter;
 use crate::index::IndexStore;
 use crate::parser::parse_session;
 use crate::plan::Plan;
@@ -12,18 +13,18 @@ use crate::time_utils::local_day_start_ms;
 use crate::types::{ModelPricing, TokenUsage};
 use crate::ui;
 
-pub fn run(json: bool, no_index: bool, plan: Plan) -> Result<()> {
-    if !no_index && let Ok(()) = run_indexed(json, plan) {
+pub fn run(json: bool, no_index: bool, plan: Plan, filter: &ResolvedFilter) -> Result<()> {
+    if !no_index && let Ok(()) = run_indexed(json, plan, filter) {
         return Ok(());
     }
-    run_from_files(json, plan)
+    run_from_files(json, plan, filter)
 }
 
-fn run_indexed(json: bool, plan: Plan) -> Result<()> {
+fn run_indexed(json: bool, plan: Plan, filter: &ResolvedFilter) -> Result<()> {
     let providers = enabled_default()?;
     let mut idx = IndexStore::open()?;
     idx.ensure_fresh(&providers)?;
-    let data = idx.query_summary()?;
+    let data = idx.query_summary(filter)?;
 
     if json {
         let mut out = serde_json::json!({
@@ -216,7 +217,9 @@ fn run_indexed(json: bool, plan: Plan) -> Result<()> {
     Ok(())
 }
 
-fn run_from_files(json: bool, plan: Plan) -> Result<()> {
+fn run_from_files(json: bool, plan: Plan, filter: &ResolvedFilter) -> Result<()> {
+    filter.ensure_no_index_supported()?;
+
     let store = SessionStore::new()?;
     let files = store.all_session_files(None)?;
 
@@ -256,6 +259,9 @@ fn run_from_files(json: bool, plan: Plan) -> Result<()> {
             Ok(s) => s,
             Err(_) => continue,
         };
+        if !filter.matches("claude", &stats, false) {
+            continue;
+        }
 
         total_sessions += 1;
         let session_cost = stats.cost_usd();

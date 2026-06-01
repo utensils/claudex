@@ -110,16 +110,8 @@ fn run_from_files(
     case_sensitive: bool,
     filter: &ResolvedFilter,
 ) -> Result<()> {
-    // The file-scan fallback only reads Claude transcripts; if the provider
-    // filter excludes Claude there is nothing for it to match.
-    if !filter.includes_provider("claude") {
-        if json {
-            println!("[]");
-        } else {
-            println!("No matches found for {query:?}");
-        }
-        return Ok(());
-    }
+    filter.ensure_no_index_supported()?;
+
     let store = SessionStore::new()?;
     let files = store.all_session_files(project)?;
 
