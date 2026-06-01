@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.8.2](https://github.com/utensils/claudex/compare/v0.8.1...v0.8.2) (2026-06-01)
+
+
+### Bug Fixes
+
+* **aur:** support noninteractive Docker smoke tests ([#57](https://github.com/utensils/claudex/issues/57)) ([9277968](https://github.com/utensils/claudex/commit/927796833e3de8be2e62a24e780e0cf216182c39))
+
 ## [0.8.1](https://github.com/utensils/claudex/compare/v0.8.0...v0.8.1) (2026-06-01)
 
 
