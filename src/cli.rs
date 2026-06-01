@@ -93,6 +93,18 @@ pub struct ResolvedFilter {
 }
 
 impl ResolvedFilter {
+    /// The `--no-index` fallback reads Claude Code transcript files directly.
+    /// Other providers require the unified index because their on-disk formats
+    /// are normalized through provider parsers during sync.
+    pub fn ensure_no_index_supported(&self) -> Result<()> {
+        if self.providers.iter().any(|p| p != "claude") {
+            bail!(
+                "--no-index only scans Claude transcripts; remove --no-index to use indexed provider data, or use --provider claude"
+            );
+        }
+        Ok(())
+    }
+
     /// Whether `provider` is in scope (true when no provider filter is set).
     pub fn includes_provider(&self, provider: &str) -> bool {
         self.providers.is_empty() || self.providers.iter().any(|p| p == provider)

@@ -52,6 +52,7 @@ Accepted values:
 
 Examples:
   claudex summary
+  claudex summary --provider openclaw --json
   claudex summary --plan flat-monthly:250
   claudex summary --json";
 

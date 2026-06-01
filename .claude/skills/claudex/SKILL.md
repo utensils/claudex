@@ -41,17 +41,22 @@ usage never disappears.
 
 Run `claudex <command> --help` for full flags.
 
-## Filtering (every reporting command)
+## Filtering
 
 | Flag | Effect |
 | --- | --- |
-| `--provider <claude\|codex\|pi\|openclaw>` | Restrict to provider(s); repeatable or comma-separated. Default: all. |
-| `--project <substr>` | Filter by project path substring. |
-| `--model <substr>` | Filter by model (e.g. `opus`, `gpt-5`). |
+| `--provider <claude\|codex\|pi\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
+| `--model <substr>` | Filter indexed reports by model (e.g. `opus`, `gpt-5`). |
 | `--since <when>` / `--until <when>` | Date range. Accepts `YYYY-MM-DD`, RFC3339, or a relative span (`7d`, `12h`, `2w`). |
 | `--on-disk-only` | Exclude retained sessions whose file was archived/deleted. |
-| `--json` | Machine-readable output. Always includes a `provider` key per row. |
-| `--no-index` | Scan Claude transcripts directly (Claude-only escape hatch). |
+| `--project <substr>` | Filter by project path substring on commands that expose project scoping. |
+| `--json` | Machine-readable output. Row-oriented reports include a `provider` key per row. |
+| `--no-index` | Scan Claude transcripts directly; this rejects non-Claude providers. |
+
+Provider/date/model filters work on indexed reporting commands including
+`summary`, `sessions`, `cost`, `tools`, `models`, `search`, `turns`, `prs`, and
+`files`. Session drill-down resolves OpenClaw/Codex/Pi sessions through indexed
+records. Use `--no-index` only for Claude transcript recovery/debugging.
 
 ## When to use
 

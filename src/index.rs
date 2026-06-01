@@ -2425,13 +2425,14 @@ impl IndexStore {
         }))
     }
 
-    pub fn query_summary(&self) -> Result<SummaryData> {
+    pub fn query_summary(&self, filter: &ResolvedFilter) -> Result<SummaryData> {
         let today = Local::now().date_naive();
         let days_since_monday = today.weekday().num_days_from_monday() as i64;
         let week_start = today - Duration::days(days_since_monday);
 
         let today_start_ms = local_day_start_ms(today);
         let week_start_ms = local_day_start_ms(week_start);
+        let (pred, pred_params) = filter.sql_predicates("s");
 
         let (total_sessions, total_cost, total_in, total_out, total_cc, total_cr): (
             i64,
@@ -2441,15 +2442,18 @@ impl IndexStore {
             i64,
             i64,
         ) = self.conn.query_row(
-            r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+            &format!(
+                r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
                       COALESCE(SUM(t.cache_creation_tokens), 0),
                       COALESCE(SUM(t.cache_read_tokens), 0)
                FROM sessions s
-               LEFT JOIN token_usage t ON t.session_id = s.id"#,
-            [],
+               LEFT JOIN token_usage t ON t.session_id = s.id
+               WHERE 1 = 1 {pred}"#
+            ),
+            params_from_iter(pred_params.clone()),
             |row| {
                 Ok((
                     row.get(0)?,
@@ -2462,68 +2466,87 @@ impl IndexStore {
             },
         )?;
 
+        let mut today_binds = vec![SqlValue::Integer(today_start_ms)];
+        today_binds.extend(pred_params.clone());
         let sessions_today: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE COALESCE(last_timestamp, first_timestamp) >= ?",
-            params![today_start_ms],
+            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
+            params_from_iter(today_binds),
             |row| row.get(0),
         )?;
 
+        let mut week_binds = vec![SqlValue::Integer(week_start_ms)];
+        week_binds.extend(pred_params.clone());
         let sessions_this_week: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT provider || char(31) || project_name || char(31) || COALESCE(parent_session_id, session_id, file_path)) FROM sessions WHERE COALESCE(last_timestamp, first_timestamp) >= ?",
-            params![week_start_ms],
+            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
+            params_from_iter(week_binds),
             |row| row.get(0),
         )?;
 
+        let mut week_cost_binds = vec![SqlValue::Integer(week_start_ms)];
+        week_cost_binds.extend(pred_params.clone());
         let week_cost: f64 = self.conn.query_row(
-            r#"SELECT COALESCE(SUM(t.cost_usd), 0)
+            &format!(
+                r#"SELECT COALESCE(SUM(t.cost_usd), 0)
                FROM sessions s JOIN token_usage t ON t.session_id = s.id
-               WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?"#,
-            params![week_start_ms],
+               WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"#
+            ),
+            params_from_iter(week_cost_binds),
             |row| row.get(0),
         )?;
 
         let mut top_stmt = self.conn.prepare(
-            r#"SELECT project_name, COUNT(DISTINCT provider || char(31) || COALESCE(parent_session_id, session_id, file_path)) AS cnt
-               FROM sessions
-               GROUP BY project_name
+            &format!(r#"SELECT s.project_name, COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) AS cnt
+               FROM sessions s
+               WHERE 1 = 1 {pred}
+               GROUP BY s.project_name
                ORDER BY cnt DESC
-               LIMIT 5"#,
+               LIMIT 5"#),
         )?;
         let top_projects: Vec<(String, i64)> = top_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(params_from_iter(pred_params.clone()), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut tools_stmt = self.conn.prepare(
-            r#"SELECT tool_name, SUM(count) AS total
-               FROM tool_calls
-               GROUP BY tool_name
+        let mut tools_stmt = self.conn.prepare(&format!(
+            r#"SELECT tc.tool_name, SUM(tc.count) AS total
+               FROM tool_calls tc
+               JOIN sessions s ON s.id = tc.session_id
+               WHERE 1 = 1 {pred}
+               GROUP BY tc.tool_name
                ORDER BY total DESC
-               LIMIT 5"#,
-        )?;
+               LIMIT 5"#
+        ))?;
         let top_tools: Vec<(String, i64)> = tools_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(params_from_iter(pred_params.clone()), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut stop_stmt = self.conn.prepare(
-            r#"SELECT stop_reason, SUM(count) AS total
-               FROM stop_reasons
-               GROUP BY stop_reason
+        let mut stop_stmt = self.conn.prepare(&format!(
+            r#"SELECT sr.stop_reason, SUM(sr.count) AS total
+               FROM stop_reasons sr
+               JOIN sessions s ON s.id = sr.session_rowid
+               WHERE 1 = 1 {pred}
+               GROUP BY sr.stop_reason
                ORDER BY total DESC
-               LIMIT 5"#,
-        )?;
+               LIMIT 5"#
+        ))?;
         let top_stop_reasons: Vec<(String, i64)> = stop_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(params_from_iter(pred_params.clone()), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let most_recent: Option<MostRecentSession> = self
             .conn
             .query_row(
-                r#"SELECT project_name, session_id, COALESCE(last_timestamp, first_timestamp), model, message_count
-                   FROM sessions
-                   WHERE first_timestamp IS NOT NULL
+                &format!(r#"SELECT s.project_name, s.session_id, COALESCE(s.last_timestamp, s.first_timestamp), s.model, s.message_count
+                   FROM sessions s
+                   WHERE s.first_timestamp IS NOT NULL{pred}
                    ORDER BY COALESCE(last_timestamp, first_timestamp) DESC
-                   LIMIT 1"#,
-                [],
+                   LIMIT 1"#),
+                params_from_iter(pred_params.clone()),
                 |row| {
                     Ok(MostRecentSession {
                         project: row.get(0)?,
@@ -2540,8 +2563,10 @@ impl IndexStore {
         let thinking_block_count: i64 = self
             .conn
             .query_row(
-                "SELECT COALESCE(SUM(thinking_blocks), 0) FROM thinking_usage",
-                [],
+                &format!(
+                    "SELECT COALESCE(SUM(tu.thinking_blocks), 0) FROM thinking_usage tu JOIN sessions s ON s.id = tu.session_rowid WHERE 1 = 1 {pred}"
+                ),
+                params_from_iter(pred_params.clone()),
                 |row| row.get(0),
             )
             .unwrap_or(0);
@@ -2549,35 +2574,44 @@ impl IndexStore {
         let avg_turn_duration_ms: Option<f64> = self
             .conn
             .query_row(
-                "SELECT AVG(CAST(duration_ms AS REAL)) FROM turn_durations",
-                [],
+                &format!(
+                    "SELECT AVG(CAST(td.duration_ms AS REAL)) FROM turn_durations td JOIN sessions s ON s.id = td.session_rowid WHERE 1 = 1 {pred}"
+                ),
+                params_from_iter(pred_params.clone()),
                 |row| row.get(0),
             )
             .ok();
 
         let pr_count: i64 = self
             .conn
-            .query_row("SELECT COUNT(DISTINCT pr_url) FROM pr_links", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                &format!(
+                    "SELECT COUNT(DISTINCT pl.pr_url) FROM pr_links pl JOIN sessions s ON s.id = pl.session_rowid WHERE 1 = 1 {pred}"
+                ),
+                params_from_iter(pred_params.clone()),
+                |row| row.get(0),
+            )
             .unwrap_or(0);
 
         let files_modified_count: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT file_path) FROM file_modifications",
-                [],
+                &format!(
+                    "SELECT COUNT(DISTINCT fm.file_path) FROM file_modifications fm JOIN sessions s ON s.id = fm.session_rowid WHERE 1 = 1 {pred}"
+                ),
+                params_from_iter(pred_params.clone()),
                 |row| row.get(0),
             )
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+            &format!(r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
                FROM token_usage t
-               JOIN sessions s ON s.id = t.session_id"#,
+               JOIN sessions s ON s.id = t.session_id
+               WHERE 1 = 1 {pred}"#),
         )?;
         let raw_model_rows = mdist_stmt
-            .query_map([], |row| {
+            .query_map(params_from_iter(pred_params), |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,

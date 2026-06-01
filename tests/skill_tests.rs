@@ -39,6 +39,8 @@ fn openclaw_frontmatter_is_agent_skills_compatible() {
     let md = templates::skill_md(Flavor::OpenClaw, CL);
     assert!(md.contains("name: claudex"));
     assert!(md.contains("OpenClaw"));
+    assert!(md.contains("Provider/date/model filters work on indexed reporting commands"));
+    assert!(md.contains("Use `--no-index` only for Claude transcript recovery/debugging."));
     assert!(!md.contains("allowed-tools"));
     assert!(!md.contains("argument-hint"));
 }
