@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.9.1](https://github.com/utensils/claudex/compare/v0.9.0...v0.9.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **codex:** inherit exec wrapper models from forks ([#62](https://github.com/utensils/claudex/issues/62)) ([f560a4e](https://github.com/utensils/claudex/commit/f560a4e826956cc301da2db478a9267191034bed))
+
 ## [0.9.0](https://github.com/utensils/claudex/compare/v0.8.2...v0.9.0) (2026-06-01)
 
 
