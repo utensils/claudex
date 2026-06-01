@@ -9,11 +9,12 @@
 # toolchain. That keeps the image well under what Claudette's
 # XFCE/noVNC variant needs.
 
-# Pin linux/amd64 so the image runs under Rosetta on Apple Silicon
+# scripts/aur/test-in-docker.sh builds/runs this image with
+# `--platform linux/amd64` so it works under Rosetta on Apple Silicon
 # and qemu-user elsewhere. Arch upstream only publishes amd64 to
 # Docker Hub (Arch Linux ARM is a separate distro), so this is the
 # only portable choice. On a native x86_64 host this is a no-op.
-FROM --platform=linux/amd64 archlinux:latest
+FROM archlinux:latest
 
 # pacman 6.1+ ships an internal seccomp sandbox that the qemu-user
 # / Rosetta syscall ABI returns EINVAL for. Disable it up front —

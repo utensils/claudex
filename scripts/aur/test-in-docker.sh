@@ -70,7 +70,7 @@ pkgname="${pkgname:-claudex-bin}"
 # the initial pacman + Rust toolchain bootstrap.
 if "$rebuild" || ! "$runtime" image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "==> building $IMAGE via $runtime"
-  "$runtime" build -t "$IMAGE" -f "$DOCKERFILE" "$CONTEXT"
+  "$runtime" build --platform linux/amd64 -t "$IMAGE" -f "$DOCKERFILE" "$CONTEXT"
 fi
 
 echo "==> running $pkgname build + smoke test inside $IMAGE"
@@ -97,7 +97,17 @@ if "$shell_after"; then
 fi
 
 # --init reaps zombies; --rm removes the container after exit.
-exec "$runtime" run --rm -it --init \
+# Only request a TTY when the caller has one; agent/CI harnesses run
+# without stdin attached to a terminal and Docker rejects `-t` there.
+run_flags=(--rm --init --platform linux/amd64)
+if [ -t 0 ] && [ -t 1 ]; then
+  run_flags+=(-it)
+elif "$shell_after"; then
+  echo "error: --shell requires an interactive terminal" >&2
+  exit 64
+fi
+
+exec "$runtime" run "${run_flags[@]}" \
   -v "${REPO_ROOT}:/workspace:rw" \
   "$IMAGE" \
   bash -lc "$build_cmd"
