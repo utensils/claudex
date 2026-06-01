@@ -57,6 +57,8 @@ pub struct MessageForFts {
 #[derive(Default)]
 pub struct ProviderRecord {
     pub session_id: Option<String>,
+    /// Parent/wrapper session id when this transcript is a forked child.
+    pub parent_session_id: Option<String>,
     pub first_timestamp: Option<DateTime<Utc>>,
     pub last_timestamp: Option<DateTime<Utc>>,
     pub duration_ms: u64,

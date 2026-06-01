@@ -46,6 +46,31 @@ const PRICING_REVISION: i64 = 1;
 /// that only repairs the `pr_links` table.
 const PR_LINK_DERIVATION_REVISION: i64 = 4;
 
+/// Revision for Codex fork metadata and wrapper model inheritance. Bump when
+/// the backfill logic changes; older indexes are repaired in place on open.
+const CODEX_FORK_MODEL_REVISION: i64 = 1;
+
+const CODEX_INHERIT_WRAPPER_MODEL_SQL: &str = r#"
+UPDATE sessions
+SET model = (
+    SELECT MIN(c.model)
+    FROM sessions c
+    WHERE c.provider = 'codex'
+      AND c.parent_session_id = sessions.session_id
+      AND c.model IS NOT NULL
+)
+WHERE provider = 'codex'
+  AND model IS NULL
+  AND session_id IS NOT NULL
+  AND (
+      SELECT COUNT(DISTINCT c.model)
+      FROM sessions c
+      WHERE c.provider = 'codex'
+        AND c.parent_session_id = sessions.session_id
+        AND c.model IS NOT NULL
+  ) = 1
+"#;
+
 /// Child tables whose rows hang off a single `sessions` row, paired with the
 /// column that references `sessions(id)`. `messages_fts` is a virtual table
 /// (no `ON DELETE CASCADE`), so we always clean it up explicitly; the rest are
@@ -75,6 +100,36 @@ fn delete_session_derived(tx: &rusqlite::Transaction, session_id: i64) -> Result
         )?;
     }
     Ok(())
+}
+
+fn inherit_codex_exec_wrapper_models_tx(tx: &rusqlite::Transaction<'_>) -> Result<usize> {
+    Ok(tx.execute(CODEX_INHERIT_WRAPPER_MODEL_SQL, [])?)
+}
+
+fn codex_forked_from_id_from_file(path: &Path) -> Result<Option<String>> {
+    let Ok(file) = std::fs::File::open(path) else {
+        return Ok(None);
+    };
+    let reader = std::io::BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = line?;
+        if !line.contains("session_meta") {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if record["type"].as_str() != Some("session_meta") {
+            continue;
+        }
+        return Ok(record["payload"]["forked_from_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned));
+    }
+
+    Ok(None)
 }
 
 fn now_unix_secs() -> u64 {
@@ -816,6 +871,7 @@ impl IndexStore {
         // after the v6 migration has populated `cost_source`, so provider costs
         // are already protected. No-op for a fresh DB (no rows yet).
         self.maybe_reprice()?;
+        self.ensure_codex_fork_models_fresh()?;
 
         Ok(())
     }
@@ -977,6 +1033,60 @@ impl IndexStore {
             ],
         )?;
         Ok(())
+    }
+
+    fn codex_fork_model_revision_is_stale(&self) -> bool {
+        self.meta_get("codex_fork_model_revision")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+            < CODEX_FORK_MODEL_REVISION
+    }
+
+    fn stamp_codex_fork_model_revision(&self) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_fork_model_revision', ?)",
+            params![CODEX_FORK_MODEL_REVISION.to_string()],
+        )?;
+        Ok(())
+    }
+
+    fn ensure_codex_fork_models_fresh(&self) -> Result<usize> {
+        let mut updated = 0usize;
+        if self.codex_fork_model_revision_is_stale() {
+            updated += self.backfill_codex_fork_parent_ids()?;
+            self.stamp_codex_fork_model_revision()?;
+        }
+        updated += self.inherit_codex_exec_wrapper_models()?;
+        Ok(updated)
+    }
+
+    fn backfill_codex_fork_parent_ids(&self) -> Result<usize> {
+        let rows = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, file_path FROM sessions
+                 WHERE provider = 'codex' AND parent_session_id IS NULL",
+            )?;
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut updated = 0usize;
+        for (id, file_path) in rows {
+            let Some(parent_id) = codex_forked_from_id_from_file(Path::new(&file_path))? else {
+                continue;
+            };
+            updated += self.conn.execute(
+                "UPDATE sessions SET parent_session_id = ? WHERE id = ?",
+                params![parent_id, id],
+            )?;
+        }
+        Ok(updated)
+    }
+
+    fn inherit_codex_exec_wrapper_models(&self) -> Result<usize> {
+        Ok(self.conn.execute(CODEX_INHERIT_WRAPPER_MODEL_SQL, [])?)
     }
 
     /// Backfill provider-derived PR links without reparsing full sessions. This
@@ -1231,7 +1341,7 @@ impl IndexStore {
                 }
             };
 
-            let parent_session_id = discovered.parent_session_id.clone();
+            let discovered_parent_session_id = discovered.parent_session_id.clone();
             let mut entry = match provider.parse(discovered) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -1253,6 +1363,7 @@ impl IndexStore {
                     .map(|s| s.to_string_lossy().into_owned());
             }
             let source_key = entry.source_key.or(discovered_source_key);
+            let parent_session_id = entry.parent_session_id.or(discovered_parent_session_id);
 
             // A transcript living in the provider's archive location is indexed
             // but stamped archived from the start.
@@ -1480,6 +1591,10 @@ impl IndexStore {
                     params![now_secs, k.id],
                 )?;
             }
+        }
+
+        if provider_id == "codex" {
+            inherit_codex_exec_wrapper_models_tx(&tx)?;
         }
 
         tx.execute(
