@@ -534,6 +534,60 @@ fn openclaw_classic_parse_reads_usage_tools_prs_and_store_extras() {
 }
 
 #[test]
+fn openclaw_classic_usage_without_model_uses_unknown_bucket() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let sessions = state.join("agents/main/sessions");
+    write_jsonl(
+        &sessions.join("sess-open.jsonl"),
+        &[
+            r#"{"type":"session","version":3,"id":"sess-open","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/open"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"no model"}],"usage":{"input":4,"output":2,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.05}}}}"#,
+        ],
+    );
+
+    let provider = OpenClawProvider::at(state);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+    assert_eq!(rec.model.as_deref(), Some("unknown"));
+    let stats = rec.model_usage.get("unknown").unwrap();
+    assert_eq!(stats.usage.input_tokens, 4);
+    assert_eq!(stats.assistant_message_count, 1);
+    assert_eq!(stats.embedded_cost, Some(0.05));
+}
+
+#[test]
+fn openclaw_archived_classic_merges_sidecar_cost_and_metadata() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".openclaw");
+    let sessions = state.join("agents/main/sessions");
+    write_jsonl(
+        &sessions.join("archived.jsonl.deleted.2026-05-30T00:00:00Z"),
+        &[
+            r#"{"type":"session","version":3,"id":"archived","timestamp":"2026-05-30T00:00:00Z","cwd":"/repo/open"}"#,
+            r#"{"type":"message","id":"a1","timestamp":"2026-05-30T00:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"classic usage"}],"provider":"openai","model":"gpt-5.2","usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0}}}"#,
+        ],
+    );
+    write_jsonl(
+        &sessions.join("archived.trajectory.jsonl"),
+        &[
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"archived","source":"runtime","type":"model.completed","ts":"2026-05-30T00:02:00Z","seq":1,"sessionId":"archived","workspaceDir":"/repo/open","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"trajectory","usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.33}}}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"archived","source":"runtime","type":"session.ended","ts":"2026-05-30T00:03:00Z","seq":2,"sessionId":"archived","data":{"status":"done"}}"#,
+        ],
+    );
+
+    let provider = OpenClawProvider::at(state);
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].archived);
+    let rec = provider.parse(&files[0]).unwrap();
+    let stats = rec.model_usage.get("openai/gpt-5.2").unwrap();
+    assert_eq!(stats.embedded_cost, Some(0.33));
+    assert_eq!(*rec.stop_reason_counts.get("done").unwrap(), 1);
+    assert!(rec.extras.unwrap().contains("trajectory_path"));
+}
+
+#[test]
 fn openclaw_trajectory_only_parse_reads_runtime_events() {
     let tmp = TempDir::new().unwrap();
     let state = tmp.path().join(".openclaw");
@@ -546,8 +600,9 @@ fn openclaw_trajectory_only_parse_reads_runtime_events() {
             r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"tool.call","ts":"2026-05-30T00:02:00Z","seq":3,"entryId":"c1","sessionId":"traj-only","provider":"openai","modelId":"gpt-5.2","data":{"name":"bash","arguments":{"command":"gh pr view"}}}"#,
             r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"tool.result","ts":"2026-05-30T00:03:00Z","seq":4,"parentEntryId":"c1","sessionId":"traj-only","provider":"openai","modelId":"gpt-5.2","data":{"name":"bash","output":"https://github.com/utensils/aethon/pull/168"}}"#,
             r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.completed","ts":"2026-05-30T00:04:00Z","seq":5,"sessionId":"traj-only","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"Opened https://github.com/utensils/claudex/pull/42","usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.12}}}}"#,
-            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.fallback_step","ts":"2026-05-30T00:05:00Z","seq":6,"sessionId":"traj-only"}"#,
-            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"session.ended","ts":"2026-05-30T00:06:00Z","seq":7,"sessionId":"traj-only","data":{"status":"done"}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.completed","ts":"2026-05-30T00:04:30Z","seq":6,"sessionId":"traj-only","workspaceDir":"/repo/traj","provider":"openai","modelId":"gpt-5.2","data":{"assistantText":"second completion","usage":{"input":3,"output":2,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.03}}}}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"model.fallback_step","ts":"2026-05-30T00:05:00Z","seq":7,"sessionId":"traj-only"}"#,
+            r#"{"traceSchema":"openclaw-trajectory","schemaVersion":1,"traceId":"traj-only","source":"runtime","type":"session.ended","ts":"2026-05-30T00:06:00Z","seq":8,"sessionId":"traj-only","data":{"status":"done"}}"#,
         ],
     );
 
@@ -557,7 +612,7 @@ fn openclaw_trajectory_only_parse_reads_runtime_events() {
     assert_eq!(rec.session_id.as_deref(), Some("traj-only"));
     assert_eq!(rec.project_display, "/repo/traj");
     assert_eq!(rec.tool_names, vec!["bash".to_string()]);
-    assert_eq!(rec.embedded_cost, Some(0.12));
+    assert_eq!(rec.embedded_cost, Some(0.15));
     assert!(rec.messages.iter().any(|m| m.content.contains("ship it")));
     assert!(rec.messages.iter().any(|m| m.content.contains("Opened")));
     assert!(
@@ -577,6 +632,7 @@ fn openclaw_trajectory_only_parse_reads_runtime_events() {
     assert_eq!(*rec.stop_reason_counts.get("done").unwrap(), 1);
     let stats = rec.model_usage.get("openai/gpt-5.2").unwrap();
     assert_eq!(stats.usage.cache_read_tokens, 2);
+    assert_eq!(stats.assistant_message_count, 2);
 }
 
 #[test]

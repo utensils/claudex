@@ -510,13 +510,11 @@ fn accumulate_assistant(
     let provider = msg["provider"].as_str().unwrap_or("");
     let model = msg["model"].as_str().unwrap_or("");
     let key = if model.is_empty() {
-        fallback_model.unwrap_or("").to_string()
+        fallback_model.unwrap_or("unknown").to_string()
     } else {
         model_key(provider, model)
     };
-    if !key.is_empty() {
-        entry.model = Some(key.clone());
-    }
+    entry.model = Some(key.clone());
     let usage = &msg["usage"];
     if usage.is_object() {
         let stats = entry.model_usage.entry(key).or_default();
@@ -669,9 +667,7 @@ fn handle_trajectory_completion(
         stats.usage.output_tokens += usage["output"].as_u64().unwrap_or(0);
         stats.usage.cache_read_tokens += usage["cacheRead"].as_u64().unwrap_or(0);
         stats.usage.cache_creation_tokens += usage["cacheWrite"].as_u64().unwrap_or(0);
-        if stats.assistant_message_count == 0 {
-            stats.assistant_message_count = 1;
-        }
+        stats.assistant_message_count += 1;
         if let Some(cost) = usage["cost"]["total"]
             .as_f64()
             .or_else(|| data["estimatedCostUsd"].as_f64())
@@ -721,12 +717,23 @@ fn merge_trajectory_metadata(
     if entry.message_count == 0 {
         entry.message_count = trajectory.message_count;
     }
-    if entry.model_usage.is_empty() && trajectory.embedded_cost.is_some() {
+    if entry.embedded_cost.is_none() && trajectory.embedded_cost.is_some() {
         entry.embedded_cost = trajectory.embedded_cost;
     }
     if entry.model_usage.is_empty() {
         entry.model_usage = std::mem::take(&mut trajectory.model_usage);
         entry.usage = std::mem::take(&mut trajectory.usage);
+    } else {
+        for (model, trajectory_stats) in &trajectory.model_usage {
+            let Some(cost) = trajectory_stats.embedded_cost else {
+                continue;
+            };
+            if let Some(stats) = entry.model_usage.get_mut(model)
+                && stats.embedded_cost.is_none()
+            {
+                stats.embedded_cost = Some(cost);
+            }
+        }
     }
     if entry.tool_names.is_empty() {
         entry.tool_names = std::mem::take(&mut trajectory.tool_names);
@@ -838,11 +845,7 @@ fn trajectory_paths(
     trajectory_dir: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    let sibling = if classic_path.extension().is_some_and(|e| e == "jsonl") {
-        classic_path.with_file_name(format!("{session_id}.trajectory.jsonl"))
-    } else {
-        classic_path.with_extension("trajectory.jsonl")
-    };
+    let sibling = classic_path.with_file_name(format!("{session_id}.trajectory.jsonl"));
     paths.push(sibling);
     let pointer = classic_path.with_file_name(format!("{session_id}.trajectory-path.json"));
     if let Ok(raw) = std::fs::read_to_string(pointer)
