@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.9.2](https://github.com/utensils/claudex/compare/v0.9.1...v0.9.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **models:** classify local model families without sonnet fallback ([#64](https://github.com/utensils/claudex/issues/64)) ([c2e95bf](https://github.com/utensils/claudex/commit/c2e95bf98cd3151cfcf72dd4b8271771c9a8ea1b))
+
 ## [0.9.1](https://github.com/utensils/claudex/compare/v0.9.0...v0.9.1) (2026-06-01)
 
 
