@@ -70,6 +70,33 @@ fn fixture_home() -> TempDir {
     tmp
 }
 
+fn fixture_home_with_claude_local_models() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join(".claude").join("projects");
+
+    write_session(
+        &projects,
+        "-Users-test-Projects-local",
+        "sess-local-qwen",
+        &[
+            r#"{"type":"user","sessionId":"sess-local-qwen","timestamp":"2026-04-10T10:00:00Z","message":{"content":"use local qwen"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-local-qwen","timestamp":"2026-04-10T10:01:00Z","message":{"model":"qwen3.6-35b-a3b-ud-mlx","usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"local qwen"}]}}"#,
+        ],
+    );
+
+    write_session(
+        &projects,
+        "-Users-test-Projects-local",
+        "sess-local-ollama",
+        &[
+            r#"{"type":"user","sessionId":"sess-local-ollama","timestamp":"2026-04-10T11:00:00Z","message":{"content":"use local gemma"}}"#,
+            r#"{"type":"assistant","sessionId":"sess-local-ollama","timestamp":"2026-04-10T11:01:00Z","message":{"model":"ollama/gemma4:31b","usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"local gemma"}]}}"#,
+        ],
+    );
+
+    tmp
+}
+
 fn run(home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(BIN)
         .env("HOME", home)
@@ -1924,6 +1951,74 @@ fn models_json_lists_model_families() {
     assert!(families.contains(&"Opus"));
     assert!(families.contains(&"Sonnet"));
     assert!(arr.iter().all(|r| r.get("cache_read_tokens").is_some()));
+}
+
+#[test]
+fn claude_local_models_are_grouped_and_priced_as_local_not_sonnet() {
+    let home = fixture_home_with_claude_local_models();
+
+    let models = run(home.path(), &["models", "--json"]);
+    assert!(models.status.success(), "stderr: {}", stderr_of(&models));
+    let rows = json_of(&models).as_array().unwrap().clone();
+    let qwen = rows
+        .iter()
+        .find(|r| r["model"].as_str() == Some("qwen3.6-35b-a3b-ud-mlx"))
+        .expect("qwen model row");
+    assert_eq!(qwen["model_family"].as_str(), Some("Qwen"));
+    assert_eq!(qwen["cost_usd"].as_f64(), Some(0.0));
+    let gemma = rows
+        .iter()
+        .find(|r| r["model"].as_str() == Some("ollama/gemma4:31b"))
+        .expect("ollama gemma model row");
+    assert_eq!(gemma["model_family"].as_str(), Some("Gemma"));
+    assert_eq!(gemma["cost_usd"].as_f64(), Some(0.0));
+    assert!(
+        rows.iter()
+            .all(|r| r["model_family"].as_str() != Some("Sonnet")),
+        "local/open rows must not be grouped as Sonnet: {rows:?}"
+    );
+
+    for args in [
+        &["cost", "--json"][..],
+        &["cost", "--no-index", "--json"][..],
+    ] {
+        let cost = run(home.path(), args);
+        assert!(cost.status.success(), "stderr: {}", stderr_of(&cost));
+        let projects = json_of(&cost).as_array().unwrap().clone();
+        assert_eq!(projects.len(), 1, "args: {args:?}");
+        assert_eq!(
+            projects[0]["cost_usd"].as_f64(),
+            Some(0.0),
+            "args: {args:?}"
+        );
+        let families: Vec<_> = projects[0]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(families.contains(&"Qwen"), "args: {args:?}");
+        assert!(families.contains(&"Gemma"), "args: {args:?}");
+        assert!(!families.contains(&"Sonnet"), "args: {args:?}");
+    }
+
+    for args in [
+        &["summary", "--json"][..],
+        &["summary", "--no-index", "--json"][..],
+    ] {
+        let summary = run(home.path(), args);
+        assert!(summary.status.success(), "stderr: {}", stderr_of(&summary));
+        let summary_json = json_of(&summary);
+        let families: Vec<_> = summary_json["model_distribution"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["model"].as_str())
+            .collect();
+        assert!(families.contains(&"Qwen"), "args: {args:?}");
+        assert!(families.contains(&"Gemma"), "args: {args:?}");
+        assert!(!families.contains(&"Sonnet"), "args: {args:?}");
+    }
 }
 
 #[test]
