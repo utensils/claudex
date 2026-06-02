@@ -16,12 +16,19 @@ pub struct ModelPricing {
 }
 
 impl ModelPricing {
-    /// Per-million-token pricing for a model id. Unknown models fall back to
-    /// Claude Sonnet — Pi's local/free models never reach this path because they
-    /// carry a provider-supplied cost instead (see `ModelSessionStats::embedded_cost`).
+    /// Per-million-token pricing for a model id.
+    ///
+    /// Missing/empty model ids preserve the historical Claude Sonnet fallback
+    /// for old Claude transcripts that did not record a model. Non-empty model
+    /// ids are only priced when we recognize a priced family. Unknown, local,
+    /// and open-weight models are treated as free unless the provider supplied
+    /// an embedded cost (see `ModelSessionStats::embedded_cost`). This avoids
+    /// fabricating Sonnet charges for Ollama/MLX/vLLM/OpenRouter-style models.
     pub fn for_model(model: Option<&str>) -> Self {
         let m = model.unwrap_or("").to_lowercase();
-        if is_claude_opus_latest(&m) {
+        if m.trim().is_empty() {
+            sonnet_pricing()
+        } else if is_claude_opus_latest(&m) {
             Self {
                 input_per_mtok: 5.0,
                 output_per_mtok: 25.0,
@@ -58,6 +65,8 @@ impl ModelPricing {
                 cache_write_per_mtok: 1.00,
                 cache_read_per_mtok: 0.08,
             }
+        } else if m.contains("sonnet") {
+            sonnet_pricing()
         } else if has_any(&m, &["gpt-5.5-pro"]) {
             openai_pricing(30.0, 30.0, 180.0)
         } else if has_any(&m, &["gpt-5.5"]) {
@@ -106,29 +115,101 @@ impl ModelPricing {
             // GPT-4o (base) and anything else in the gpt-4 family.
             openai_pricing(2.50, 1.25, 10.0)
         } else {
-            // Claude Sonnet — also the default for an unspecified model.
-            Self {
-                input_per_mtok: 3.0,
-                output_per_mtok: 15.0,
-                cache_write_per_mtok: 3.75,
-                cache_read_per_mtok: 0.30,
-            }
+            free_pricing()
         }
     }
 
     /// Short display label for a model's family.
     pub fn name(model: Option<&str>) -> &'static str {
         let m = model.unwrap_or("").to_lowercase();
-        if m.contains("opus") {
+        if m.trim().is_empty() {
+            "Sonnet"
+        } else if m.contains("opus") {
             "Opus"
         } else if m.contains("haiku") {
             "Haiku"
+        } else if m.contains("sonnet") {
+            "Sonnet"
+        } else if has_any(&m, &["gpt-oss", "gpt_oss", "gptoss"]) {
+            "GPT-OSS"
         } else if is_gpt5(&m) {
             "GPT-5"
         } else if is_gpt4(&m) {
             "GPT-4"
+        } else if has_any(&m, &["qwen", "qwq"]) {
+            "Qwen"
+        } else if has_any(&m, &["deepseek"]) {
+            "DeepSeek"
+        } else if has_any(&m, &["gemma"]) {
+            "Gemma"
+        } else if has_any(&m, &["llama", "codellama"]) {
+            "Llama"
+        } else if has_any(
+            &m,
+            &[
+                "mistral",
+                "mixtral",
+                "codestral",
+                "devstral",
+                "ministral",
+                "magistral",
+            ],
+        ) {
+            "Mistral"
+        } else if has_any(&m, &["phi-", "phi_", "phi3", "phi4"]) {
+            "Phi"
+        } else if has_any(&m, &["chatglm", "glm-"]) {
+            "GLM"
+        } else if has_any(&m, &["granite"]) {
+            "Granite"
+        } else if has_any(&m, &["falcon"]) {
+            "Falcon"
+        } else if has_any(&m, &["olmo"]) {
+            "OLMo"
+        } else if has_any(&m, &["bloom"]) {
+            "BLOOM"
+        } else if has_any(&m, &["starcoder"]) {
+            "StarCoder"
+        } else if has_any(&m, &["gemini"]) {
+            "Gemini"
+        } else if has_any(&m, &["grok"]) {
+            "Grok"
+        } else if has_any(&m, &["command-r", "command_r", "command r", "cohere"]) {
+            "Command R"
+        } else if has_any(&m, &["nemotron"]) {
+            "Nemotron"
+        } else if has_any(&m, &["kimi", "moonshot"]) {
+            "Kimi"
+        } else if has_any(&m, &["ernie"]) {
+            "ERNIE"
+        } else if has_any(&m, &["hunyuan"]) {
+            "Hunyuan"
+        } else if has_any(&m, &["internlm"]) {
+            "InternLM"
+        } else if has_any(&m, &["baichuan"]) {
+            "Baichuan"
+        } else if has_any(&m, &["minimax"]) {
+            "MiniMax"
+        } else if has_any(&m, &["doubao", "seed"]) {
+            "Seed"
+        } else if has_any(&m, &["yi-"]) || m == "yi" {
+            "Yi"
+        } else if has_any(&m, &["nova"]) {
+            "Nova"
+        } else if has_any(&m, &["titan"]) {
+            "Titan"
+        } else if has_any(&m, &["sonar", "perplexity"]) {
+            "Sonar"
+        } else if has_any(&m, &["solar"]) {
+            "SOLAR"
+        } else if has_any(&m, &["dbrx"]) {
+            "DBRX"
+        } else if has_any(&m, &["jamba"]) {
+            "Jamba"
+        } else if has_any(&m, &["llava"]) {
+            "LLaVA"
         } else {
-            "Sonnet"
+            "Other"
         }
     }
 }
@@ -176,6 +257,24 @@ fn is_gpt4_classic(m: &str) -> bool {
 
 fn has_any(m: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| m.contains(needle))
+}
+
+fn sonnet_pricing() -> ModelPricing {
+    ModelPricing {
+        input_per_mtok: 3.0,
+        output_per_mtok: 15.0,
+        cache_write_per_mtok: 3.75,
+        cache_read_per_mtok: 0.30,
+    }
+}
+
+fn free_pricing() -> ModelPricing {
+    ModelPricing {
+        input_per_mtok: 0.0,
+        output_per_mtok: 0.0,
+        cache_write_per_mtok: 0.0,
+        cache_read_per_mtok: 0.0,
+    }
 }
 
 fn openai_pricing(input: f64, cached_input: f64, output: f64) -> ModelPricing {
@@ -554,8 +653,38 @@ mod tests {
         assert_eq!(ModelPricing::name(Some("claude-sonnet-4-6")), "Sonnet");
         assert_eq!(ModelPricing::name(None), "Sonnet");
         assert_eq!(ModelPricing::name(Some("")), "Sonnet");
-        assert_eq!(ModelPricing::name(Some("<synthetic>")), "Sonnet");
-        assert_eq!(ModelPricing::name(Some("unknown-model")), "Sonnet");
+        assert_eq!(ModelPricing::name(Some("<synthetic>")), "Other");
+        assert_eq!(ModelPricing::name(Some("unknown-model")), "Other");
+    }
+
+    #[test]
+    fn local_and_open_weight_models_are_not_sonnet() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+
+        for (model, family) in [
+            ("qwen3.6-35b-a3b-ud-mlx", "Qwen"),
+            ("ollama/qwen3.6:35b", "Qwen"),
+            ("ollama/gemma4:31b", "Gemma"),
+            ("llama3.3:70b", "Llama"),
+            ("deepseek-r1:70b", "DeepSeek"),
+            ("mistral-small:24b", "Mistral"),
+            ("mixtral:8x22b", "Mistral"),
+            ("phi4:14b", "Phi"),
+            ("glm-5.1", "GLM"),
+            ("granite-code:34b", "Granite"),
+            ("falcon3:10b", "Falcon"),
+        ] {
+            assert_eq!(ModelPricing::name(Some(model)), family, "{model}");
+            assert_eq!(
+                u.cost_for_model(Some(model)),
+                0.0,
+                "{model} should not be charged at Sonnet fallback rates"
+            );
+        }
     }
 
     // --- Pricing constants verification ---

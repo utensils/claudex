@@ -487,7 +487,45 @@ fn reprice_corrects_stale_computed_costs() {
         "expected repriced $5.00, got {cost}"
     );
     assert_eq!(meta_val(&db, "schema_version").as_deref(), Some("7"));
-    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("1"));
+    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("2"));
+}
+
+#[test]
+fn reprice_corrects_open_source_models_mispriced_as_sonnet() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+
+    seed_v5_db(
+        &db,
+        &[
+            (
+                "sess-qwen",
+                "claude",
+                "qwen3.6-35b-a3b-ud-mlx",
+                1_000_000,
+                1_000_000,
+                18.0,
+            ),
+            (
+                "sess-ollama",
+                "claude",
+                "ollama/gemma4:31b",
+                1_000_000,
+                1_000_000,
+                18.0,
+            ),
+        ],
+    );
+
+    let _idx = IndexStore::open_at(&db).unwrap();
+
+    let (qwen, qwen_src) = token_cost(&db, "sess-qwen");
+    let (gemma, gemma_src) = token_cost(&db, "sess-ollama");
+    assert_eq!(qwen_src, "computed");
+    assert_eq!(gemma_src, "computed");
+    assert_eq!(qwen, 0.0, "open-weight qwen is not Sonnet-priced");
+    assert_eq!(gemma, 0.0, "Ollama Gemma is not Sonnet-priced");
+    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("2"));
 }
 
 #[test]
@@ -538,7 +576,7 @@ fn reprice_runs_once_per_revision() {
         )],
     );
 
-    // First open reprices to $5.00 and stamps pricing_revision = 1.
+    // First open reprices to $5.00 and stamps the current pricing_revision.
     let _idx = IndexStore::open_at(&db).unwrap();
     assert!((token_cost(&db, "sess-claude").0 - 5.0).abs() < 1e-9);
 

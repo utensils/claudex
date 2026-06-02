@@ -278,9 +278,12 @@ fn test_model_pricing_name_detection() {
         ModelPricing::name(Some("claude-haiku-4-5-20251001")),
         "Haiku"
     );
-    assert_eq!(ModelPricing::name(Some("<synthetic>")), "Sonnet"); // fallback
-    assert_eq!(ModelPricing::name(None), "Sonnet"); // fallback
-    assert_eq!(ModelPricing::name(Some("")), "Sonnet"); // empty fallback
+    assert_eq!(ModelPricing::name(Some("qwen3.6-35b-a3b-ud-mlx")), "Qwen");
+    assert_eq!(ModelPricing::name(Some("ollama/qwen3.6:latest")), "Qwen");
+    assert_eq!(ModelPricing::name(Some("ollama/gemma4:31b")), "Gemma");
+    assert_eq!(ModelPricing::name(Some("<synthetic>")), "Other");
+    assert_eq!(ModelPricing::name(None), "Sonnet"); // legacy fallback
+    assert_eq!(ModelPricing::name(Some("")), "Sonnet"); // empty legacy fallback
 }
 
 #[test]
