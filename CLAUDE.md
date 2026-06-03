@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > Query, search, and analyze Claude Code sessions from the command line.
 
-claudex is a Rust CLI (edition 2024, MSRV 1.95) that reads the JSONL transcripts Claude Code writes under `~/.claude/projects/`, ingests them into a local SQLite index at `~/.claudex/index.db`, and exposes reports as subcommands.
+claudex is a Rust workspace (edition 2024, MSRV 1.95) with a reusable
+`claudex` library crate and a `claudex-cli` package that installs a binary
+named `claudex`. The project reads local agent transcripts, ingests them into
+a SQLite index at `~/.claudex/index.db`, and exposes both typed library queries
+and CLI reports.
 
 ## Build & Development Commands
 
@@ -24,18 +28,19 @@ nix flake check    # Validate formatting + flake
 
 | Category | Command | Description |
 |----------|---------|-------------|
-| build | `build` / `build-release` | `cargo build` / `cargo build --release` |
+| build | `build` / `build-release` | `cargo build -p claudex-cli --bin claudex` / release variant |
 | check | `check` / `clippy` / `fmt` / `fmt-check` | Individual checks |
-| check | `run-tests` | `cargo test` |
+| check | `run-tests` | `cargo test --workspace` |
 | check | `ci-local` | fmt-check → check → clippy → test → build (mirrors CI exactly) |
 | check | `coverage` | `cargo llvm-cov --workspace --summary-only` (pass `--html` for browsable report) |
-| run | `claudex` | `cargo run -- "$@"` |
+| run | `claudex` | `cargo run -p claudex-cli --bin claudex -- "$@"` |
 
 ### Running a single test
 
 ```bash
 cargo test store::tests::decode_hidden_dir          # one unit test
-cargo test --test index_tests -- name_of_test_fn    # one integration test in tests/
+cargo test -p claudex --test index_tests -- name_of_test_fn
+cargo test -p claudex-cli --test cli_tests -- name_of_test_fn
 cargo test decode_                                  # all tests whose name contains decode_
 ```
 
@@ -45,9 +50,9 @@ Three workflows:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | push to `main`, pull_request to `main` | `docs` (bun fmt:check + build), `fmt`, `check`, `clippy -D warnings`, `test`, `build --release`. Plus non-blocking `coverage` (cargo llvm-cov → Codecov). |
+| `ci.yml` | push to `main`, pull_request to `main` | `docs` (bun fmt:check + build), workspace `fmt`, `check`, `clippy -D warnings`, `test`, `cargo build --release -p claudex-cli --bin claudex`, and package checks. Plus non-blocking `coverage` (cargo llvm-cov → Codecov). |
 | `pages.yml` | push to `main` touching `website/**` | Builds VitePress and deploys to GitHub Pages via `actions/deploy-pages@v4`. Base path `/claudex/`. |
-| `release-please.yml` | push to `main`, or manual `workflow_dispatch` with required `tag` input | Maintains the release PR; on merge cuts the tag, builds prebuilt binaries (4 targets), publishes the GitHub Release, and pushes to the AUR. See [Release process](#release-process). |
+| `release-please.yml` | push to `main`, or manual `workflow_dispatch` with required `tag` input | Maintains the release PR; on merge cuts the tag, builds prebuilt binaries (4 targets), publishes crates.io packages, publishes the GitHub Release, and pushes to the AUR. See [Release process](#release-process). |
 
 Run `ci-local` (devshell) before pushing — mirrors the Rust-side checks
 exactly.
@@ -61,6 +66,13 @@ CHANGELOG are maintained for you. `release-please-config.json` +
 `.release-please-manifest.json` (repo root) hold the config and the
 current version.
 
+Both workspace packages intentionally share the `claudex` release component
+with `include-component-in-tag: false`. Together with the `cargo-workspace`
+plugin, that preserves one unprefixed `vX.Y.Z` tag/release train while still
+letting release-please update the library, CLI, and internal dependency version
+surfaces. If you change release-please config, dry-run a library-only and a
+CLI-only change before merging it.
+
 ### Cutting a release
 
 1. Land PRs to `main` using Conventional Commits (`feat:`, `fix:`,
@@ -70,16 +82,18 @@ current version.
    bumps every version surface (below) and updates `CHANGELOG.md`. Review
    it like any PR.
 3. **Merge the release PR.** release-please then tags `vX.Y.Z`, creates the
-   GitHub Release (changelog body), and the same workflow builds the four
-   target binaries, attaches them + `SHA256SUMS`, and publishes to the AUR.
+   draft GitHub Release (changelog body), and the same workflow builds the
+   four target binaries, publishes `claudex` then `claudex-cli` to crates.io,
+   attaches assets + `SHA256SUMS`, lifts the GitHub Release, and publishes to
+   the AUR.
 
 `bump-minor-pre-major` is set, so pre-1.0 a `feat:` bumps the minor and a
 breaking change bumps the minor (not major).
 
 To **re-build/re-publish an existing tag** (e.g. a flaked runner), use the
 workflow's `workflow_dispatch` with the `tag` input (`vX.Y.Z`). That path
-rebuilds assets and refreshes the release but — like the old `make_latest`
-guard — deliberately **does not republish to the AUR**.
+rebuilds assets and refreshes the release but deliberately **does not
+republish to crates.io or the AUR**.
 
 ### Version bump — where it lands (all automatic)
 
@@ -88,25 +102,28 @@ release:
 
 | Surface | Field | How |
 |---------|-------|-----|
-| `Cargo.toml` | `[package].version` | `rust` release-type (native) |
-| `Cargo.lock` | the `claudex` `[[package]]` block | `rust` release-type (native) |
+| root `Cargo.toml` | `[workspace.package].version` | `cargo-workspace` plugin |
+| `crates/claudex*/Cargo.toml` | package versions and internal path dependency versions | `cargo-workspace` plugin |
+| `Cargo.lock` | the `claudex` / `claudex-cli` `[[package]]` blocks | `cargo-workspace` plugin |
 | `CHANGELOG.md` | new `## [X.Y.Z]` section prepended | release-please (native) |
-| `flake.nix` | nothing — re-reads `Cargo.toml` via `fromTOML` | n/a |
+| `flake.nix` | nothing — re-reads workspace + CLI manifests via `fromTOML` | n/a |
 | `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | `extra-files` + `// x-release-please-version` marker |
-| `README.md` | `CLAUDEX_VERSION=vX.Y.Z` + `--tag vX.Y.Z` snippets | `extra-files` + `<!-- x-release-please-version -->` / start-end block markers |
+| `README.md` and crate READMEs | `CLAUDEX_VERSION=vX.Y.Z`, `claudex = "X.Y.Z"`, and `--version X.Y.Z` snippets | `extra-files` + release-please markers |
+| `website/reference/library.md` | library install snippet | `extra-files` + `# x-release-please-version` marker |
 | `packaging/aur/*/PKGBUILD` | `pkgver` + `sha256sums` | CI runs `scripts/aur/update-pkgbuild.sh` (`claudex-bin`/`claudex`); `claudex-git` hand-bumped only |
 
-**The markers in `README.md` and `config.ts` are load-bearing** — if you
-remove them, those surfaces silently stop tracking the version. The
-`config.ts` marker is a trailing line comment that must survive
-`bun run fmt:check` (prettier keeps it).
+**The release-please markers are load-bearing** — if you remove them, those
+surfaces silently stop tracking the version. The `config.ts` marker is a
+trailing line comment that must survive `bun run fmt:check` (prettier keeps it).
 
 ### What `release-please.yml` does
 
 Jobs run in order: `release-please` (maintains the release PR / cuts the
 tag + draft release on push to `main`) → `resolve-tag` (emits the tag, or
-mints one from the `workflow_dispatch` input) → `build` → `publish-release`
-→ `publish-aur`.
+mints one from the `workflow_dispatch` input) → `build` → `publish-crates`
+→ `publish-release` → `publish-aur`. `publish-crates` is a successful no-op
+for `workflow_dispatch` rebuilds, so manual asset refreshes never republish
+crates.io packages.
 
 Build matrix targets (4):
 
@@ -115,18 +132,19 @@ Build matrix targets (4):
 - `x86_64-unknown-linux-gnu`  on `ubuntu-22.04`
 - `aarch64-unknown-linux-gnu` on `ubuntu-22.04-arm`
 
-Per-target: `cargo build --release --target <t> --locked`, strip, ad-hoc
-codesign on macOS (strip first — it invalidates the signature; unsigned
-Apple Silicon binaries get SIGKILLed at launch), tar. Linux runners are
-pinned to `ubuntu-22.04` so the glibc ABI floor stays stable across runner
-image upgrades.
+Per-target: `cargo build --release -p claudex-cli --bin claudex --target <t>
+--locked`, strip, ad-hoc codesign on macOS (strip first — it invalidates the
+signature; unsigned Apple Silicon binaries get SIGKILLed at launch), tar.
+Linux runners are pinned to `ubuntu-22.04` so the glibc ABI floor stays stable
+across runner image upgrades.
 
 `release-please` drafts the release immediately so users never see an
-asset-less release; `publish-release` aggregates artifacts, generates
-`SHA256SUMS`, sets the notes to the **release-please changelog body plus a
-curated Install template** (idempotent via a `<!-- claudex-install-instructions -->`
-marker), uploads assets, then lifts the draft — which makes it "latest"
-(what `install.sh` / `claudex update` resolve via `/releases/latest`).
+asset-less release. On real releases, crates.io publishing must complete before
+`publish-release` aggregates artifacts, generates `SHA256SUMS`, sets the notes
+to the **release-please changelog body plus a curated Install template**
+(idempotent via a `<!-- claudex-install-instructions -->` marker), uploads
+assets, then lifts the draft — which makes it "latest" (what `install.sh` /
+`claudex update` resolve via `/releases/latest`).
 
 ### The install script
 
@@ -142,7 +160,7 @@ clears macOS quarantine. Override tag with `CLAUDEX_VERSION=v0.2.0`.
 All documented in `website/guide/installation.md`:
 
 1. **`install.sh`** — prebuilt tarball from GitHub Releases (fastest).
-2. **Cargo** — `cargo install --git https://github.com/utensils/claudex --tag vX.Y.Z`.
+2. **Cargo** — `cargo install claudex-cli` or `cargo install claudex-cli --version X.Y.Z`.
 3. **Nix flake** — `nix run`, `nix profile install`, or as a flake input.
    `packages.default` and `apps.default` both carry populated `meta`
    sourced from `Cargo.toml` via `fromTOML`.
@@ -185,61 +203,97 @@ Three invariants worth knowing:
 ```
 ~/.claude/projects/**.jsonl      (Claude Code)  ┐
 ~/.codex/sessions|archived/**     (OpenAI Codex) ├─ source transcripts
-~/.pi/agent/sessions/**           (Pi)           ┘
+~/.pi/agent/sessions/**           (Pi)           │
+~/.trajectory/** + state files     (OpenClaw)     ┘
         │
-        ▼   providers::{claude,codex,pi} (SessionProvider: enumerate + parse → ProviderRecord)
+        ▼   claudex::providers::* (SessionProvider: enumerate + parse → ProviderRecord)
         ▼
-~/.claudex/index.db  (SQLite, schema_version=6, created on demand)
+~/.claudex/index.db  (SQLite, created on demand)
         │   additive/retentive: archived or deleted sessions are RETAINED (present_on_disk=0),
         │   non-destructive ALTER-TABLE migrations, per-provider incremental sync.
-        ▼   index::IndexStore::ensure_fresh / sync_now / force_rebuild (take &[Provider])
+        ▼   claudex::index::IndexStore or claudex::api::Claudex
         ▼
-commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palette via ui, JSON via --json)
+claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palette via ui, JSON via --json)
 ```
 
 ### Module layout
 
-- `src/main.rs` — clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag too.
-- `src/lib.rs` — re-exports `cli`, `cli_help`, `commands`, `index`, `parser`, `plan`, `providers`, `skill`, `stats`, `store`, `types`, `ui`. Also exposes `claudex_dir()` → `~/.claudex`, overridable via the `CLAUDEX_DIR` env var (used by the subprocess tests in `tests/cli_tests.rs` and handy for sandboxed CI / parallel dev databases; the env var wins unconditionally when set).
-- `src/providers/{mod,claude,codex,pi}.rs` — the provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch) discover each agent's transcripts (`enumerate` → `DiscoveredFile`) and normalize them (`parse` → `ProviderRecord`, the type the index insert loop consumes). `enabled_default()` returns every provider whose root dir exists. Claude wraps `SessionStore` + the moved transcript parser; Codex reads `~/.codex` (last-cumulative `token_count`, cached input → cache read); Pi reads `~/.pi/agent` (per-model usage, trusts Pi's own `embedded_cost`, local models = $0).
-- `src/cli.rs` — shared `FilterArgs` (flattened into every reporting command) → `ResolvedFilter`: `--provider`, `--model`, `--since`/`--until` (date / RFC3339 / `7d`,`2w` spans), `--on-disk-only`. `sql_predicates()` builds the indexed WHERE; `matches()` filters the `--no-index` fallback. Also houses the `skills` clap types (`SkillCommand`/`SkillArgs`/`SkillTarget`).
-- `src/cli_help.rs` — **single home for CLI usage examples and parse-error hints.** Per-subcommand `*_EXAMPLES`/`*_HELP` string consts wired into clap via `#[command(after_long_help = ...)]` in `main.rs`, plus `error_help_for(bin)` which `main.rs` appends to custom usage errors (`uses_shared_filters` decides whether to also emit `FILTER_FORMATS`). Add a command's examples here, not inline in the command module — mirrors how `ui.rs` owns presentation and `cli.rs` owns filtering.
-- `src/skill/{mod,templates}.rs` — `claudex skills generate|install`. A `Flavor` enum over one shared `body()`; `command_list()` is clap-derived so the skill never drifts. The committed `.claude/skills/claudex/SKILL.md` is a generated artifact (regenerate: `claudex skills generate --target claude-code --dir . --force`; a drift-guard test enforces it).
-- `src/store.rs` — locates session files, decodes project directory names (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), and canonicalises worktree paths (`…/.claude/worktrees/<branch>` aggregates to the parent project). `SessionStore::at(path)` is a test-only constructor.
-- `src/parser.rs` — `SessionStats` accumulator; `stream_records` reads JSONL one record at a time so large sessions don't balloon memory.
-- `src/types.rs` — `TokenUsage` and `ModelPricing` (Opus/Sonnet/Haiku + OpenAI `gpt-5`/`gpt-4` tiers; default is Sonnet). `cost_for_model` is the single source of truth for pricing math; providers that report their own cost set `ModelSessionStats::embedded_cost`, which the index trusts over the table.
-- `src/stats.rs` — small numeric helpers shared across commands (e.g. `percentile_sorted` used by `turns` and the session drill-down).
-- `src/plan.rs` — `Plan` enum (`Api` / `FlatMonthly { usd_per_month }`), `FromStr` parser for the `--plan` value, and `cost_fields` returning a `serde_json::Map` of plan-aware cost keys. Consumed only by the `summary` subcommand today; if you wire it into another command, add `--plan` to that command's clap definition (not as a global) so the flag never silently no-ops.
-- `src/index.rs` — `IndexStore` (SQLite via `rusqlite`, bundled). Tables: `sessions` (now carries `provider`, `present_on_disk`, `archived_at`, `last_seen`, `extras`), `token_usage` (carries `cost_source` — `computed` vs `provider`), `tool_calls`, `turn_durations`, `pr_links`, `file_modifications`, `thinking_usage`, `stop_reasons`, `attachments`, `permission_changes`, plus an FTS virtual table `messages_fts`. Incremental sync keys on `(file_path, file_size, file_mtime)`, scoped per provider. `IndexStore::open_at(path)` is a test-only constructor.
-- `src/ui.rs` — **single home for every presentation concern**: palette (semantic helpers like `project`, `cost`, `cell_project`, `cell_cost`), `table()` builder (minimal style, dynamic width via `terminal_size`), `Spinner` (TTY-gated, stderr), number formatters (`fmt_cost` → `$12,345.67` with sub-cent fallback to 4 decimals, `fmt_count` → `326,297`), and `ColorChoice` / `apply_color_choice`.
-- `src/commands/*.rs` — one module per subcommand: `sessions`, `session`, `cost`, `search`, `tools`, `watch`, `summary`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs` to helpers/`skill::execute`, not modules here. The old scan-only `codex` subcommand was removed — Codex is now a first-class indexed provider reached via `--provider codex`.)
-- `tests/index_tests.rs` — unit-style tests against parser/types/store.
-- `tests/index_store_tests.rs` — integration tests against every `IndexStore` query method using `TempDir` + `open_at`/`at` (query methods take `&ResolvedFilter`).
-- `tests/retention_tests.rs` — v4→v5 migration preserves data, deleted-file retention, in-place rowid reuse, restored-file un-archival (opens the on-disk DB with a `rusqlite` dev-dependency).
-- `tests/providers_tests.rs` — Claude/Codex/Pi `enumerate`+`parse` unit tests (cumulative tokens, embedded cost, archived flags).
-- `tests/cli_tests.rs` — end-to-end subprocess tests against the compiled binary with a fixture `$HOME` (including synthetic `~/.codex` / `~/.pi/agent`). Exercises indexed + `--no-index` paths, the shared filters, provider-aware output, and `skills`.
-- `tests/skill_tests.rs` — skill-template unit tests (per-flavor frontmatter, plugin manifest).
-- `tests/completions_tests.rs` — shell-completion generation tests (clap_complete).
+- Root `Cargo.toml` — virtual workspace only. Shared version, edition, MSRV,
+  metadata, and dependency versions live under `workspace.package` /
+  `workspace.dependencies`.
+- `crates/claudex/src/lib.rs` — reusable library entrypoint. Re-exports
+  `api`, `filter`, `index`, `parser`, `plan`, `providers`, `stats`, `store`,
+  `time_utils`, and `types`, plus `claudex_dir()` → `~/.claudex`
+  (`CLAUDEX_DIR` wins unconditionally when set).
+- `crates/claudex/src/api.rs` — preferred public facade (`Claudex`,
+  `ClaudexConfig`, `QueryFilter`, `ProviderKind`) returning typed report
+  structs. Keep terminal rendering and progress UI out of this crate.
+- `crates/claudex/src/filter.rs` — shared provider/model/date/on-disk filter
+  logic. CLI clap types convert into these library filters instead of
+  duplicating business rules.
+- `crates/claudex/src/providers/{mod,claude,codex,openclaw,pi}.rs` — provider
+  abstraction. `SessionProvider` + `Provider` enum discover each agent's
+  transcripts and normalize them to `ProviderRecord`.
+- `crates/claudex/src/store.rs` — Claude session file discovery, project path
+  decoding, and worktree canonicalization. `SessionStore::at(path)` is a
+  test-only constructor.
+- `crates/claudex/src/parser.rs` — Claude JSONL transcript parser and
+  `SessionStats` accumulator; `stream_records` reads one record at a time.
+- `crates/claudex/src/types.rs` — token usage and pricing math. `cost_for_model`
+  is the single source of truth for computed costs.
+- `crates/claudex/src/index.rs` — `IndexStore` (SQLite via `rusqlite`,
+  bundled), schema migrations, incremental sync, retention, repricing, and
+  query methods. `IndexStore::open_at(path)` is a test-only constructor.
+- `crates/claudex-cli/src/main.rs` — clap parser and dispatch. Pre-parses
+  `--color` before `Cli::parse()` so clap-generated help/errors honor it too.
+- `crates/claudex-cli/src/cli.rs` — clap-only `FilterArgs` / `ProviderArg`,
+  skill clap types, and conversion into `claudex::filter::ResolvedFilter`.
+- `crates/claudex-cli/src/cli_help.rs` — single home for CLI usage examples and
+  parse-error hints wired into clap.
+- `crates/claudex-cli/src/skill/{mod,templates}.rs` — `claudex skills
+  generate|install`. The committed `.claude/skills/claudex/SKILL.md` is a
+  generated artifact (regenerate: `claudex skills generate --target
+  claude-code --dir . --force`; a drift-guard test enforces it).
+- `crates/claudex-cli/src/ui.rs` — single home for every presentation concern:
+  palette, table builder, spinner, number formatters, and color choice.
+- `crates/claudex-cli/src/commands/*.rs` — one module per subcommand:
+  `activity`, `budget`, `sessions`, `session`, `cost`, `search`, `tools`,
+  `watch`, `summary`, `export`, `index`, `timeline`, `providers`, `turns`,
+  `prs`, `files`, `models`, and `update`.
+- `crates/claudex/tests/*.rs` — library and index/provider integration tests,
+  including API facade coverage and dependency hygiene.
+- `crates/claudex-cli/tests/*.rs` — end-to-end subprocess, completions, and
+  skill-template tests. `CARGO_BIN_EXE_claudex` stays valid because the binary
+  target is still named `claudex`.
 
 ### Key invariants
 
-- **Providers are first-class and additive.** All three (Claude/Codex/Pi) flow through the same `IndexStore` pipeline. `ensure_fresh`/`sync`/`force_rebuild` take `&[Provider]`; default reporting spans every provider (`providers::enabled_default()`). Filtering happens at query time (`--provider`), never at sync time — the index always holds everything available.
+- **Providers are first-class and additive.** Claude, Codex, Pi, and OpenClaw
+  flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
+  `force_rebuild` take provider lists; default reporting spans every provider
+  whose root exists (`providers::enabled_default()`). Filtering happens at
+  query time (`--provider`), never at sync time — the index always holds
+  everything available.
 - **The index is retentive, not a cache.** A session whose source file is archived or deleted is soft-deleted (`present_on_disk=0`, `archived_at` stamped) and RETAINED with its derived rows + FTS. The ONLY destructive path is `claudex index --force` (`force_rebuild`). Per-provider sync scoping (`WHERE provider = ?`) is mandatory so one provider's sync never archives another's rows.
 - **Index staleness window = 300 s** (`STALE_SECS`), tracked per provider (`last_sync:<id>` / `sessions_root:<id>` meta keys). `claudex index` forces sync; `claudex index --force` wipes and rebuilds.
 - **Schema migrations are forward-only and non-destructive.** Bumping `SCHEMA_VERSION` runs the `migrate_schema` ladder (guarded `ALTER TABLE ADD COLUMN`) — never `DROP`, because retained data can't be rebuilt from disk. Add columns to the `CREATE TABLE IF NOT EXISTS` block AND an additive migration step, then bump the version.
 - **Every Claude read command still supports `--no-index`**, falling back to `parser::parse_session` with `ResolvedFilter::matches` applied in memory. The indexed path is the multi-provider one; `--no-index` is a Claude-only escape hatch.
-- **Filtering is centralized in `src/cli.rs`.** Reporting commands flatten `FilterArgs` and pass `&ResolvedFilter` to the query methods, which append `sql_predicates(alias)`. Don't hand-roll provider/date predicates in a command.
+- **Filtering is centralized in `crates/claudex/src/filter.rs`.** The CLI owns
+  clap parsing in `crates/claudex-cli/src/cli.rs`, then converts to
+  `ResolvedFilter`. Reporting commands pass `&ResolvedFilter` to query methods,
+  which append `sql_predicates(alias)`. Don't hand-roll provider/date
+  predicates in a command.
 - **Worktree aggregation**: always key on `canonical_project_path(&decoded)` when grouping by project, and use `display_project_name` for user-facing labels (renders worktree sessions as `"projectname (worktree)"`).
 - **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers, latest vs legacy). Providers reporting their own cost set `embedded_cost`, which the insert loop stores with `cost_source='provider'` (everything else is `'computed'`).
 - **Stored costs are repriced automatically.** `cost_usd` is materialized at ingest, so changing `cost_for_model` would leave old rows stale. When you change the rate card, bump `PRICING_REVISION` (`index.rs`): the next open reprices every `cost_source='computed'` row in place via `reprice_computed_costs` (keyed on the `pricing_revision` meta value, runs once per bump). `'provider'` rows are never touched. This is the non-destructive way to refresh retained/archived rows — unlike `index --force`, which drops them.
 
 ### Adding a new subcommand
 
-1. Add a `Commands::Foo { … }` variant in `src/main.rs` and a dispatch arm.
-2. Create `src/commands/foo.rs` with `pub fn run(...) -> anyhow::Result<()>` and register it in `src/commands/mod.rs`.
+1. Add a `Commands::Foo { … }` variant in `crates/claudex-cli/src/main.rs` and a dispatch arm.
+2. Create `crates/claudex-cli/src/commands/foo.rs` with `pub fn run(...) -> anyhow::Result<()>` and register it in `crates/claudex-cli/src/commands/mod.rs`.
 3. If the command reads aggregated data, add a query method to `IndexStore` and an `--no-index` fallback that uses `parser::parse_session` over `SessionStore::all_session_files`.
 4. Support `--json` output for machine-readable results. For human output use `ui::table()`, `ui::header(...)`, `ui::right_align(...)`, and the `cell_*` / palette helpers — **never** call `comfy-table` or `owo-colors` directly from a command module.
-5. Add an end-to-end case to `tests/cli_tests.rs` covering both the indexed path and (if applicable) the `--no-index` fallback, plus JSON output shape.
+5. Add an end-to-end case to `crates/claudex-cli/tests/cli_tests.rs` covering both the indexed path and (if applicable) the `--no-index` fallback, plus JSON output shape.
 
 ## Conventions
 

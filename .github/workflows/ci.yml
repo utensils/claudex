@@ -44,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check
+      - run: cargo check --workspace --all-targets
 
   clippy:
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test
+      - run: cargo test --workspace
 
   build:
     runs-on: ubuntu-latest
@@ -76,7 +76,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo build --release
+      - run: cargo build --release -p claudex-cli --bin claudex
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo package -p claudex --locked
+      # `claudex-cli` depends on the same-version `claudex` library crate.
+      # Before release, that exact library version is not on crates.io yet, so
+      # a verified CLI package is only possible in the publish job after the
+      # library crate has been published and resolved.
+      - run: cargo package -p claudex-cli --list --locked
 
   coverage:
     runs-on: ubuntu-latest

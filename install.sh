@@ -44,7 +44,7 @@ case "${OS}" in
         echo "Error: unsupported OS: ${OS}" >&2
         echo "  claudex ships prebuilt binaries for Linux and macOS only." >&2
         echo "  For other platforms, install via cargo:" >&2
-        echo "    cargo install --git https://github.com/${REPO}" >&2
+        echo "    cargo install claudex-cli" >&2
         exit 1
         ;;
 esac

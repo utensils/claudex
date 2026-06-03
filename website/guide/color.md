@@ -2,7 +2,7 @@
 
 claudex uses color for scannability — project names, costs, counts, and
 timestamps each have a distinct color so a report reads at a glance. The
-palette is defined in `src/ui.rs`; commands never reach for colors directly.
+palette is defined in `crates/claudex-cli/src/ui.rs`; commands never reach for colors directly.
 
 ## Controlling color
 

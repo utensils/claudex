@@ -83,14 +83,14 @@ features:
 
 ```bash
 # With Cargo
-cargo install --git https://github.com/utensils/claudex
+cargo install claudex-cli
 
 # Or with Nix flakes
 nix run github:utensils/claudex -- summary
 
 # Or from a local checkout
 git clone https://github.com/utensils/claudex
-cd claudex && nix develop && cargo build --release
+cd claudex && nix develop && cargo build --release -p claudex-cli --bin claudex
 ```
 
 See the full [installation guide](/guide/installation) for Nix, devshell, and

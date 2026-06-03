@@ -47,7 +47,7 @@ build() {
   # --frozen pairs with the `cargo fetch --locked` above: refuses
   # to touch the network during build, so a stale Cargo.lock fails
   # loudly instead of silently re-resolving.
-  cargo build --release --frozen
+  cargo build --release --frozen -p claudex-cli --bin claudex
 }
 
 package() {

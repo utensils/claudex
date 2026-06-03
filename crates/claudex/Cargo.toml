@@ -1,0 +1,25 @@
+[package]
+name = "claudex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Reusable library for indexing and querying Claude Code, Codex, Pi, and OpenClaw coding sessions"
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["claude", "claude-code", "sessions", "codex", "library"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -187,15 +187,28 @@ version = "0.9.2"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "claudex-cli"
+version = "0.9.2"
+dependencies = [
+ "anyhow",
+ "chrono",
  "clap",
  "clap_complete",
+ "claudex",
  "comfy-table",
  "dirs",
  "flate2",
  "indicatif",
  "owo-colors",
  "rusqlite",
- "serde",
  "serde_json",
  "sha2",
  "tar",

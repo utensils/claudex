@@ -4,7 +4,7 @@ All costs in claudex are **approximate**. They come from published per-model
 pricing tiers applied to the token-usage blocks recorded in each session — or,
 for providers that report their own cost, from that figure directly.
 
-Source of truth: `src/types.rs`, `ModelPricing::for_model`.
+Source of truth: `crates/claudex/src/types.rs`, `ModelPricing::for_model`.
 
 ## Anthropic (Claude) tiers
 
