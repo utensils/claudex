@@ -8,7 +8,7 @@
 
 claudex reads the local transcripts of four coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), Pi (`~/.pi/agent/`), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all four providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
 
-[![asciicast](https://asciinema.org/a/8Elsepa3np6jzZC8.svg)](https://asciinema.org/a/8Elsepa3np6jzZC8)
+![demo](assets/demo.gif)
 
 📚 **Docs:** <https://utensils.io/claudex/> — guide, per-command reference, index schema, pricing.
 
