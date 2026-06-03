@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 pub use claudex::filter::ResolvedFilter;
-use claudex::filter::parse_when;
+use claudex::filter::{ProviderKind, parse_when};
 
 /// Provider selector accepted on the command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -20,13 +20,13 @@ pub enum ProviderArg {
     Pi,
 }
 
-impl ProviderArg {
-    pub fn id(self) -> &'static str {
-        match self {
-            ProviderArg::Claude => "claude",
-            ProviderArg::Codex => "codex",
-            ProviderArg::OpenClaw => "openclaw",
-            ProviderArg::Pi => "pi",
+impl From<ProviderArg> for ProviderKind {
+    fn from(provider: ProviderArg) -> Self {
+        match provider {
+            ProviderArg::Claude => ProviderKind::Claude,
+            ProviderArg::Codex => ProviderKind::Codex,
+            ProviderArg::OpenClaw => ProviderKind::OpenClaw,
+            ProviderArg::Pi => ProviderKind::Pi,
         }
     }
 }
@@ -57,7 +57,11 @@ pub struct FilterArgs {
 
 impl FilterArgs {
     pub fn resolve(&self) -> Result<ResolvedFilter> {
-        let mut providers: Vec<String> = self.provider.iter().map(|p| p.id().to_string()).collect();
+        let mut providers: Vec<String> = self
+            .provider
+            .iter()
+            .map(|p| ProviderKind::from(*p).id().to_string())
+            .collect();
         providers.sort();
         providers.dedup();
         Ok(ResolvedFilter {
