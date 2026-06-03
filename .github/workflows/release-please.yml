@@ -36,8 +36,21 @@ jobs:
       tag_name: ${{ steps.release.outputs['crates/claudex-cli--tag_name'] }}
       version: ${{ steps.release.outputs['crates/claudex-cli--version'] }}
     steps:
+      # Mint a short-lived GitHub App token so the release PR is authored by a
+      # real identity. The default GITHUB_TOKEN triggers GitHub's recursion
+      # guard, suppressing pull_request events — CI never fires on the release
+      # PR and required checks sit in "Expected" forever (unmergeable).
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
       - id: release
         uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       # release-please creates the GitHub Release itself (body = changelog) the
       # moment the release PR merges. Draft it immediately so users never see an
