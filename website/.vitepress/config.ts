@@ -61,8 +61,8 @@ export default defineConfig({
             link: 'https://github.com/utensils/claudex/releases',
           },
           {
-            text: 'Cargo.toml',
-            link: 'https://github.com/utensils/claudex/blob/main/Cargo.toml',
+            text: 'crates.io',
+            link: 'https://crates.io/crates/claudex-cli',
           },
         ],
       },
@@ -137,6 +137,7 @@ export default defineConfig({
             { text: 'Overview', link: '/reference/' },
             { text: 'File layout', link: '/reference/files' },
             { text: 'Index schema', link: '/reference/schema' },
+            { text: 'Library API', link: '/reference/library' },
             { text: 'Pricing model', link: '/reference/pricing' },
             { text: 'Environment', link: '/reference/environment' },
           ],

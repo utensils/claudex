@@ -49,10 +49,31 @@ Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`
 <!-- x-release-please-start-version -->
 
 ```bash
-cargo install --git https://github.com/utensils/claudex --tag v0.9.2 claudex
+cargo install claudex-cli
 ```
 
 <!-- x-release-please-end-version -->
+
+### Library
+
+```toml
+[dependencies]
+claudex = "0.9.2" # x-release-please-version
+```
+
+```rust
+use claudex::api::{Claudex, Filter};
+
+fn main() -> anyhow::Result<()> {
+    let mut claudex = Claudex::new()?;
+    let summary = claudex.summary(Filter::default())?;
+    println!("{} sessions", summary.total_sessions);
+    Ok(())
+}
+```
+
+The library returns typed report structs; terminal tables, color, completions,
+and self-update live in the `claudex-cli` package.
 
 ### AUR — Arch Linux
 
@@ -115,6 +136,7 @@ Global flag: `--color auto|always|never` (respects `NO_COLOR`). Every report acc
 - [The index](https://utensils.io/claudex/guide/indexing) — sync semantics, staleness window.
 - [JSON output](https://utensils.io/claudex/guide/json-output) — stable shapes for pipelines.
 - [Recipes](https://utensils.io/claudex/guide/recipes) — copy-paste one-liners.
+- [Library API](https://utensils.io/claudex/reference/library) — embedding claudex from Rust.
 - [Reference](https://utensils.io/claudex/reference/) — file layout, index schema, pricing.
 
 ## Development

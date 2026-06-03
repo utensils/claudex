@@ -28,7 +28,7 @@ staleness window and data-root stamp.
 | `claudex index`                    | Force a sync of every provider right now (incremental).     |
 | `claudex index --force`            | Wipe the database and rebuild from scratch.                 |
 
-The staleness window is `STALE_SECS = 300` in `src/index.rs`.
+The staleness window is `STALE_SECS = 300` in `crates/claudex/src/index.rs`.
 
 ## How incremental sync works
 

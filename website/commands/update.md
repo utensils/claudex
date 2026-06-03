@@ -22,12 +22,12 @@ claudex update [--check] [--force] [--version <tag>]
 `claudex update` starts by resolving its own executable path
 (`std::env::current_exe()` → canonical) and classifying the install:
 
-| Install source | Detected by                              | Behaviour                                                              |
-| -------------- | ---------------------------------------- | ---------------------------------------------------------------------- |
-| `install.sh`   | anything not matching below              | Downloads the release tarball, verifies SHA-256, swaps the binary.     |
-| Nix            | path contains `/nix/store/`              | Prints `nix profile upgrade claudex` / `nix flake update` and exits.   |
-| cargo          | path contains `/.cargo/bin/`             | Prints `cargo install --git … --tag vX.Y.Z --force claudex` and exits. |
-| Homebrew       | path contains `/Cellar/` or `/homebrew/` | Prints `brew upgrade claudex` and exits.                               |
+| Install source | Detected by                              | Behaviour                                                             |
+| -------------- | ---------------------------------------- | --------------------------------------------------------------------- |
+| `install.sh`   | anything not matching below              | Downloads the release tarball, verifies SHA-256, swaps the binary.    |
+| Nix            | path contains `/nix/store/`              | Prints `nix profile upgrade claudex` / `nix flake update` and exits.  |
+| cargo          | path contains `/.cargo/bin/`             | Prints `cargo install claudex-cli --version X.Y.Z --force` and exits. |
+| Homebrew       | path contains `/Cellar/` or `/homebrew/` | Prints `brew upgrade claudex` and exits.                              |
 
 The non-managed branches exit with a non-zero status so shell wrappers can
 tell the difference between "did the upgrade" and "you need to run a different

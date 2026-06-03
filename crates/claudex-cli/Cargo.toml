@@ -1,0 +1,39 @@
+[package]
+name = "claudex-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Query, search, and analyze agent coding sessions from the command line"
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["claude", "claude-code", "cli", "sessions", "anthropic"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+claudex = { path = "../claudex", version = "=0.9.1" }
+comfy-table.workspace = true
+dirs.workspace = true
+flate2.workspace = true
+indicatif.workspace = true
+owo-colors.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+terminal_size.workspace = true
+
+[[bin]]
+name = "claudex"
+path = "src/main.rs"
+
+[dev-dependencies]
+rusqlite.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

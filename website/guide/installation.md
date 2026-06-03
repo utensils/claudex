@@ -6,7 +6,7 @@ aarch64. It needs no system dependencies at runtime — rusqlite is bundled.
 Four supported install paths:
 
 1. **One-line script** — prebuilt tarball from GitHub Releases (fastest).
-2. **Cargo** — build from source off a tag or off `main`.
+2. **Cargo** — install the published `claudex-cli` package from crates.io.
 3. **AUR** — three Arch Linux packages: `claudex-bin`, `claudex`, `claudex-git`.
 4. **Nix flake** — reproducible build via crane, with an app and a devshell.
 
@@ -68,16 +68,16 @@ install -m 755 claudex ~/.local/bin/claudex
 
 ## Cargo
 
-Build from source off the `main` branch:
+Install from crates.io:
 
 ```bash
-cargo install --git https://github.com/utensils/claudex claudex
+cargo install claudex-cli
 ```
 
-Pin to a specific tag:
+Pin to a specific version:
 
 ```bash
-cargo install --git https://github.com/utensils/claudex --tag v0.5.2 claudex
+cargo install claudex-cli --version 0.9.1
 ```
 
 The binary lands in `~/.cargo/bin/claudex`. Make sure that directory is on
@@ -154,9 +154,9 @@ In your system flake:
 }
 ```
 
-The package's `meta` is populated from `Cargo.toml` (description, homepage,
-license, maintainer, `mainProgram = "claudex"`), so `lib.getExe` works out of
-the box.
+The package's `meta` is populated from the workspace and CLI Cargo manifests
+(description, homepage, license, maintainer, `mainProgram = "claudex"`), so
+`lib.getExe` works out of the box.
 
 ## From a local clone
 
@@ -169,7 +169,7 @@ nix develop
 ci-local            # fmt-check → check → clippy → test → build
 
 # Or straight cargo
-cargo build --release
+cargo build --release -p claudex-cli --bin claudex
 ./target/release/claudex --help
 ```
 
@@ -220,7 +220,7 @@ By install source:
 
 - **Install script:** `claudex update` — or rerun the one-liner, which also
   fetches the latest tarball and replaces the binary.
-- **Cargo:** `cargo install --git https://github.com/utensils/claudex --tag vX.Y.Z --force claudex`.
+- **Cargo:** `cargo install claudex-cli --version X.Y.Z --force`.
 - **AUR:** `paru -Syu claudex-bin` (or any AUR helper) — `claudex update` exits cleanly on AUR installs and points at pacman.
 - **Nix profile:** `nix profile upgrade '.*claudex.*'` (or remove + reinstall).
 - **Nix flake input:** `nix flake update claudex` in your system flake.

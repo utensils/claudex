@@ -60,14 +60,15 @@
             pkgs.libiconv
           ];
 
-          # Cargo.toml is the source of truth for package metadata; we re-use
-          # it here so version / description / license stay in sync with the
-          # Rust-side manifest and crates.io output.
-          cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          # Cargo manifests are the source of truth for package metadata; the
+          # root workspace carries the shared version, while the CLI crate owns
+          # the published binary package description.
+          workspaceToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          cliCargoToml = builtins.fromTOML (builtins.readFile ./crates/claudex-cli/Cargo.toml);
 
           claudexMeta = {
-            description = cargoToml.package.description;
-            homepage = cargoToml.package.homepage;
+            description = cliCargoToml.package.description;
+            homepage = workspaceToml.workspace.package.homepage;
             license = lib.licenses.mit;
             mainProgram = "claudex";
             maintainers = [
@@ -83,11 +84,12 @@
 
           commonArgs = {
             inherit src;
-            pname = cargoToml.package.name;
-            version = cargoToml.package.version;
+            pname = "claudex";
+            version = workspaceToml.workspace.package.version;
             strictDeps = true;
             buildInputs = darwinInputs;
             meta = claudexMeta;
+            cargoExtraArgs = "-p claudex-cli --bin claudex";
           }
           // lib.optionalAttrs pkgs.stdenv.isDarwin {
             # On Darwin the Xcode clang invoked by crane can't find Nix-provided
@@ -156,26 +158,26 @@
               {
                 category = "build";
                 name = "build";
-                help = "cargo build (debug)";
-                command = "cargo build \"$@\"";
+                help = "cargo build -p claudex-cli --bin claudex (debug)";
+                command = "cargo build -p claudex-cli --bin claudex \"$@\"";
               }
               {
                 category = "build";
                 name = "build-release";
-                help = "cargo build --release";
-                command = "cargo build --release \"$@\"";
+                help = "cargo build --release -p claudex-cli --bin claudex";
+                command = "cargo build --release -p claudex-cli --bin claudex \"$@\"";
               }
               {
                 category = "check";
                 name = "check";
-                help = "cargo check";
-                command = "cargo check \"$@\"";
+                help = "cargo check --workspace --all-targets";
+                command = "cargo check --workspace --all-targets \"$@\"";
               }
               {
                 category = "check";
                 name = "clippy";
-                help = "cargo clippy -- -D warnings (matches CI)";
-                command = "cargo clippy \"$@\" -- -D warnings";
+                help = "cargo clippy --workspace --all-targets -- -D warnings (matches CI)";
+                command = "cargo clippy --workspace --all-targets \"$@\" -- -D warnings";
               }
               {
                 category = "check";
@@ -192,8 +194,8 @@
               {
                 category = "check";
                 name = "run-tests";
-                help = "cargo test (matches CI)";
-                command = "cargo test \"$@\"";
+                help = "cargo test --workspace (matches CI)";
+                command = "cargo test --workspace \"$@\"";
               }
               {
                 category = "check";
@@ -202,10 +204,10 @@
                 command = ''
                   set -euo pipefail
                   cargo fmt --all -- --check
-                  cargo check
-                  cargo clippy -- -D warnings
-                  cargo test
-                  cargo build --release
+                  cargo check --workspace --all-targets
+                  cargo clippy --workspace --all-targets -- -D warnings
+                  cargo test --workspace
+                  cargo build --release -p claudex-cli --bin claudex
                 '';
               }
               {
@@ -231,7 +233,7 @@
                 category = "run";
                 name = "claudex";
                 help = "run claudex";
-                command = "cargo run -- \"$@\"";
+                command = "cargo run -p claudex-cli --bin claudex -- \"$@\"";
               }
               {
                 category = "docs";
