@@ -21,6 +21,8 @@ use crate::providers::{
 
 pub use crate::filter::{ProviderKind as Provider, QueryFilter as Filter};
 
+const NO_PROVIDER_MATCH: &str = "__claudex_no_provider_match__";
+
 /// Configuration for [`Claudex`].
 #[derive(Debug, Clone, Default)]
 pub struct ClaudexConfig {
@@ -36,6 +38,7 @@ pub struct ClaudexConfig {
 pub struct Claudex {
     index: IndexStore,
     providers: Vec<ProviderImpl>,
+    provider_scope: Vec<String>,
 }
 
 impl Claudex {
@@ -49,7 +52,12 @@ impl Claudex {
             None => IndexStore::open()?,
         };
         let providers = providers_for(&config.providers)?;
-        Ok(Self { index, providers })
+        let provider_scope = provider_scope(&providers);
+        Ok(Self {
+            index,
+            providers,
+            provider_scope,
+        })
     }
 
     pub fn index(&self) -> &IndexStore {
@@ -197,7 +205,8 @@ impl Claudex {
 
     pub fn session_detail(&mut self, file_path: &str) -> Result<Option<SessionDetail>> {
         self.ensure_fresh()?;
-        self.index.query_session_detail(file_path)
+        let detail = self.index.query_session_detail(file_path)?;
+        Ok(detail.filter(|row| self.provider_in_scope(&row.provider)))
     }
 
     pub fn session_matches(
@@ -206,7 +215,11 @@ impl Claudex {
         project_filter: Option<&str>,
     ) -> Result<Vec<IndexedSession>> {
         self.ensure_fresh()?;
-        self.index.query_session_matches(selector, project_filter)
+        let matches = self.index.query_session_matches(selector, project_filter)?;
+        Ok(matches
+            .into_iter()
+            .filter(|row| self.provider_in_scope(&row.provider))
+            .collect())
     }
 
     pub fn prs(
@@ -243,8 +256,42 @@ impl Claudex {
 
     fn prepare(&mut self, filter: QueryFilter) -> Result<ResolvedFilter> {
         self.ensure_fresh()?;
-        filter.resolve()
+        let mut filter = filter.resolve()?;
+        self.apply_provider_scope(&mut filter);
+        Ok(filter)
     }
+
+    fn apply_provider_scope(&self, filter: &mut ResolvedFilter) {
+        if self.provider_scope.is_empty() {
+            return;
+        }
+
+        if filter.providers.is_empty() {
+            filter.providers = self.provider_scope.clone();
+            return;
+        }
+
+        filter
+            .providers
+            .retain(|provider| self.provider_scope.iter().any(|id| id == provider));
+        if filter.providers.is_empty() {
+            filter.providers.push(NO_PROVIDER_MATCH.to_string());
+        }
+    }
+
+    fn provider_in_scope(&self, provider: &str) -> bool {
+        self.provider_scope.is_empty() || self.provider_scope.iter().any(|id| id == provider)
+    }
+}
+
+fn provider_scope(providers: &[ProviderImpl]) -> Vec<String> {
+    let mut scope: Vec<String> = providers
+        .iter()
+        .map(|provider| provider.id().to_string())
+        .collect();
+    scope.sort();
+    scope.dedup();
+    scope
 }
 
 fn providers_for(kinds: &[ProviderKind]) -> Result<Vec<ProviderImpl>> {
