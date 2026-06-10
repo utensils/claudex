@@ -75,6 +75,13 @@ letting release-please update the library, CLI, and internal dependency version
 surfaces. If you change release-please config, dry-run a library-only and a
 CLI-only change before merging it.
 
+**Workflow gates must use the aggregate `releases_created` output.**
+release-please attributes the shared release to whichever package had direct
+commits, so per-path outputs (`crates/claudex-cli--release_created`) are empty
+on library-only releases — gating on one path silently skips the entire
+build/publish chain (this shipped v0.10.1 asset-less on first cut).
+`tag_name`/`version` are coalesced across both paths in `release-please.yml`.
+
 ### Cutting a release
 
 1. Land PRs to `main` using Conventional Commits (`feat:`, `fix:`,
