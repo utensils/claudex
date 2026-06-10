@@ -34,6 +34,8 @@ nix flake check    # Validate formatting + flake
 | check | `ci-local` | fmt-check → check → clippy → test → build (mirrors CI exactly) |
 | check | `coverage` | `cargo llvm-cov --workspace --summary-only` (pass `--html` for browsable report) |
 | run | `claudex` | `cargo run -p claudex-cli --bin claudex -- "$@"` |
+| docs | `docs-dev` / `docs-build` / `docs-preview` | VitePress dev server / static build / preview of `website/` |
+| docs | `docs-fmt` / `docs-fmt-check` | prettier format / check (`docs-fmt-check` matches the CI `docs` job) |
 
 ### Running a single test
 
@@ -102,11 +104,11 @@ release:
 
 | Surface | Field | How |
 |---------|-------|-----|
-| root `Cargo.toml` | `[workspace.package].version` | `cargo-workspace` plugin |
+| root `Cargo.toml` | nothing — `[workspace.package]` intentionally carries **no** `version` (the plugin doesn't maintain it for non-inheriting crates, so the field drifted; removed in 0.10.x) | n/a |
 | `crates/claudex*/Cargo.toml` | package versions and internal path dependency versions | `cargo-workspace` plugin |
 | `Cargo.lock` | the `claudex` / `claudex-cli` `[[package]]` blocks | `cargo-workspace` plugin |
 | `CHANGELOG.md` | new `## [X.Y.Z]` section prepended | release-please (native) |
-| `flake.nix` | nothing — re-reads workspace + CLI manifests via `fromTOML` | n/a |
+| `flake.nix` | nothing — reads the CLI crate manifest (version, description) and root workspace (homepage) via `fromTOML` | n/a |
 | `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | `extra-files` + `// x-release-please-version` marker |
 | `README.md` and crate READMEs | `CLAUDEX_VERSION=vX.Y.Z`, `claudex = "X.Y.Z"`, and `--version X.Y.Z` snippets | `extra-files` + release-please markers |
 | `website/reference/library.md` | library install snippet | `extra-files` + `# x-release-please-version` marker |
@@ -218,9 +220,10 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 
 ### Module layout
 
-- Root `Cargo.toml` — virtual workspace only. Shared version, edition, MSRV,
-  metadata, and dependency versions live under `workspace.package` /
-  `workspace.dependencies`.
+- Root `Cargo.toml` — virtual workspace only. Shared edition, MSRV, metadata,
+  and dependency versions live under `workspace.package` /
+  `workspace.dependencies`; the **package versions live in the crate
+  manifests** (maintained by release-please), not in the workspace.
 - `crates/claudex/src/lib.rs` — reusable library entrypoint. Re-exports
   `api`, `filter`, `index`, `parser`, `plan`, `providers`, `stats`, `store`,
   `time_utils`, and `types`, plus `claudex_dir()` → `~/.claudex`
@@ -233,7 +236,9 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
   duplicating business rules.
 - `crates/claudex/src/providers/{mod,claude,codex,openclaw,pi}.rs` — provider
   abstraction. `SessionProvider` + `Provider` enum discover each agent's
-  transcripts and normalize them to `ProviderRecord`.
+  transcripts and normalize them to `ProviderRecord`. `providers/pr.rs` is the
+  crate-internal GitHub PR link extractor that populates
+  `ProviderRecord::pr_links` (backs the `prs` command).
 - `crates/claudex/src/store.rs` — Claude session file discovery, project path
   decoding, and worktree canonicalization. `SessionStore::at(path)` is a
   test-only constructor.
@@ -246,6 +251,8 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
   query methods. `IndexStore::open_at(path)` is a test-only constructor.
 - `crates/claudex-cli/src/main.rs` — clap parser and dispatch. Pre-parses
   `--color` before `Cli::parse()` so clap-generated help/errors honor it too.
+  `lib.rs` re-exports the CLI modules so integration tests can use them as a
+  library.
 - `crates/claudex-cli/src/cli.rs` — clap-only `FilterArgs` / `ProviderArg`,
   skill clap types, and conversion into `claudex::filter::ResolvedFilter`.
 - `crates/claudex-cli/src/cli_help.rs` — single home for CLI usage examples and
