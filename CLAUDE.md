@@ -118,6 +118,13 @@ release:
 surfaces silently stop tracking the version. The `config.ts` marker is a
 trailing line comment that must survive `bun run fmt:check` (prettier keeps it).
 
+**`extra-files` paths are package-relative** — entries resolve against the
+package directory (`crates/claudex*`), and files outside it need a leading `/`
+(repo-root-relative). A wrong path does not error; the surface just silently
+stops updating (this drifted README/website versions after the workspace
+split). When touching `extra-files`, verify the next release PR's diff
+actually includes every registered file.
+
 ### What `release-please.yml` does
 
 Jobs run in order: `release-please` (maintains the release PR / cuts the

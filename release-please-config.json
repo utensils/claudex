@@ -18,7 +18,7 @@
       "package-name": "claudex",
       "component": "claudex",
       "include-component-in-tag": false,
-      "extra-files": ["crates/claudex/README.md"]
+      "extra-files": ["README.md"]
     },
     "crates/claudex-cli": {
       "release-type": "rust",
@@ -27,9 +27,9 @@
       "include-component-in-tag": false,
       "extra-files": [
         "README.md",
-        "crates/claudex-cli/README.md",
-        "website/.vitepress/config.ts",
-        "website/reference/library.md"
+        "/README.md",
+        "/website/.vitepress/config.ts",
+        "/website/reference/library.md"
       ]
     }
   }
