@@ -31,10 +31,17 @@ jobs:
     # to resolve-tag.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Gate on the AGGREGATE releases_created output, not a per-path one.
+    # release-please attributes the (single, shared-component) release to
+    # whichever package had direct commits — a library-only release sets
+    # crates/claudex--release_created but NOT the CLI's, so keying every
+    # downstream job on the CLI path silently skips the whole publish chain
+    # (this shipped v0.10.1 as an asset-less release). tag_name/version are
+    # coalesced across both paths; they share one vX.Y.Z tag either way.
     outputs:
-      releases_created: ${{ steps.release.outputs['crates/claudex-cli--release_created'] }}
-      tag_name: ${{ steps.release.outputs['crates/claudex-cli--tag_name'] }}
-      version: ${{ steps.release.outputs['crates/claudex-cli--version'] }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs['crates/claudex-cli--tag_name'] || steps.release.outputs['crates/claudex--tag_name'] }}
+      version: ${{ steps.release.outputs['crates/claudex-cli--version'] || steps.release.outputs['crates/claudex--version'] }}
     steps:
       # Mint a short-lived GitHub App token so the release PR is authored by a
       # real identity. The default GITHUB_TOKEN triggers GitHub's recursion
@@ -56,10 +63,10 @@ jobs:
       # moment the release PR merges. Draft it immediately so users never see an
       # asset-less release; publish-release lifts the draft after assets upload.
       - name: Mark release as draft
-        if: steps.release.outputs['crates/claudex-cli--release_created'] == 'true'
+        if: steps.release.outputs.releases_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ steps.release.outputs['crates/claudex-cli--tag_name'] }}" --draft --repo "${{ github.repository }}"
+        run: gh release edit "${{ steps.release.outputs['crates/claudex-cli--tag_name'] || steps.release.outputs['crates/claudex--tag_name'] }}" --draft --repo "${{ github.repository }}"
 
   resolve-tag:
     name: Resolve Tag
