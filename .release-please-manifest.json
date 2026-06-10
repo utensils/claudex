@@ -1,4 +1,4 @@
 {
-  "crates/claudex": "0.10.0",
-  "crates/claudex-cli": "0.10.0"
+  "crates/claudex": "0.10.1",
+  "crates/claudex-cli": "0.10.1"
 }

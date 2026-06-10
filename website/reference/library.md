@@ -8,7 +8,7 @@ terminal-rendered strings.
 
 ```toml
 [dependencies]
-claudex = "0.10.0" # x-release-please-version
+claudex = "0.10.1" # x-release-please-version
 ```
 
 ## Facade

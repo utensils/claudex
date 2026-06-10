@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/utensils/claudex/compare/v0.10.0...v0.10.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **pricing:** add Claude Fable 5 tier and Opus fast-mode rates ([71d6440](https://github.com/utensils/claudex/commit/71d6440e524aa9d4049eecb35afbd6347b948f2f))
+* **release:** repair extra-files paths broken by the workspace split ([2b00518](https://github.com/utensils/claudex/commit/2b00518be56431704ca3b0f6546f380d6adf9e4c))
+
 ## [0.10.0](https://github.com/utensils/claudex/compare/v0.9.2...v0.10.0) (2026-06-03)
 
 
