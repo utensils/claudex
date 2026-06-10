@@ -8,18 +8,22 @@ Source of truth: `crates/claudex/src/types.rs`, `ModelPricing::for_model`.
 
 ## Anthropic (Claude) tiers
 
-Opus and Haiku each carry multiple rate cards: the current 4.5+ generation is
-priced well below older models, and the original Claude 3 Haiku is cheaper
-still, so claudex routes them to dedicated branches.
+Each Claude family carries one or more rate cards: Fable 5 sits above Opus as
+the frontier tier, the current Opus 4.5+ generation is priced well below older
+Opus models, fast-mode Opus carries a premium, and the original Claude 3 Haiku
+is cheaper still — so claudex routes each to a dedicated branch.
 
-| Model tier              | Input         | Output        | Cache write    | Cache read    |
-| ----------------------- | ------------- | ------------- | -------------- | ------------- |
-| **Opus 4.5+** (4.5–4.8) | $5.00 / MTok  | $25.00 / MTok | $6.25 / MTok   | $0.50 / MTok  |
-| **Opus** (legacy 3/4)   | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok  | $1.50 / MTok  |
-| **Sonnet** (default)    | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok   | $0.30 / MTok  |
-| **Haiku 4.5** (latest)  | $1.00 / MTok  | $5.00 / MTok  | $1.25 / MTok   | $0.10 / MTok  |
-| **Haiku 3.5** (legacy)  | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok   | $0.08 / MTok  |
-| **Haiku 3**             | $0.25 / MTok  | $1.25 / MTok  | $0.3125 / MTok | $0.025 / MTok |
+| Model tier              | Input         | Output         | Cache write    | Cache read    |
+| ----------------------- | ------------- | -------------- | -------------- | ------------- |
+| **Fable 5 / Mythos 5**  | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus 4.5+** (4.5–4.8) | $5.00 / MTok  | $25.00 / MTok  | $6.25 / MTok   | $0.50 / MTok  |
+| **Opus fast** (4.6/4.7) | $30.00 / MTok | $150.00 / MTok | $37.50 / MTok  | $3.00 / MTok  |
+| **Opus 4.8 fast**       | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus** (legacy 3/4)   | $15.00 / MTok | $75.00 / MTok  | $18.75 / MTok  | $1.50 / MTok  |
+| **Sonnet** (default)    | $3.00 / MTok  | $15.00 / MTok  | $3.75 / MTok   | $0.30 / MTok  |
+| **Haiku 4.5** (latest)  | $1.00 / MTok  | $5.00 / MTok   | $1.25 / MTok   | $0.10 / MTok  |
+| **Haiku 3.5** (legacy)  | $0.80 / MTok  | $4.00 / MTok   | $1.00 / MTok   | $0.08 / MTok  |
+| **Haiku 3**             | $0.25 / MTok  | $1.25 / MTok   | $0.3125 / MTok | $0.025 / MTok |
 
 (MTok = million tokens. These are Anthropic's published rates.)
 
@@ -59,36 +63,46 @@ rate. Pi-reported sessions use Pi's own cost instead — see below.)
 
 The tier is chosen by substring-matching the model name, **most specific first**:
 
+- `fable` / `mythos` → the Fable 5 frontier tier ($10/$50).
+- `opus-4-5`–`4.8` + `fast` → the fast-mode premium card ($30/$150 on 4.6/4.7,
+  $10/$50 on 4.8).
 - `opus-4-5`/`4.6`/`4.7`/`4.8` → Opus 4.5+ rates; any other `opus` → legacy Opus.
 - `haiku-4-5` → Haiku 4.5; `3-haiku` (but not `3-5-haiku`) → the cheapest
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
 - `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
   including `gpt-4-turbo`/`-32k` and classic `gpt-4` — win over the `gpt-4o`
   base rate).
-- Anything else → Sonnet (the safe fallback, including Claude's `<synthetic>`).
+- `sonnet`, or a **missing/empty** model id (old Claude transcripts) → Sonnet.
+- Anything else — local, open-weight, and unrecognized models (including
+  Claude's `<synthetic>`) → **$0**, unless the provider reported its own cost
+  (see below). This avoids fabricating Sonnet charges for Ollama/MLX/vLLM-style
+  models.
 
-So `claude-opus-4-8` maps to **Opus 4.5+** ($5/$25), an older `claude-opus-3`
-maps to **legacy Opus** ($15/$75), and unknown names map to Sonnet. Note that the
-display **family label** (`models` command) is just `Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`
-— it does not distinguish latest from legacy, but the **cost** does.
+So `claude-fable-5` maps to **Fable 5** ($10/$50), `claude-opus-4-8` maps to
+**Opus 4.5+** ($5/$25), an older `claude-opus-3` maps to **legacy Opus**
+($15/$75), and unrecognized names are not charged. Note that the display
+**family label** (`models` command) is just `Fable`/`Mythos`/`Opus`/`Haiku`/
+`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
+(or fast from standard), but the **cost** does.
 
 ## Provider-supplied cost
 
 Pi computes a cost for every assistant message (and reports `$0` for local
-Ollama models). claudex **trusts that figure** rather than re-deriving it from
-the tier table — so a Pi session's cost reflects exactly what Pi billed,
+Ollama models), and OpenClaw records a running total per trajectory. claudex
+**trusts those figures** rather than re-deriving them from the tier table — so
+a Pi or OpenClaw session's cost reflects exactly what the provider billed,
 including free local inference. Internally this is `ModelSessionStats::embedded_cost`,
 which the index uses in place of `cost_for_model` when present.
 
 ## Repricing existing data
 
 Every `token_usage` row records a **`cost_source`**: `computed` (priced from the
-tiers above) or `provider` (a figure the provider reported — only Pi today). The
-binary also carries a **`PRICING_REVISION`** that is bumped whenever the rate
-card changes. On the next run after an upgrade, claudex reprices every
+tiers above) or `provider` (a figure the provider reported — Pi and OpenClaw
+today). The binary also carries a **`PRICING_REVISION`** that is bumped whenever
+the rate card changes. On the next run after an upgrade, claudex reprices every
 `computed` row **in place** with the current tiers and stamps the new revision,
 so the one-off pass runs exactly once. `provider` rows are never touched, so
-Pi's billed figures (including `$0` local models) are preserved.
+provider-billed figures (including `$0` local models) are preserved.
 
 This is the non-destructive counterpart to `claudex index --force`: that command
 deletes and rebuilds from disk and so **cannot** recover archived/retained

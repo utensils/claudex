@@ -28,6 +28,34 @@ impl ModelPricing {
         let m = model.unwrap_or("").to_lowercase();
         if m.trim().is_empty() {
             sonnet_pricing()
+        } else if is_claude_fable_tier(&m) {
+            // Claude Fable 5 / Mythos 5 — the frontier tier above Opus
+            // (GA June 9, 2026): $10/$50, standard 1.25x/0.1x cache multipliers.
+            Self {
+                input_per_mtok: 10.0,
+                output_per_mtok: 50.0,
+                cache_write_per_mtok: 12.50,
+                cache_read_per_mtok: 1.00,
+            }
+        } else if is_claude_opus_fast(&m) {
+            // Fast mode (research preview) carries premium rates over standard
+            // Opus: $30/$150 on Opus 4.6/4.7, $10/$50 on Opus 4.8. The cache
+            // multipliers (1.25x write / 0.1x read) stack on the fast input rate.
+            if has_any(&m, &["opus-4-8", "opus-4.8"]) {
+                Self {
+                    input_per_mtok: 10.0,
+                    output_per_mtok: 50.0,
+                    cache_write_per_mtok: 12.50,
+                    cache_read_per_mtok: 1.00,
+                }
+            } else {
+                Self {
+                    input_per_mtok: 30.0,
+                    output_per_mtok: 150.0,
+                    cache_write_per_mtok: 37.50,
+                    cache_read_per_mtok: 3.00,
+                }
+            }
         } else if is_claude_opus_latest(&m) {
             Self {
                 input_per_mtok: 5.0,
@@ -124,6 +152,10 @@ impl ModelPricing {
         let m = model.unwrap_or("").to_lowercase();
         if m.trim().is_empty() {
             "Sonnet"
+        } else if m.contains("fable") {
+            "Fable"
+        } else if m.contains("mythos") {
+            "Mythos"
         } else if m.contains("opus") {
             "Opus"
         } else if m.contains("haiku") {
@@ -220,6 +252,19 @@ fn is_gpt5(m: &str) -> bool {
 
 fn is_gpt4(m: &str) -> bool {
     m.contains("gpt-4") || m.contains("gpt4")
+}
+
+fn is_claude_opus_fast(m: &str) -> bool {
+    // Fast-mode Opus ids (`claude-opus-4-6-fast`, `claude-opus-4-8-fast`).
+    // Fast mode only exists on Opus 4.6+, so anchor on the modern-Opus match
+    // rather than `fast` alone to avoid false positives.
+    is_claude_opus_latest(m) && m.contains("fast")
+}
+
+fn is_claude_fable_tier(m: &str) -> bool {
+    // Claude Fable 5 (`claude-fable-5`) and the limited-availability Claude
+    // Mythos 5 / Mythos Preview share the same published $10/$50 rate card.
+    has_any(m, &["fable", "mythos"])
 }
 
 fn is_claude_opus_latest(m: &str) -> bool {
@@ -497,6 +542,75 @@ mod tests {
         assert!((u.cost_for_model(Some("claude-haiku-4-5")) - 7.35).abs() < 0.0001);
     }
 
+    // --- Fable pricing (frontier tier) ---
+
+    #[test]
+    fn fable_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // $10 + $50 + $12.50 + $1.00 = $73.50
+        assert!((u.cost_for_model(Some("claude-fable-5")) - 73.50).abs() < 0.0001);
+    }
+
+    #[test]
+    fn mythos_priced_as_fable_tier() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // Claude Mythos 5 / Mythos Preview share Fable's $10/MTok input rate.
+        assert!((u.cost_for_model(Some("claude-mythos-5")) - 10.0).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("claude-mythos-preview")) - 10.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn fable_is_not_free_or_sonnet() {
+        let u = TokenUsage {
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let fable = u.cost_for_model(Some("claude-fable-5"));
+        assert!((fable - 50.0).abs() < 0.0001, "fable output is $50/MTok");
+        assert!(
+            fable > u.cost_for_model(Some("claude-sonnet-4-6")),
+            "fable must not fall through to the Sonnet or free tier"
+        );
+    }
+
+    // --- Opus fast mode (premium rates) ---
+
+    #[test]
+    fn opus_fast_mode_is_premium() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // Opus 4.6 / 4.7 fast: $30 + $150 = $180
+        assert!((u.cost_for_model(Some("claude-opus-4-6-fast")) - 180.0).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("claude-opus-4-7-fast")) - 180.0).abs() < 0.0001);
+        // Opus 4.8 fast: $10 + $50 = $60
+        assert!((u.cost_for_model(Some("claude-opus-4-8-fast")) - 60.0).abs() < 0.0001);
+        // Standard Opus ids must stay on the $5/$25 card.
+        assert!((u.cost_for_model(Some("claude-opus-4-8")) - 30.0).abs() < 0.0001);
+        // Fast ids still display as the Opus family.
+        assert_eq!(ModelPricing::name(Some("claude-opus-4-6-fast")), "Opus");
+    }
+
+    #[test]
+    fn opus_fast_cache_rates_stack_on_fast_input() {
+        let p = ModelPricing::for_model(Some("claude-opus-4-6-fast"));
+        assert_eq!(p.cache_write_per_mtok, 37.50); // 1.25x of $30
+        assert_eq!(p.cache_read_per_mtok, 3.00); // 0.1x of $30
+        let p8 = ModelPricing::for_model(Some("claude-opus-4-8-fast"));
+        assert_eq!(p8.cache_write_per_mtok, 12.50);
+        assert_eq!(p8.cache_read_per_mtok, 1.00);
+    }
+
     // --- OpenAI GPT pricing (Codex) ---
 
     #[test]
@@ -561,9 +675,11 @@ mod tests {
             cache_creation_tokens: 500_000,
             cache_read_tokens: 500_000,
         };
+        let fable = u.cost_for_model(Some("claude-fable-5"));
         let opus = u.cost_for_model(Some("claude-opus-4-6"));
         let sonnet = u.cost_for_model(Some("claude-sonnet-4-6"));
         let haiku = u.cost_for_model(Some("claude-haiku-4-5"));
+        assert!(fable > opus, "fable ({fable}) should > opus ({opus})");
         assert!(opus > sonnet, "opus ({opus}) should > sonnet ({sonnet})");
         assert!(sonnet > haiku, "sonnet ({sonnet}) should > haiku ({haiku})");
     }
@@ -643,6 +759,8 @@ mod tests {
 
     #[test]
     fn model_pricing_name() {
+        assert_eq!(ModelPricing::name(Some("claude-fable-5")), "Fable");
+        assert_eq!(ModelPricing::name(Some("claude-mythos-5")), "Mythos");
         assert_eq!(ModelPricing::name(Some("claude-opus-4-7")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-opus-4-6")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-haiku-4-5")), "Haiku");
@@ -712,6 +830,15 @@ mod tests {
     }
 
     // --- Pricing constants verification ---
+
+    #[test]
+    fn pricing_constants_fable() {
+        let p = ModelPricing::for_model(Some("claude-fable-5"));
+        assert_eq!(p.input_per_mtok, 10.0);
+        assert_eq!(p.output_per_mtok, 50.0);
+        assert_eq!(p.cache_write_per_mtok, 12.50);
+        assert_eq!(p.cache_read_per_mtok, 1.00);
+    }
 
     #[test]
     fn pricing_constants_opus() {

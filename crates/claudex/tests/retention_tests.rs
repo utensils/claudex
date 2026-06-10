@@ -487,7 +487,10 @@ fn reprice_corrects_stale_computed_costs() {
         "expected repriced $5.00, got {cost}"
     );
     assert_eq!(meta_val(&db, "schema_version").as_deref(), Some("7"));
-    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("2"));
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
 }
 
 #[test]
@@ -525,7 +528,10 @@ fn reprice_corrects_open_source_models_mispriced_as_sonnet() {
     assert_eq!(gemma_src, "computed");
     assert_eq!(qwen, 0.0, "open-weight qwen is not Sonnet-priced");
     assert_eq!(gemma, 0.0, "Ollama Gemma is not Sonnet-priced");
-    assert_eq!(meta_val(&db, "pricing_revision").as_deref(), Some("2"));
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
 }
 
 #[test]
