@@ -37,7 +37,7 @@ claudex cost --limit 10
 ```
 
 Aggregates token usage across every session in each project and every provider,
-applies the correct pricing tier per model (Opus / Sonnet / Haiku, OpenAI
+applies the correct pricing tier per model (Fable / Opus / Sonnet / Haiku, OpenAI
 gpt-5 / gpt-4; Pi/OpenClaw report their own cost when available), and sorts by cost descending.
 
 Add `--per-session` to break it out by individual session,

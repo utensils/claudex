@@ -42,7 +42,7 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 | Column      | Source                                                                         |
 | ----------- | ------------------------------------------------------------------------------ |
 | Model       | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
-| Family      | Opus / Sonnet / Haiku / GPT-5 / GPT-4 (derived from the name).                 |
+| Family      | Fable / Opus / Sonnet / Haiku / GPT-5 / GPT-4 / … (derived from the name).     |
 | Sessions    | Distinct sessions that used the model.                                         |
 | Input       | Total input tokens.                                                            |
 | Output      | Total output tokens.                                                           |
@@ -78,8 +78,11 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 ## Notes
 
 - **Family detection.** `model_family` is a substring match on the model tag:
-  `opus` → `Opus`, `haiku` → `Haiku`, `gpt-5`/`gpt5` → `GPT-5`, `gpt-4`/`gpt4`
-  → `GPT-4`, anything else → `Sonnet`. See [Pricing model](/reference/pricing).
+  `fable` → `Fable`, `mythos` → `Mythos`, `opus` → `Opus`, `haiku` → `Haiku`,
+  `sonnet` (or a missing model id) → `Sonnet`, `gpt-5`/`gpt5` → `GPT-5`,
+  `gpt-4`/`gpt4` → `GPT-4`, plus dedicated labels for common local and
+  open-weight families (Qwen, Llama, DeepSeek, Mistral, …); anything
+  unrecognized → `Other`. See [Pricing model](/reference/pricing).
 - **Mixed-model sessions.** A session that switched models appears under
   every model it used; `session_count` counts each model-session pair once.
 - **Runtime metadata.** `service_tiers`, `inference_geos`, `avg_speed`, and

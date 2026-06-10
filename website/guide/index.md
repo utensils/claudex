@@ -63,8 +63,8 @@ claudex to read — the provider directories will be empty.
   claudex just reads what those sessions wrote.
 - **Not a sync service.** Everything lives locally. No network calls.
 - **Not authoritative pricing.** Costs are _approximate_ — they apply published
-  Opus / Sonnet / Haiku tiers to the token-usage blocks in each record. See
-  [Pricing model](/reference/pricing).
+  Fable / Opus / Sonnet / Haiku tiers to the token-usage blocks in each record.
+  See [Pricing model](/reference/pricing).
 
 ## Where to go next
 

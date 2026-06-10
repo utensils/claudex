@@ -19,8 +19,8 @@ claudex sessions
 ## Costs look too low / too high
 
 Costs are _estimated_, not invoiced. They come from the token-usage blocks
-Claude Code records, multiplied by published Opus / Sonnet / Haiku pricing
-tiers.
+Claude Code records, multiplied by published Fable / Opus / Sonnet / Haiku
+pricing tiers.
 
 - **Too low?** Check for mixed-model sessions. Each message is priced by its
   own model, so a session that started with Opus and finished with Sonnet
