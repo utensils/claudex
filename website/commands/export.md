@@ -1,7 +1,7 @@
 # `export`
 
-Export a session transcript as Markdown or JSON across Claude Code, Codex, Pi,
-and OpenClaw.
+Export a session transcript as Markdown or JSON across Claude Code, Codex,
+GitHub Copilot (CLI and VS Code), Pi, and OpenClaw.
 
 ## Usage
 
@@ -129,8 +129,9 @@ chronological order; `normalized_messages` is the cross-provider role/text view.
 }
 ```
 
-For Claude, raw records keep the Anthropic-shaped `message` payload. Codex, Pi,
-and OpenClaw records keep their native provider shapes.
+For Claude, raw records keep the Anthropic-shaped `message` payload. Codex,
+Copilot, Pi, and OpenClaw records keep their native provider shapes (VS Code
+Copilot Chat exports the replayed session document).
 
 Useful jq:
 

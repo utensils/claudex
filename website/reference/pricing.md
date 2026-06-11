@@ -94,6 +94,16 @@ a Pi or OpenClaw session's cost reflects exactly what the provider billed,
 including free local inference. Internally this is `ModelSessionStats::embedded_cost`,
 which the index uses in place of `cost_for_model` when present.
 
+## GitHub Copilot
+
+Copilot is subscription-billed by **premium requests**, not per-token USD, so
+claudex prices Copilot CLI sessions from the rate card like Claude/Codex — the
+USD figure is an **API-equivalent estimate** of what the same tokens would cost
+at list price, not what GitHub billed. The premium-request count is preserved
+in the session's `extras`. VS Code Copilot Chat stores no token counts locally
+(they live server-side), so `copilot-vscode` sessions report zero tokens and
+`$0` cost while still counting for activity, search, and model reports.
+
 ## Repricing existing data
 
 Every `token_usage` row records a **`cost_source`**: `computed` (priced from the

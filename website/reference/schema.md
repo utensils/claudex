@@ -40,7 +40,7 @@ One row per transcript file, across every provider.
 | `message_count`     | INTEGER     | User + assistant.                                                                                                  |
 | `model`             | TEXT        | Sole model tag, or `mixed` when a session switched models.                                                         |
 | `indexed_at`        | INTEGER     | Unix seconds.                                                                                                      |
-| `provider`          | TEXT        | `claude` / `codex` / `pi` / `openclaw`.                                                                            |
+| `provider`          | TEXT        | `claude` / `codex` / `copilot` / `copilot-vscode` / `pi` / `openclaw`.                                             |
 | `present_on_disk`   | INTEGER     | `1` if the source file still exists, `0` if retained-after-delete.                                                 |
 | `archived_at`       | INTEGER     | Unix seconds when the file was archived/removed (NULL if live).                                                    |
 | `last_seen`         | INTEGER     | Unix seconds of the last sync that observed the file.                                                              |

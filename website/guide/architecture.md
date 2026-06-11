@@ -6,13 +6,15 @@ under the hood — or contribute to it.
 ## Data flow
 
 ```
-~/.claude/projects/**.jsonl   (Claude Code)  ┐
-~/.codex/sessions|archived/**  (OpenAI Codex) ├─ claudex never modifies these
-~/.pi/agent/sessions/**        (Pi)           │
-~/.openclaw/agents/*/sessions  (OpenClaw)     ┘
+~/.claude/projects/**.jsonl   (Claude Code)        ┐
+~/.codex/sessions|archived/**  (OpenAI Codex)       │
+~/.copilot/session-state/**    (GitHub Copilot CLI) ├─ claudex never modifies these
+VS Code workspaceStorage/**    (VS Code Copilot)    │
+~/.pi/agent/sessions/**        (Pi)                 │
+~/.openclaw/agents/*/sessions  (OpenClaw)           ┘
         │
         ▼
-providers::{claude,codex,pi,openclaw} — SessionProvider: enumerate + parse → ProviderRecord
+providers::{claude,codex,copilot,copilot_vscode,pi,openclaw} — SessionProvider: enumerate + parse → ProviderRecord
         ▼
 index::IndexStore             — rusqlite, bundled, schema_version = 7, additive/retentive
         ▼
@@ -36,20 +38,20 @@ claudex is a Cargo workspace:
 - `crates/claudex-cli` — CLI package published as `claudex-cli`, installing the
   binary named `claudex`.
 
-| Module                                 | Purpose                                                                                                                                                                                                                                                             |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/claudex-cli/src/main.rs`       | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag.                                                                                                                   |
-| `crates/claudex/src/providers/*.rs`    | The provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch). Claude/Codex/Pi/OpenClaw each `enumerate` their transcripts and `parse` them into a normalized `ProviderRecord`. `enabled_default()` returns every provider whose root exists. |
-| `crates/claudex-cli/src/cli.rs`        | Clap-only `FilterArgs` and `skills` argument types. It resolves CLI flags into the library's `filter::ResolvedFilter`.                                                                                                                                              |
-| `crates/claudex/src/api.rs`            | Preferred library facade (`Claudex`, `ClaudexConfig`, `QueryFilter`, `ProviderKind`) returning typed structs.                                                                                                                                                       |
-| `crates/claudex/src/filter.rs`         | Shared provider/model/date/on-disk filters used by the API, CLI, SQL queries, and Claude `--no-index` fallback.                                                                                                                                                     |
-| `crates/claudex/src/store.rs`          | Claude file discovery, project-directory decoding (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), worktree canonicalization.                                                                                                                                            |
-| `crates/claudex/src/parser.rs`         | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                                                                                      |
-| `crates/claudex/src/types.rs`          | `TokenUsage`, `ModelPricing` (Fable/Opus/Sonnet/Haiku + gpt-5/gpt-4 tiers). `cost_for_model` is the single source of truth; providers can supply their own `embedded_cost`.                                                                                         |
-| `crates/claudex/src/index.rs`          | `IndexStore` (SQLite). Relational report tables plus an FTS5 virtual table. Per-provider incremental sync; additive retention; non-destructive migrations.                                                                                                          |
-| `crates/claudex-cli/src/skill/*.rs`    | `claudex skills` — generates the agent skill from the live clap tree.                                                                                                                                                                                               |
-| `crates/claudex-cli/src/ui.rs`         | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                                                                                         |
-| `crates/claudex-cli/src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `session`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs`.)                                            |
+| Module                                 | Purpose                                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/claudex-cli/src/main.rs`       | clap parser, dispatches to `commands::*::run`. Pre-parses `--color` from argv before `Cli::parse()` so clap-generated help/errors honor the flag.                                                                                                                                           |
+| `crates/claudex/src/providers/*.rs`    | The provider abstraction. `SessionProvider` trait + `Provider` enum (enum dispatch). Claude/Codex/Copilot/Copilot-VS Code/Pi/OpenClaw each `enumerate` their transcripts and `parse` them into a normalized `ProviderRecord`. `enabled_default()` returns every provider whose root exists. |
+| `crates/claudex-cli/src/cli.rs`        | Clap-only `FilterArgs` and `skills` argument types. It resolves CLI flags into the library's `filter::ResolvedFilter`.                                                                                                                                                                      |
+| `crates/claudex/src/api.rs`            | Preferred library facade (`Claudex`, `ClaudexConfig`, `QueryFilter`, `ProviderKind`) returning typed structs.                                                                                                                                                                               |
+| `crates/claudex/src/filter.rs`         | Shared provider/model/date/on-disk filters used by the API, CLI, SQL queries, and Claude `--no-index` fallback.                                                                                                                                                                             |
+| `crates/claudex/src/store.rs`          | Claude file discovery, project-directory decoding (`/.hidden` ↔ `--hidden`, `/seg` ↔ `-seg`), worktree canonicalization.                                                                                                                                                                    |
+| `crates/claudex/src/parser.rs`         | `SessionStats` accumulator; `stream_records` reads JSONL one record at a time.                                                                                                                                                                                                              |
+| `crates/claudex/src/types.rs`          | `TokenUsage`, `ModelPricing` (Fable/Opus/Sonnet/Haiku + gpt-5/gpt-4 tiers). `cost_for_model` is the single source of truth; providers can supply their own `embedded_cost`.                                                                                                                 |
+| `crates/claudex/src/index.rs`          | `IndexStore` (SQLite). Relational report tables plus an FTS5 virtual table. Per-provider incremental sync; additive retention; non-destructive migrations.                                                                                                                                  |
+| `crates/claudex-cli/src/skill/*.rs`    | `claudex skills` — generates the agent skill from the live clap tree.                                                                                                                                                                                                                       |
+| `crates/claudex-cli/src/ui.rs`         | Palette, `table()` builder, number formatters (`fmt_cost`, `fmt_count`), `Spinner`, `ColorChoice`. Everything presentation.                                                                                                                                                                 |
+| `crates/claudex-cli/src/commands/*.rs` | One file per subcommand: `sessions`, `cost`, `search`, `tools`, `watch`, `summary`, `session`, `export`, `index`, `turns`, `prs`, `files`, `models`, `update`. (`completions` and `skills` are dispatched in `main.rs`.)                                                                    |
 
 ## Key invariants
 
@@ -64,7 +66,7 @@ Force a full rebuild: `claudex index --force`
 
 ### Providers are first-class; filtering happens at query time
 
-All four providers flow through the same `IndexStore` pipeline. `ensure_fresh`
+All six providers flow through the same `IndexStore` pipeline. `ensure_fresh`
 / `sync` / `force_rebuild` take `&[Provider]`, and reports span every provider
 whose data root exists. `--provider` narrows at query time — the index always
 holds everything available, so switching providers never re-syncs.

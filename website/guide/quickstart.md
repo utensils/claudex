@@ -2,7 +2,7 @@
 
 This is the five-minute tour. It assumes you've
 [installed claudex](/guide/installation) and run at least one of Claude Code,
-OpenAI Codex, Pi, or OpenClaw locally so there are transcripts to index.
+OpenAI Codex, GitHub Copilot, Pi, or OpenClaw locally so there are transcripts to index.
 
 ## 1. See the dashboard
 
@@ -14,15 +14,16 @@ You'll get one screenful: total sessions, today/this-week counts, cost totals,
 top projects, top tools, model distribution, and the most recent session.
 
 First run indexes every provider's transcripts (`~/.claude/projects`,
-`~/.codex`, `~/.pi/agent`, `${OPENCLAW_STATE_DIR:-~/.openclaw}`) — the spinner shows progress on stderr. Subsequent
+`~/.codex`, `~/.copilot`, VS Code `workspaceStorage`, `~/.pi/agent`, `${OPENCLAW_STATE_DIR:-~/.openclaw}`) — the spinner shows progress on stderr. Subsequent
 runs reuse the index (5-minute staleness window), so they're near-instant.
 
 ## 2. Narrow by provider
 
-Every report spans all four providers by default. Narrow with `--provider`:
+Every report spans all six providers by default. Narrow with `--provider`:
 
 ```bash
 claudex cost --provider codex          # just OpenAI Codex
+claudex cost --provider copilot        # just GitHub Copilot CLI
 claudex sessions --provider pi         # just Pi
 claudex search "timeout" --provider openclaw --json
 claudex cost --provider claude,codex   # Claude + Codex combined
@@ -38,7 +39,7 @@ claudex cost --limit 10
 
 Aggregates token usage across every session in each project and every provider,
 applies the correct pricing tier per model (Fable / Opus / Sonnet / Haiku, OpenAI
-gpt-5 / gpt-4; Pi/OpenClaw report their own cost when available), and sorts by cost descending.
+gpt-5 / gpt-4; Pi/OpenClaw report their own cost when available; Copilot is priced at API-equivalent rates), and sorts by cost descending.
 
 Add `--per-session` to break it out by individual session,
 `--project utensils` to filter to projects whose path contains `utensils`, or

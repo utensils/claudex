@@ -217,10 +217,12 @@ Three invariants worth knowing:
 ### Data flow
 
 ```
-~/.claude/projects/**.jsonl      (Claude Code)  ┐
-~/.codex/sessions|archived/**     (OpenAI Codex) ├─ source transcripts
-~/.pi/agent/sessions/**           (Pi)           │
-~/.trajectory/** + state files     (OpenClaw)     ┘
+~/.claude/projects/**.jsonl      (Claude Code)        ┐
+~/.codex/sessions|archived/**     (OpenAI Codex)       │
+~/.copilot/session-state/**       (GitHub Copilot CLI) ├─ source transcripts
+VS Code workspaceStorage/**       (VS Code Copilot)    │
+~/.pi/agent/sessions/**           (Pi)                 │
+~/.trajectory/** + state files     (OpenClaw)           ┘
         │
         ▼   claudex::providers::* (SessionProvider: enumerate + parse → ProviderRecord)
         ▼
@@ -248,8 +250,8 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 - `crates/claudex/src/filter.rs` — shared provider/model/date/on-disk filter
   logic. CLI clap types convert into these library filters instead of
   duplicating business rules.
-- `crates/claudex/src/providers/{mod,claude,codex,openclaw,pi}.rs` — provider
-  abstraction. `SessionProvider` + `Provider` enum discover each agent's
+- `crates/claudex/src/providers/{mod,claude,codex,copilot,copilot_vscode,openclaw,pi}.rs`
+  — provider abstraction. `SessionProvider` + `Provider` enum discover each agent's
   transcripts and normalize them to `ProviderRecord`. `providers/pr.rs` is the
   crate-internal GitHub PR link extractor that populates
   `ProviderRecord::pr_links` (backs the `prs` command).
@@ -289,8 +291,8 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 
 ### Key invariants
 
-- **Providers are first-class and additive.** Claude, Codex, Pi, and OpenClaw
-  flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
+- **Providers are first-class and additive.** Claude, Codex, Copilot (CLI and
+  VS Code), Pi, and OpenClaw flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
   `force_rebuild` take provider lists; default reporting spans every provider
   whose root exists (`providers::enabled_default()`). Filtering happens at
   query time (`--provider`), never at sync time — the index always holds
@@ -305,7 +307,7 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
   which append `sql_predicates(alias)`. Don't hand-roll provider/date
   predicates in a command.
 - **Worktree aggregation**: always key on `canonical_project_path(&decoded)` when grouping by project, and use `display_project_name` for user-facing labels (renders worktree sessions as `"projectname (worktree)"`).
-- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers, latest vs legacy). Providers reporting their own cost set `embedded_cost`, which the insert loop stores with `cost_source='provider'` (everything else is `'computed'`).
+- **Pricing math lives in `types.rs`**. Do not inline per-token multipliers in commands — call `TokenUsage::cost_for_model` (Opus/Sonnet/Haiku/GPT tiers, latest vs legacy). Providers reporting their own cost set `embedded_cost`, which the insert loop stores with `cost_source='provider'` (everything else is `'computed'`). Copilot is premium-request billed, so its computed USD is an API-equivalent estimate (premium-request counts live in `sessions.extras`); VS Code Copilot Chat stores no token counts and indexes at $0.
 - **Stored costs are repriced automatically.** `cost_usd` is materialized at ingest, so changing `cost_for_model` would leave old rows stale. When you change the rate card, bump `PRICING_REVISION` (`index.rs`): the next open reprices every `cost_source='computed'` row in place via `reprice_computed_costs` (keyed on the `pricing_revision` meta value, runs once per bump). `'provider'` rows are never touched. This is the non-destructive way to refresh retained/archived rows — unlike `index --force`, which drops them.
 
 ### Adding a new subcommand

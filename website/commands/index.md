@@ -5,7 +5,7 @@ flags, examples, and the JSON shape.
 
 Global flag: `--color auto|always|never` (respects `NO_COLOR`).
 
-Reports span Claude Code, OpenAI Codex, Pi, and OpenClaw by default. Every report accepts
+Reports span Claude Code, OpenAI Codex, GitHub Copilot (CLI and VS Code), Pi, and OpenClaw by default. Every report accepts
 the shared [filter flags](/guide/providers) — `--provider`, `--model`,
 `--since`/`--until`, `--on-disk-only`. `--project` is a separate per-command
 filter (it has its own column in the matrix below).

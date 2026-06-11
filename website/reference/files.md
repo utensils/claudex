@@ -33,6 +33,24 @@ index like any other: project from the transcript's `cwd`, model from
 calls, reasoning, and message text for full-text search. Files under
 `archived_sessions/` are indexed and flagged archived.
 
+### `${CLAUDEX_COPILOT_DIR:-~/.copilot}/session-state/<uuid>/events.jsonl`
+
+GitHub Copilot CLI event logs, one directory per session. The Copilot provider
+reads the typed event stream: project from `session.start`'s `cwd`, messages
+and tool calls from `user.message`/`assistant.message`, per-model token usage
+from the final `session.shutdown` metrics (premium-request counts are kept in
+`extras`). The sibling `workspace.yaml` supplies the session title and a cwd
+fallback; `session.db`, `checkpoints/`, `files/`, and `research/` are ignored.
+
+### VS Code `User/workspaceStorage/<hash>/chatSessions/*.{json,jsonl}`
+
+VS Code Copilot Chat sessions (stable and Insiders; override the `User`
+directory with `CLAUDEX_VSCODE_USER_DIR`). Older sessions are one JSON
+document; current VS Code writes a delta log that claudex replays before
+extraction. The workspace folder comes from the sibling `workspace.json`;
+chats from empty windows live in `globalStorage/emptyWindowChatSessions/`.
+VS Code stores no token counts locally, so these sessions index at `$0`.
+
 ### `~/.pi/agent/sessions/<cwd-encoded>/*.jsonl`
 
 Pi session transcripts, one directory per working directory. The Pi provider
@@ -73,8 +91,9 @@ so a two-terminal workflow works without configuration.
 ## Nothing in the provider directories belongs to claudex
 
 Claudex is strictly a reader of `~/.claude/projects/`, `~/.codex/`,
-`~/.pi/agent/`, and OpenClaw state. It never writes there, never modifies
-transcripts, never interferes with Claude Code, Codex, Pi, or OpenClaw state.
+`~/.copilot/`, VS Code `workspaceStorage`, `~/.pi/agent/`, and OpenClaw state.
+It never writes there, never modifies transcripts, never interferes with any
+agent's state.
 (`claudex skills install` does
 write `SKILL.md` files into harness config dirs, but only when you ask it to.)
 

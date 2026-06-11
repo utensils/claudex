@@ -1,7 +1,8 @@
 # What is claudex?
 
-claudex is a Rust CLI that reads the local session transcripts of four coding
+claudex is a Rust CLI that reads the local session transcripts of six coding
 agents — **Claude Code** (`~/.claude/projects/`), **OpenAI Codex** (`~/.codex/`),
+**GitHub Copilot CLI** (`~/.copilot/`), **VS Code Copilot Chat** (VS Code `workspaceStorage`),
 **Pi** (`~/.pi/agent/`), and **OpenClaw** (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — ingests them into a single SQLite index at
 `~/.claudex/index.db`, and exposes reports as subcommands.
 
@@ -14,10 +15,12 @@ across every provider.
 ## The shape of the tool
 
 ```
- ~/.claude/projects/**.jsonl   (Claude Code)  ┐
- ~/.codex/sessions/**          (OpenAI Codex) ├─ provider transcripts
- ~/.pi/agent/sessions/**       (Pi)           │
- ~/.openclaw/agents/*/sessions (OpenClaw)     ┘
+ ~/.claude/projects/**.jsonl   (Claude Code)        ┐
+ ~/.codex/sessions/**          (OpenAI Codex)       │
+ ~/.copilot/session-state/**   (GitHub Copilot CLI) ├─ provider transcripts
+ VS Code workspaceStorage/**   (VS Code Copilot)    │
+ ~/.pi/agent/sessions/**       (Pi)                 │
+ ~/.openclaw/agents/*/sessions (OpenClaw)           ┘
          │
          ▼
  claudex providers  →  SQLite index (~/.claudex/index.db)
@@ -28,7 +31,7 @@ across every provider.
 
 Every read command:
 
-- Spans all four providers by default; narrow with the shared
+- Spans all six providers by default; narrow with the shared
   [filter flags](/guide/providers) (`--provider`, `--since`/`--until`, …).
 - Supports `--json` to emit a stable, machine-readable shape (with a `provider`
   key on every row).
@@ -44,7 +47,7 @@ per-command breakdown.
 
 ## Who is it for?
 
-You use Claude Code, OpenAI Codex, Pi, or OpenClaw and want to:
+You use Claude Code, OpenAI Codex, GitHub Copilot, Pi, or OpenClaw and want to:
 
 - Understand where your token spend is going (per-provider, per-project,
   per-session, per-model).
