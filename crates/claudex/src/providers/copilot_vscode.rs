@@ -86,8 +86,8 @@ impl SessionProvider for CopilotVscodeProvider {
                     if !chat_dir.exists() {
                         continue;
                     }
-                    let project =
-                        workspace_folder(&workspace_dir.join("workspace.json")).unwrap_or_default();
+                    let project = workspace_folder(&workspace_dir.join("workspace.json"))
+                        .unwrap_or_else(|| "(unknown workspace)".to_string());
                     collect_sessions(&chat_dir, &project, &mut files)?;
                 }
             }

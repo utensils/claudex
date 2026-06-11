@@ -886,7 +886,7 @@ fn copilot_vscode_enumerate_maps_workspace_folders_and_empty_window() {
     .unwrap();
     fs::write(ws.join("hash2/chatSessions/b.jsonl"), "").unwrap();
 
-    // Missing workspace.json is tolerated (no project label).
+    // Missing workspace.json is tolerated (placeholder project label).
     fs::create_dir_all(ws.join("hash3/chatSessions")).unwrap();
     fs::write(ws.join("hash3/chatSessions/c.json"), "{}").unwrap();
 
@@ -918,7 +918,7 @@ fn copilot_vscode_enumerate_maps_workspace_folders_and_empty_window() {
         by_name("b.jsonl").project_display,
         "/Users/me/multi.code-workspace"
     );
-    assert_eq!(by_name("c.json").project_display, "");
+    assert_eq!(by_name("c.json").project_display, "(unknown workspace)");
     assert_eq!(by_name("e.json").project_display, "(empty window)");
 }
 
