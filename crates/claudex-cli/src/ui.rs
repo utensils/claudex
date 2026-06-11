@@ -134,6 +134,8 @@ pub fn cell_provider(s: &str) -> Cell {
     let color = match s {
         "claude" => Color::Blue,
         "codex" => Color::Green,
+        "copilot" => Color::Cyan,
+        "copilot-vscode" => Color::DarkCyan,
         "pi" => Color::Magenta,
         _ => Color::White,
     };

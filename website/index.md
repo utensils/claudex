@@ -6,7 +6,7 @@ hero:
   text: Query your AI coding sessions
   tagline:
     A Rust CLI that indexes the local transcripts of Claude Code, OpenAI Codex,
-    Pi, and OpenClaw into one SQLite database and turns them into reports —
+    GitHub Copilot, Pi, and OpenClaw into one SQLite database and turns them into reports —
     cost, tools, turns, PRs, full-text search, and more, across every provider.
   actions:
     - theme: brand
@@ -20,10 +20,11 @@ hero:
       link: https://github.com/utensils/claudex
 
 features:
-  - title: Four providers, one index
-    details: Claude Code (~/.claude/projects), OpenAI Codex (~/.codex), Pi
-      (~/.pi/agent), and OpenClaw (~/.openclaw) are all first-class. Every
-      report spans them by default; narrow with --provider claude|codex|pi|openclaw.
+  - title: Six providers, one index
+    details: Claude Code (~/.claude/projects), OpenAI Codex (~/.codex), GitHub
+      Copilot CLI (~/.copilot), VS Code Copilot Chat, Pi (~/.pi/agent), and
+      OpenClaw (~/.openclaw) are all first-class. Every report spans them by
+      default; narrow with --provider.
   - title: Additive & retentive
     details: Archive or delete a session from disk and its indexed data stays.
       Non-destructive schema migrations and per-provider incremental sync mean
@@ -98,7 +99,7 @@ shell-completion setup.
 
 ## Why claudex?
 
-Claude Code, OpenAI Codex, Pi, and OpenClaw each persist every conversation as local
+Claude Code, OpenAI Codex, GitHub Copilot, Pi, and OpenClaw each persist every conversation as local
 transcripts — every user turn, every assistant message, every tool call, every
 token-usage block, every file modification — but those files are flat logs in
 several different formats, not a queryable store.

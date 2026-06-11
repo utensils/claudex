@@ -17,7 +17,7 @@ on first use.
 
 ## Sync semantics
 
-The index covers all four providers. Each is synced independently with its own
+The index covers all six providers. Each is synced independently with its own
 staleness window and data-root stamp.
 
 | Trigger                            | What happens                                                |
@@ -63,7 +63,7 @@ claudex index --force
 ## Bypassing the index
 
 Most Claude Code read commands accept `--no-index` to skip the index and scan
-Claude JSONL files directly. It's a Claude-only escape hatch — Codex, Pi, and OpenClaw are
+Claude JSONL files directly. It's a Claude-only escape hatch — Codex, Copilot, Pi, and OpenClaw are
 served from the index. (Note the index is no longer just a cache: it retains
 sessions that have left disk, so `--no-index` can show _fewer_ rows than the
 indexed path.)

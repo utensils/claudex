@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
 use super::pr::{append_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command};
-use super::{DiscoveredFile, MessageForFts, ProviderRecord, SessionProvider};
+use super::{DiscoveredFile, MessageForFts, ProviderRecord, SessionProvider, expand_home};
 use crate::parser::stream_records;
 
 pub struct OpenClawProvider {
@@ -143,17 +143,6 @@ impl SessionProvider for OpenClawProvider {
 
     fn parse(&self, file: &DiscoveredFile) -> Result<ProviderRecord> {
         parse_openclaw_session(&file.path, &self.state_dir, self.trajectory_dir.as_deref())
-    }
-}
-
-fn expand_home(value: &str) -> Result<PathBuf> {
-    if let Some(rest) = value.strip_prefix("~/") {
-        let home = dirs::home_dir().context("could not find home directory")?;
-        Ok(home.join(rest))
-    } else if value == "~" {
-        dirs::home_dir().context("could not find home directory")
-    } else {
-        Ok(PathBuf::from(value))
     }
 }
 

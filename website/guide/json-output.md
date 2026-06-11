@@ -3,7 +3,7 @@
 Every read command supports `--json`, emitting a pretty-printed, stable shape.
 This is the recommended contract for automation — it doesn't change between
 patch releases. Every per-row report includes a `"provider"` key
-(`claude` / `codex` / `pi` / `openclaw`) so results are unambiguous across providers.
+(`claude` / `codex` / `copilot` / `copilot-vscode` / `pi` / `openclaw`) so results are unambiguous across providers.
 
 ## Examples
 

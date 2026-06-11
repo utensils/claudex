@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use claudex::index::{IndexStore, IndexedSession};
 use claudex::parser::{parse_session, stream_records};
-use claudex::providers::enabled_default;
+use claudex::providers::{copilot_vscode, enabled_default};
 use claudex::store::{
     SessionStore, decode_project_name, display_project_name, find_matching_sessions,
 };
@@ -140,6 +140,21 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
     }
     buf.push_str("\n---\n\n");
 
+    // VS Code chat sessions are one (possibly delta-logged) JSON document, not
+    // message-per-line JSONL — replay and flatten instead of streaming.
+    if row.provider == "copilot-vscode" {
+        let session = copilot_vscode::load_session_value(Path::new(&row.file_path))?;
+        for msg in copilot_vscode::session_messages(&session) {
+            buf.push_str(&format!("## {}\n", title_case(msg.role)));
+            if let Some(dt) = msg.timestamp_ms.and_then(DateTime::from_timestamp_millis) {
+                buf.push_str(&format!("*{}*\n\n", dt.format("%Y-%m-%dT%H:%M:%S")));
+            }
+            buf.push_str(&msg.text);
+            buf.push_str("\n\n---\n\n");
+        }
+        return Ok(buf);
+    }
+
     stream_records(Path::new(&row.file_path), |record| {
         if let Some((role, text)) = generic_message_text(&row.provider, record) {
             let ts = record["timestamp"]
@@ -161,17 +176,32 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
 fn build_indexed_json_value(row: &IndexedSession) -> Result<Value> {
     let mut records = Vec::new();
     let mut messages = Vec::new();
-    stream_records(Path::new(&row.file_path), |record| {
-        if let Some((role, text)) = generic_message_text(&row.provider, record) {
+    if row.provider == "copilot-vscode" {
+        let session = copilot_vscode::load_session_value(Path::new(&row.file_path))?;
+        for msg in copilot_vscode::session_messages(&session) {
             messages.push(serde_json::json!({
-                "role": role,
-                "timestamp": record["timestamp"].as_str(),
-                "text": text,
+                "role": msg.role,
+                "timestamp": msg
+                    .timestamp_ms
+                    .and_then(DateTime::from_timestamp_millis)
+                    .map(|d| d.to_rfc3339()),
+                "text": msg.text,
             }));
         }
-        records.push(record.clone());
-        true
-    })?;
+        records.push(session);
+    } else {
+        stream_records(Path::new(&row.file_path), |record| {
+            if let Some((role, text)) = generic_message_text(&row.provider, record) {
+                messages.push(serde_json::json!({
+                    "role": role,
+                    "timestamp": record["timestamp"].as_str(),
+                    "text": text,
+                }));
+            }
+            records.push(record.clone());
+            true
+        })?;
+    }
     Ok(serde_json::json!({
         "provider": row.provider,
         "project": row.project_name,
@@ -222,6 +252,16 @@ fn generic_message_text(provider: &str, record: &Value) -> Option<(String, Strin
                 "agent_message" => payload["message"]
                     .as_str()
                     .map(|t| ("assistant".to_string(), t.to_string())),
+                _ => None,
+            }
+        }
+        "copilot" => {
+            let text = record["data"]["content"]
+                .as_str()
+                .filter(|t| !t.is_empty())?;
+            match record["type"].as_str()? {
+                "user.message" => Some(("user".to_string(), text.to_string())),
+                "assistant.message" => Some(("assistant".to_string(), text.to_string())),
                 _ => None,
             }
         }

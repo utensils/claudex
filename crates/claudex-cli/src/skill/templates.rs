@@ -29,7 +29,7 @@ pub enum Flavor {
 
 /// One-line skill description, reused by every frontmatter generator.
 pub fn description() -> &'static str {
-    "Query, search, and analyze Claude Code, OpenAI Codex, Pi, and OpenClaw sessions using the claudex CLI. \
+    "Query, search, and analyze Claude Code, OpenAI Codex, GitHub Copilot, Pi, and OpenClaw sessions using the claudex CLI. \
 Use when asked about session history, token costs, tool usage, search past conversations, export \
 sessions, or inspect agent activity across providers and projects."
 }
@@ -57,15 +57,17 @@ fn body(command_list: &str) -> String {
     format!(
         r#"# claudex — multi-provider agent session analytics
 
-claudex indexes the local session transcripts of four coding agents into a
+claudex indexes the local session transcripts of six coding agents into a
 SQLite database at `~/.claudex/index.db` and reports across all of them:
 
 - **Claude Code** — `~/.claude/projects/**.jsonl`
 - **OpenAI Codex** — `~/.codex/sessions/**` and `~/.codex/archived_sessions/`
+- **GitHub Copilot CLI** — `~/.copilot/session-state/*/events.jsonl`
+- **VS Code Copilot Chat** — VS Code `workspaceStorage/*/chatSessions/` (stable + Insiders)
 - **Pi** — `~/.pi/agent/sessions/**`
 - **OpenClaw** — `${{OPENCLAW_STATE_DIR:-~/.openclaw}}/agents/*/sessions/`
 
-Every reporting command spans all four providers by default. The index is
+Every reporting command spans all six providers by default. The index is
 **additive**: sessions archived or deleted from disk are retained, so historical
 usage never disappears.
 
@@ -79,7 +81,7 @@ Run `claudex <command> --help` for full flags.
 
 | Flag | Effect |
 | --- | --- |
-| `--provider <claude\|codex\|pi\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
+| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
 | `--model <substr>` | Filter indexed reports by model (e.g. `opus`, `gpt-5`). |
 | `--since <when>` / `--until <when>` | Date range. Accepts `YYYY-MM-DD`, RFC3339, or a relative span (`7d`, `12h`, `2w`). |
 | `--on-disk-only` | Exclude retained sessions whose file was archived/deleted. |
@@ -95,6 +97,7 @@ records. Use `--no-index` only for Claude transcript recovery/debugging.
 ## When to use
 
 - "How much have I spent on Codex this month?" → `claudex cost --provider codex --since 30d`
+- "What would my Copilot usage cost at API rates?" → `claudex cost --provider copilot --since 30d`
 - "List my recent Pi sessions" → `claudex sessions --provider pi`
 - "Search OpenClaw trajectory-backed sessions" → `claudex search "tool timeout" --provider openclaw --json`
 - "Find where I discussed schema migrations" → `claudex search "schema migration"`
@@ -107,8 +110,10 @@ records. Use `--no-index` only for Claude transcript recovery/debugging.
 Add `--json` to any reporting command for stable, scriptable output. Each row
 carries a `"provider"` key so results are unambiguous across providers. Cost is
 in USD; Pi/OpenClaw sessions report the provider's own per-message cost when
-available (local models are $0), Claude/Codex are priced from a built-in
-per-model table.
+available (local models are $0), Claude/Codex/Copilot are priced from a built-in
+per-model table (Copilot is subscription-billed, so its USD figure is an
+API-equivalent estimate; VS Code Copilot Chat stores no token counts and
+reports $0).
 
 ## Notes
 
@@ -143,11 +148,12 @@ pub fn agents_block(command_list: &str) -> String {
         r#"{AGENTS_START}
 ## claudex — agent session analytics
 
-Use the `claudex` CLI to query and analyze local Claude Code, OpenAI Codex, Pi,
-and OpenClaw session transcripts: token cost, tool usage, full-text search,
-per-session drill-down, and exports — across all four providers from one index.
+Use the `claudex` CLI to query and analyze local Claude Code, OpenAI Codex,
+GitHub Copilot (CLI + VS Code), Pi, and OpenClaw session transcripts: token
+cost, tool usage, full-text search, per-session drill-down, and exports —
+across all six providers from one index.
 
-- **Spans providers by default;** narrow with `--provider claude|codex|pi|openclaw`.
+- **Spans providers by default;** narrow with `--provider claude|codex|copilot|copilot-vscode|pi|openclaw`.
 - **Filter** with `--project`, `--model`, `--since`/`--until` (`7d`/`2w`/dates).
 - **JSON for agents:** add `--json`; every row carries a `provider` key.
 - The index is additive — archived/deleted sessions are retained.
@@ -171,7 +177,7 @@ pub fn plugin_json() -> String {
         "homepage": "https://utensils.io/claudex/",
         "repository": "https://github.com/utensils/claudex",
         "license": "MIT",
-        "keywords": ["claude-code", "codex", "pi", "openclaw", "cli", "agents", "sessions"],
+        "keywords": ["claude-code", "codex", "copilot", "pi", "openclaw", "cli", "agents", "sessions"],
     });
     serde_json::to_string_pretty(&manifest).unwrap_or_default()
 }

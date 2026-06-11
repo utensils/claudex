@@ -5,12 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Reusable library for indexing and querying Claude Code, Codex, Pi, and OpenClaw coding sessions"
+description = "Reusable library for indexing and querying Claude Code, Codex, Copilot, Pi, and OpenClaw coding sessions"
 homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 readme = "README.md"
-keywords = ["claude", "claude-code", "sessions", "codex", "library"]
+keywords = ["claude", "claude-code", "sessions", "codex", "copilot"]
 categories = ["development-tools"]
 
 [dependencies]

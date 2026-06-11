@@ -13,6 +13,8 @@ use crate::parser::SessionStats;
 pub enum ProviderKind {
     Claude,
     Codex,
+    Copilot,
+    CopilotVscode,
     OpenClaw,
     Pi,
 }
@@ -22,6 +24,8 @@ impl ProviderKind {
         match self {
             ProviderKind::Claude => "claude",
             ProviderKind::Codex => "codex",
+            ProviderKind::Copilot => "copilot",
+            ProviderKind::CopilotVscode => "copilot-vscode",
             ProviderKind::OpenClaw => "openclaw",
             ProviderKind::Pi => "pi",
         }

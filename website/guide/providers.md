@@ -1,20 +1,22 @@
 # Providers & filtering
 
-claudex indexes four coding agents into one database and reports across all of
+claudex indexes six coding agents into one database and reports across all of
 them. Every reporting command spans every provider by default; a shared set of
 filter flags narrows the view.
 
-## The four providers
+## The six providers
 
-| Provider                   | Source                                                     | Notes                                                                                                                                                                              |
-| -------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Claude Code** (`claude`) | `~/.claude/projects/**.jsonl`                              | Worktrees aggregate to the parent project; subagent transcripts roll up to their parent session.                                                                                   |
-| **OpenAI Codex** (`codex`) | `~/.codex/sessions/**` and `~/.codex/archived_sessions/**` | Project comes from the transcript's `cwd`; sessions under `archived_sessions/` are flagged archived. Token usage is the last cumulative `token_count` (cached input → cache read). |
-| **Pi** (`pi`)              | `~/.pi/agent/sessions/**`                                  | Multi-provider under the hood; claudex trusts Pi's own per-message cost (local Ollama models report `$0`).                                                                         |
-| **OpenClaw** (`openclaw`)  | `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/**`  | Reads classic transcripts plus trajectory sidecars. Provider-reported cost is trusted when present; trajectory-only sessions are de-duplicated with their transcript later.        |
+| Provider                                    | Source                                                                                                         | Notes                                                                                                                                                                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Claude Code** (`claude`)                  | `~/.claude/projects/**.jsonl`                                                                                  | Worktrees aggregate to the parent project; subagent transcripts roll up to their parent session.                                                                                                                                           |
+| **OpenAI Codex** (`codex`)                  | `~/.codex/sessions/**` and `~/.codex/archived_sessions/**`                                                     | Project comes from the transcript's `cwd`; sessions under `archived_sessions/` are flagged archived. Token usage is the last cumulative `token_count` (cached input → cache read).                                                         |
+| **GitHub Copilot CLI** (`copilot`)          | `${CLAUDEX_COPILOT_DIR:-~/.copilot}/session-state/*/events.jsonl`                                              | Project comes from the session's `cwd`. Token usage is read from the final `session.shutdown` metrics; cost is an API-equivalent estimate computed from the rate card (Copilot bills by premium requests — the count is kept in `extras`). |
+| **VS Code Copilot Chat** (`copilot-vscode`) | VS Code `User/workspaceStorage/*/chatSessions/**` (stable + Insiders; override with `CLAUDEX_VSCODE_USER_DIR`) | Indexes chat text, tools, models, and timing. VS Code stores no token counts locally, so these sessions report zero tokens and `$0` cost.                                                                                                  |
+| **Pi** (`pi`)                               | `~/.pi/agent/sessions/**`                                                                                      | Multi-provider under the hood; claudex trusts Pi's own per-message cost (local Ollama models report `$0`).                                                                                                                                 |
+| **OpenClaw** (`openclaw`)                   | `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/**`                                                      | Reads classic transcripts plus trajectory sidecars. Provider-reported cost is trusted when present; trajectory-only sessions are de-duplicated with their transcript later.                                                                |
 
 A provider is indexed only if its data directory exists, so you never need to
-opt in — install Codex, Pi, or OpenClaw and claudex picks them up on the next sync.
+opt in — install Codex, Copilot, Pi, or OpenClaw and claudex picks them up on the next sync.
 
 ## The index is additive
 
@@ -34,15 +36,15 @@ just what's live on disk right now.
 Every reporting command (`sessions`, `cost`, `search`, `tools`, `models`,
 `turns`, `prs`, `files`) accepts the same cross-cutting filters:
 
-| Flag                                       | Effect                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| `--provider <claude\|codex\|pi\|openclaw>` | Restrict to one or more providers. Repeatable or comma-separated. Default: all. |
-| `--project <substr>`                       | Filter by project path substring.                                               |
-| `--model <substr>`                         | Filter by model (e.g. `opus`, `gpt-5`).                                         |
-| `--since <when>`                           | Only sessions at/after this time.                                               |
-| `--until <when>`                           | Only sessions at/before this time.                                              |
-| `--on-disk-only`                           | Exclude retained sessions whose file was archived or deleted.                   |
-| `--json`                                   | Machine-readable output; always includes a `provider` key per row.              |
+| Flag                                                                | Effect                                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|openclaw>` | Restrict to one or more providers. Repeatable or comma-separated. Default: all. |
+| `--project <substr>`                                                | Filter by project path substring.                                               |
+| `--model <substr>`                                                  | Filter by model (e.g. `opus`, `gpt-5`).                                         |
+| `--since <when>`                                                    | Only sessions at/after this time.                                               |
+| `--until <when>`                                                    | Only sessions at/before this time.                                              |
+| `--on-disk-only`                                                    | Exclude retained sessions whose file was archived or deleted.                   |
+| `--json`                                                            | Machine-readable output; always includes a `provider` key per row.              |
 
 ### Time values
 
@@ -63,6 +65,9 @@ claudex cost --provider codex --since 30d
 
 # Compare Claude vs Codex cost, this week
 claudex cost --provider claude,codex --since 7d
+
+# What would my Copilot usage cost at API rates?
+claudex cost --provider copilot --since 30d
 
 # List recent Pi sessions
 claudex sessions --provider pi --since 14d
@@ -91,4 +96,4 @@ claudex cost --per-session --json | jq 'group_by(.provider) | map({provider: .[0
 
 The `--no-index` fallback scans Claude Code transcripts directly (no database).
 It honors `--since`/`--until`/`--model` in memory, but is Claude-only — use the
-default indexed path for Codex, Pi, and OpenClaw.
+default indexed path for Codex, Copilot, Pi, and OpenClaw.

@@ -4,13 +4,15 @@ Environment variables and paths claudex reads.
 
 ## Variables
 
-| Var                       | Effect                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------------- |
-| `CLAUDEX_DIR`             | Override the location of `~/.claudex/` (index, debug logs).                                 |
-| `NO_COLOR`                | Disable color when `--color` is `auto`. [no-color.org](https://no-color.org).               |
-| `OPENCLAW_STATE_DIR`      | OpenClaw state root to read for the `openclaw` provider. Default `~/.openclaw`.             |
-| `OPENCLAW_TRAJECTORY_DIR` | Optional OpenClaw runtime trajectory directory to merge when session metadata points to it. |
-| `RUST_BACKTRACE`          | Rust panic behavior. `1` for a backtrace, `full` for a symbol-rich one.                     |
+| Var                       | Effect                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLAUDEX_DIR`             | Override the location of `~/.claudex/` (index, debug logs).                                                                                    |
+| `CLAUDEX_COPILOT_DIR`     | GitHub Copilot CLI data root to read for the `copilot` provider. Default `~/.copilot`.                                                         |
+| `CLAUDEX_VSCODE_USER_DIR` | VS Code `User` directory to read for the `copilot-vscode` provider. Default: the platform config dir's `Code/User` and `Code - Insiders/User`. |
+| `NO_COLOR`                | Disable color when `--color` is `auto`. [no-color.org](https://no-color.org).                                                                  |
+| `OPENCLAW_STATE_DIR`      | OpenClaw state root to read for the `openclaw` provider. Default `~/.openclaw`.                                                                |
+| `OPENCLAW_TRAJECTORY_DIR` | Optional OpenClaw runtime trajectory directory to merge when session metadata points to it.                                                    |
+| `RUST_BACKTRACE`          | Rust panic behavior. `1` for a backtrace, `full` for a symbol-rich one.                                                                        |
 
 Table width is detected automatically from the terminal (via the
 `terminal_size` crate); claudex does not read `$COLUMNS`.
@@ -31,6 +33,8 @@ by the `claudex` binary:
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `~/.claude/projects/`                                   | Source of truth — Claude Code's session transcripts. **Read-only for claudex.**            |
 | `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/` | Source of truth — OpenClaw transcripts and trajectory sidecars. **Read-only for claudex.** |
+| `${CLAUDEX_COPILOT_DIR:-~/.copilot}/session-state/`     | Source of truth — GitHub Copilot CLI event logs. **Read-only for claudex.**                |
+| VS Code `User/workspaceStorage/*/chatSessions/`         | Source of truth — VS Code Copilot Chat sessions. **Read-only for claudex.**                |
 | `~/.claudex/index.db`                                   | SQLite index.                                                                              |
 | `~/.claudex/debug/latest.log`                           | Default target for `claudex watch` + `claude --debug-file`.                                |
 | `~/.cargo/bin/claudex`                                  | Binary, if installed via `cargo install`.                                                  |

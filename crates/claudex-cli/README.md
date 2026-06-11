@@ -16,7 +16,7 @@ To install a specific release:
 cargo install claudex-cli --version 0.10.1 # x-release-please-version
 ```
 
-The CLI indexes Claude Code, OpenAI Codex, Pi, and OpenClaw transcripts into
+The CLI indexes Claude Code, OpenAI Codex, GitHub Copilot (CLI and VS Code), Pi, and OpenClaw transcripts into
 `~/.claudex/index.db` and exposes reports as subcommands with human tables or
 `--json` output. For embedding claudex in another Rust application, depend on
 the `claudex` library crate instead.

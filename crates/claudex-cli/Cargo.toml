@@ -10,7 +10,7 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 readme = "README.md"
-keywords = ["claude", "claude-code", "cli", "sessions", "anthropic"]
+keywords = ["claude", "claude-code", "cli", "sessions", "copilot"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
