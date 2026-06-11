@@ -110,8 +110,9 @@ fn parse_copilot_session(path: &Path) -> Result<ProviderRecord> {
 
     stream_records(path, |record| {
         let timestamp = record["timestamp"].as_str();
-        let timestamp_ms = timestamp.and_then(|ts| parse_ts(ts).map(|dt| dt.timestamp_millis()));
-        if let Some(ts) = timestamp.and_then(parse_ts) {
+        let parsed_ts = timestamp.and_then(parse_ts);
+        let timestamp_ms = parsed_ts.map(|dt| dt.timestamp_millis());
+        if let Some(ts) = parsed_ts {
             if entry.first_timestamp.is_none_or(|p| ts < p) {
                 entry.first_timestamp = Some(ts);
             }

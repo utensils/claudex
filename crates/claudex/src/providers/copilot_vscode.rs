@@ -63,7 +63,13 @@ impl SessionProvider for CopilotVscodeProvider {
     }
 
     fn root_dir(&self) -> &Path {
-        &self.user_dirs[0]
+        // Prefer the first User directory that exists (e.g. only Insiders is
+        // installed) so `claudex providers` and the index's root stamp report
+        // the directory actually being read.
+        self.user_dirs
+            .iter()
+            .find(|d| d.exists())
+            .unwrap_or(&self.user_dirs[0])
     }
 
     fn enabled(&self) -> bool {
