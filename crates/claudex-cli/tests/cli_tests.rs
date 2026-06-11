@@ -103,6 +103,9 @@ fn run(home: &Path, args: &[&str]) -> std::process::Output {
         .env("NO_COLOR", "1")
         .env_remove("OPENCLAW_STATE_DIR")
         .env_remove("OPENCLAW_TRAJECTORY_DIR")
+        .env_remove("CLAUDEX_COPILOT_DIR")
+        .env_remove("CLAUDEX_VSCODE_USER_DIR")
+        .env_remove("XDG_CONFIG_HOME")
         .args(args)
         .output()
         .expect("spawn claudex")
@@ -2703,5 +2706,229 @@ fn update_fails_gracefully_without_curl() {
     assert!(
         stderr.contains("not found in PATH"),
         "expected curl-missing message, got: {stderr}"
+    );
+}
+
+// --- copilot providers (unified index) ---
+
+fn fixture_home_with_copilot() -> TempDir {
+    let tmp = fixture_home();
+    let dir = tmp
+        .path()
+        .join(".copilot/session-state/aaaaaaaa-2222-0000-0000-000000000001");
+    fs::create_dir_all(&dir).unwrap();
+    let mut f = fs::File::create(dir.join("events.jsonl")).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"session.start","data":{{"sessionId":"copilot-a","copilotVersion":"1.0.61","selectedModel":"claude-sonnet-4.6","context":{{"cwd":"/Users/test/copilotproj","repository":"utensils/demo","branch":"main"}}}},"timestamp":"2026-06-01T10:00:00Z"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"user.message","data":{{"content":"hello from copilot"}},"timestamp":"2026-06-01T10:00:01Z"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"assistant.message","data":{{"model":"claude-sonnet-4.6","content":"copilot says hello back","toolRequests":[{{"name":"bash","arguments":{{}}}}]}},"timestamp":"2026-06-01T10:00:05Z"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"session.shutdown","data":{{"totalPremiumRequests":1,"modelMetrics":{{"claude-sonnet-4.6":{{"requests":{{"count":1}},"usage":{{"inputTokens":1000000,"outputTokens":100000,"cacheReadTokens":150000,"cacheWriteTokens":50000}}}}}}}},"timestamp":"2026-06-01T10:01:00Z"}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+    fs::write(
+        dir.join("workspace.yaml"),
+        "id: copilot-a\ncwd: /Users/test/copilotproj\nname: demo session\n",
+    )
+    .unwrap();
+    tmp
+}
+
+/// VS Code chat fixture inside the fake HOME, addressed explicitly through
+/// `CLAUDEX_VSCODE_USER_DIR` so the test is independent of the platform's
+/// config-dir layout.
+fn fixture_home_with_copilot_vscode() -> (TempDir, std::path::PathBuf) {
+    let tmp = fixture_home();
+    let user_dir = tmp.path().join("vscode-user");
+    let hash = user_dir.join("workspaceStorage/hash1");
+    fs::create_dir_all(hash.join("chatSessions")).unwrap();
+    fs::write(
+        hash.join("workspace.json"),
+        r#"{"folder":"file:///Users/test/vscodeproj"}"#,
+    )
+    .unwrap();
+    fs::write(
+        hash.join("chatSessions/vsc-a.json"),
+        r#"{"version":3,"sessionId":"vsc-a","creationDate":1769763926111,"lastMessageDate":1769763999999,"customTitle":"Demo Chat","requests":[{"message":{"text":"hello from vscode chat"},"modelId":"copilot/claude-sonnet-4.5","timestamp":1769763934260,"response":[{"value":"vscode chat says hello back"}]}]}"#,
+    )
+    .unwrap();
+    (tmp, user_dir)
+}
+
+fn run_vscode(home: &Path, user_dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(BIN)
+        .env("HOME", home)
+        .env("NO_COLOR", "1")
+        .env("CLAUDEX_VSCODE_USER_DIR", user_dir)
+        .env_remove("CLAUDEX_COPILOT_DIR")
+        .args(args)
+        .output()
+        .expect("spawn claudex")
+}
+
+#[test]
+fn copilot_sessions_appear_in_unified_index() {
+    let home = fixture_home_with_copilot();
+    let out = run(home.path(), &["sessions", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let projects: Vec<&str> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["project"].as_str())
+        .collect();
+    assert!(
+        projects.iter().any(|p| p.contains("copilotproj")),
+        "copilot session must surface in unified sessions, got: {projects:?}"
+    );
+
+    let out = run(
+        home.path(),
+        &["sessions", "--provider", "copilot", "--json"],
+    );
+    let rows = json_of(&out);
+    let arr = rows.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["provider"].as_str(), Some("copilot"));
+}
+
+#[test]
+fn copilot_cost_derives_non_cache_input_and_uses_sonnet_pricing() {
+    let home = fixture_home_with_copilot();
+    let out = run(
+        home.path(),
+        &["cost", "--per-session", "--provider", "copilot", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let row = &rows.as_array().unwrap()[0];
+    // inputTokens (1,000,000) includes cache; non-cache input is derived:
+    // 1,000,000 - 150,000 - 50,000 = 800,000.
+    assert_eq!(row["input_tokens"].as_i64(), Some(800_000));
+    assert_eq!(row["cache_read_tokens"].as_i64(), Some(150_000));
+    assert_eq!(row["cache_creation_tokens"].as_i64(), Some(50_000));
+    assert_eq!(row["output_tokens"].as_i64(), Some(100_000));
+    // Sonnet: 0.8*3 + 0.15*0.3 + 0.05*3.75 + 0.1*15 = 2.4+0.045+0.1875+1.5 = $4.1325
+    let cost = row["cost_usd"].as_f64().unwrap();
+    assert!(
+        (cost - 4.1325).abs() < 0.001,
+        "expected ~$4.1325, got {cost}"
+    );
+}
+
+#[test]
+fn copilot_search_and_session_drilldown_work() {
+    let home = fixture_home_with_copilot();
+    let out = run(
+        home.path(),
+        &[
+            "search",
+            "hello from copilot",
+            "--provider",
+            "copilot",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    assert!(
+        !rows.as_array().unwrap().is_empty(),
+        "search must find the copilot user message"
+    );
+
+    let out = run(home.path(), &["session", "copilot-a", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let session = json_of(&out);
+    assert_eq!(session["provider"].as_str(), Some("copilot"));
+}
+
+#[test]
+fn copilot_providers_row_and_no_index_rejection() {
+    let home = fixture_home_with_copilot();
+    let out = run(home.path(), &["providers", "--json"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let copilot = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["provider"].as_str() == Some("copilot"))
+        .expect("copilot listed in providers");
+    assert_eq!(copilot["discovered_files"].as_i64(), Some(1));
+    assert_eq!(copilot["indexed_sessions"].as_i64(), Some(1));
+
+    let out = run(
+        home.path(),
+        &["sessions", "--provider", "copilot", "--no-index", "--json"],
+    );
+    assert!(!out.status.success());
+    assert!(stderr_of(&out).contains("--no-index only scans Claude transcripts"));
+}
+
+#[test]
+fn copilot_vscode_sessions_search_and_export() {
+    let (home, user_dir) = fixture_home_with_copilot_vscode();
+
+    let out = run_vscode(
+        home.path(),
+        &user_dir,
+        &["sessions", "--provider", "copilot-vscode", "--json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let rows = json_of(&out);
+    let arr = rows.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["provider"].as_str(), Some("copilot-vscode"));
+    assert!(
+        arr[0]["project"]
+            .as_str()
+            .is_some_and(|p| p.contains("vscodeproj"))
+    );
+
+    let out = run_vscode(
+        home.path(),
+        &user_dir,
+        &[
+            "search",
+            "vscode chat says",
+            "--provider",
+            "copilot-vscode",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(!json_of(&out).as_array().unwrap().is_empty());
+
+    // Export must replay the session document, not stream it line-by-line.
+    let out = run_vscode(home.path(), &user_dir, &["export", "vsc-a"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let md = stdout_of(&out);
+    assert!(md.contains("hello from vscode chat"), "markdown: {md}");
+    assert!(md.contains("vscode chat says hello back"), "markdown: {md}");
+
+    let out = run_vscode(
+        home.path(),
+        &user_dir,
+        &["export", "vsc-a", "--format", "json"],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let exported = json_of(&out);
+    assert_eq!(
+        exported["normalized_messages"][0]["text"].as_str(),
+        Some("hello from vscode chat")
     );
 }

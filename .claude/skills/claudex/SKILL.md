@@ -1,6 +1,6 @@
 ---
 name: claudex
-description: Query, search, and analyze Claude Code, OpenAI Codex, Pi, and OpenClaw sessions using the claudex CLI. Use when asked about session history, token costs, tool usage, search past conversations, export sessions, or inspect agent activity across providers and projects.
+description: Query, search, and analyze Claude Code, OpenAI Codex, GitHub Copilot, Pi, and OpenClaw sessions using the claudex CLI. Use when asked about session history, token costs, tool usage, search past conversations, export sessions, or inspect agent activity across providers and projects.
 argument-hint: [subcommand or query]
 allowed-tools: Bash(claudex:*), Read, Glob, Grep
 license: MIT
@@ -8,15 +8,17 @@ license: MIT
 
 # claudex — multi-provider agent session analytics
 
-claudex indexes the local session transcripts of four coding agents into a
+claudex indexes the local session transcripts of six coding agents into a
 SQLite database at `~/.claudex/index.db` and reports across all of them:
 
 - **Claude Code** — `~/.claude/projects/**.jsonl`
 - **OpenAI Codex** — `~/.codex/sessions/**` and `~/.codex/archived_sessions/`
+- **GitHub Copilot CLI** — `~/.copilot/session-state/*/events.jsonl`
+- **VS Code Copilot Chat** — VS Code `workspaceStorage/*/chatSessions/` (stable + Insiders)
 - **Pi** — `~/.pi/agent/sessions/**`
 - **OpenClaw** — `${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/`
 
-Every reporting command spans all four providers by default. The index is
+Every reporting command spans all six providers by default. The index is
 **additive**: sessions archived or deleted from disk are retained, so historical
 usage never disappears.
 
@@ -49,7 +51,7 @@ Run `claudex <command> --help` for full flags.
 
 | Flag | Effect |
 | --- | --- |
-| `--provider <claude\|codex\|pi\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
+| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
 | `--model <substr>` | Filter indexed reports by model (e.g. `opus`, `gpt-5`). |
 | `--since <when>` / `--until <when>` | Date range. Accepts `YYYY-MM-DD`, RFC3339, or a relative span (`7d`, `12h`, `2w`). |
 | `--on-disk-only` | Exclude retained sessions whose file was archived/deleted. |
@@ -65,6 +67,7 @@ records. Use `--no-index` only for Claude transcript recovery/debugging.
 ## When to use
 
 - "How much have I spent on Codex this month?" → `claudex cost --provider codex --since 30d`
+- "What would my Copilot usage cost at API rates?" → `claudex cost --provider copilot --since 30d`
 - "List my recent Pi sessions" → `claudex sessions --provider pi`
 - "Search OpenClaw trajectory-backed sessions" → `claudex search "tool timeout" --provider openclaw --json`
 - "Find where I discussed schema migrations" → `claudex search "schema migration"`
@@ -77,8 +80,10 @@ records. Use `--no-index` only for Claude transcript recovery/debugging.
 Add `--json` to any reporting command for stable, scriptable output. Each row
 carries a `"provider"` key so results are unambiguous across providers. Cost is
 in USD; Pi/OpenClaw sessions report the provider's own per-message cost when
-available (local models are $0), Claude/Codex are priced from a built-in
-per-model table.
+available (local models are $0), Claude/Codex/Copilot are priced from a built-in
+per-model table (Copilot is subscription-billed, so its USD figure is an
+API-equivalent estimate; VS Code Copilot Chat stores no token counts and
+reports $0).
 
 ## Notes
 

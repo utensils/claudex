@@ -15,6 +15,9 @@ use claudex::filter::{ProviderKind, parse_when};
 pub enum ProviderArg {
     Claude,
     Codex,
+    Copilot,
+    #[value(name = "copilot-vscode")]
+    CopilotVscode,
     #[value(name = "openclaw")]
     OpenClaw,
     Pi,
@@ -25,6 +28,8 @@ impl From<ProviderArg> for ProviderKind {
         match provider {
             ProviderArg::Claude => ProviderKind::Claude,
             ProviderArg::Codex => ProviderKind::Codex,
+            ProviderArg::Copilot => ProviderKind::Copilot,
+            ProviderArg::CopilotVscode => ProviderKind::CopilotVscode,
             ProviderArg::OpenClaw => ProviderKind::OpenClaw,
             ProviderArg::Pi => ProviderKind::Pi,
         }

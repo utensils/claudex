@@ -3,7 +3,7 @@
 pub const FILTER_FORMATS: &str = "\
 Accepted filter formats:
   --since/--until: YYYY-MM-DD, RFC3339, or a relative span like 7d, 12h, 2w, 30m
-  --provider: claude, codex, pi, openclaw (repeat the flag or comma-separate values)
+  --provider: claude, codex, copilot, copilot-vscode, pi, openclaw (repeat the flag or comma-separate values)
   --model: substring match, for example opus or gpt-5";
 
 pub const SESSIONS_EXAMPLES: &str = "\
@@ -16,6 +16,7 @@ pub const COST_EXAMPLES: &str = "\
 Examples:
   claudex cost --since 30d
   claudex cost --per-session --provider codex --model gpt-5
+  claudex cost --provider copilot --since 30d
   claudex cost --project claudex --json";
 
 pub const SEARCH_EXAMPLES: &str = "\
