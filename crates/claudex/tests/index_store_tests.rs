@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, Duration, Local};
 use claudex::filter::ResolvedFilter;
 use claudex::index::{IndexStore, SearchFtsOptions};
-use claudex::providers::{ClaudeProvider, CodexProvider, OpenClawProvider, PiProvider, Provider};
+use claudex::providers::{
+    ClaudeProvider, CodexProvider, CopilotProvider, CopilotVscodeProvider, OpenClawProvider,
+    PiProvider, Provider,
+};
 use claudex::store::SessionStore;
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
@@ -39,6 +42,14 @@ fn pi_providers(agent: PathBuf) -> Vec<Provider> {
 
 fn openclaw_providers(state: PathBuf) -> Vec<Provider> {
     vec![Provider::OpenClaw(OpenClawProvider::at(state))]
+}
+
+fn copilot_providers(base: PathBuf) -> Vec<Provider> {
+    vec![Provider::Copilot(CopilotProvider::at(base))]
+}
+
+fn copilot_vscode_providers(user_dir: PathBuf) -> Vec<Provider> {
+    vec![Provider::CopilotVscode(CopilotVscodeProvider::at(user_dir))]
 }
 
 /// Write a JSONL session file under `<projects>/<encoded_project>/<session>.jsonl`.
@@ -951,4 +962,73 @@ fn zero_token_model_rows_are_skipped() {
     let models = idx.query_model_usage(None, &all()).unwrap();
     assert_eq!(models.len(), 1);
     assert!(models[0].model.contains("opus"));
+}
+
+#[test]
+fn copilot_sync_prices_tokens_from_rate_card() {
+    let tmp = TempDir::new().unwrap();
+    let copilot = tmp.path().join(".copilot");
+    write_jsonl(
+        &copilot.join("session-state/aaaaaaaa-1111-0000-0000-000000000001/events.jsonl"),
+        &[
+            r#"{"type":"session.start","data":{"sessionId":"cop-1","selectedModel":"claude-sonnet-4.6","context":{"cwd":"/repo"}},"timestamp":"2026-06-11T10:00:00Z"}"#,
+            r#"{"type":"user.message","data":{"content":"hello copilot"},"timestamp":"2026-06-11T10:00:01Z"}"#,
+            r#"{"type":"assistant.message","data":{"model":"claude-sonnet-4.6","content":"done"},"timestamp":"2026-06-11T10:00:05Z"}"#,
+            r#"{"type":"session.shutdown","data":{"totalPremiumRequests":1,"modelMetrics":{"claude-sonnet-4.6":{"requests":{"count":1},"usage":{"inputTokens":1000000,"outputTokens":100000,"cacheReadTokens":0,"cacheWriteTokens":0}}}},"timestamp":"2026-06-11T10:01:00Z"}"#,
+        ],
+    );
+
+    let providers = copilot_providers(copilot);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&providers).unwrap();
+
+    let rows = idx.query_cost_per_session(None, &all(), 10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].provider, "copilot");
+    assert_eq!(rows[0].input_tokens, 1_000_000);
+    // Sonnet tier: $3/M input + $15/M output → 1M in + 100k out = $4.50.
+    assert!(
+        (rows[0].cost_usd - 4.5).abs() < 1e-6,
+        "expected rate-card pricing, got {}",
+        rows[0].cost_usd
+    );
+}
+
+#[test]
+fn copilot_vscode_token_less_sessions_keep_model_rows() {
+    let tmp = TempDir::new().unwrap();
+    let user_dir = tmp.path().join("Code/User");
+    let dir = user_dir.join("workspaceStorage/hash1/chatSessions");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        user_dir.join("workspaceStorage/hash1/workspace.json"),
+        r#"{"folder":"file:///Users/me/proj"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("vsc-1.json"),
+        r#"{"version":3,"sessionId":"vsc-1","creationDate":1769763926111,"lastMessageDate":1769763999999,"requests":[{"message":{"text":"hi"},"modelId":"copilot/claude-sonnet-4.5","timestamp":1769763934260,"response":[{"value":"hello"}]}]}"#,
+    )
+    .unwrap();
+
+    let providers = copilot_vscode_providers(user_dir);
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&providers).unwrap();
+
+    // Token-less sessions still materialize their model rows ($0, computed) so
+    // `claudex models` and `--model` filtering can see them.
+    let models = idx.query_model_usage(None, &all()).unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].model, "claude-sonnet-4.5");
+    assert_eq!(models[0].input_tokens + models[0].output_tokens, 0);
+    assert_eq!(models[0].cost_usd, 0.0);
+
+    let filter = ResolvedFilter {
+        model: Some("sonnet".into()),
+        ..ResolvedFilter::default()
+    };
+    let sessions = idx.query_sessions(None, None, &filter, 10).unwrap();
+    assert_eq!(sessions.len(), 1, "--model must match token-less sessions");
+    assert_eq!(sessions[0].provider, "copilot-vscode");
+    assert_eq!(sessions[0].project_name, "/Users/me/proj");
 }

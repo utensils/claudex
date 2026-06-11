@@ -1099,8 +1099,12 @@ impl IndexStore {
         let mut total = 0usize;
         for provider in providers {
             let provider_id = provider.id();
-            if matches!(provider_id, "claude" | "openclaw")
-                || !self.pr_link_derivation_is_stale(provider_id)
+            // Providers listed here derive their PR links at parse time; the
+            // backfill would wipe those rows and re-insert nothing.
+            if matches!(
+                provider_id,
+                "claude" | "openclaw" | "copilot" | "copilot-vscode"
+            ) || !self.pr_link_derivation_is_stale(provider_id)
             {
                 continue;
             }
@@ -1471,8 +1475,22 @@ impl IndexStore {
                     ],
                 )?;
             } else if !entry.model_usage.is_empty() {
+                // Some providers (VS Code Copilot Chat) store no token counts
+                // at all. When the whole session is token-less, keep its
+                // per-model rows anyway — at zero tokens / $0 — so `--model`
+                // filtering and `claudex models` still see those sessions. In
+                // sessions that DO have usage, zero-token model entries stay
+                // noise and are skipped as before.
+                let session_total_tokens: u64 = entry.usage.total_tokens()
+                    + entry
+                        .model_usage
+                        .values()
+                        .map(|u| u.usage.total_tokens())
+                        .sum::<u64>();
                 for (model, usage) in &entry.model_usage {
-                    if usage.usage.total_tokens() == 0 {
+                    if usage.usage.total_tokens() == 0
+                        && (session_total_tokens > 0 || model.is_empty())
+                    {
                         continue;
                     }
                     let model_opt = if model.is_empty() {

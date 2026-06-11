@@ -16,7 +16,8 @@ use crate::index::{
     SessionToolRow, SummaryData, TimelineRow, ToolRow, TurnStatsRow,
 };
 use crate::providers::{
-    ClaudeProvider, CodexProvider, OpenClawProvider, PiProvider, Provider as ProviderImpl,
+    ClaudeProvider, CodexProvider, CopilotProvider, CopilotVscodeProvider, OpenClawProvider,
+    PiProvider, Provider as ProviderImpl,
 };
 
 pub use crate::filter::{ProviderKind as Provider, QueryFilter as Filter};
@@ -304,6 +305,10 @@ fn providers_for(kinds: &[ProviderKind]) -> Result<Vec<ProviderImpl>> {
         let provider = match kind {
             ProviderKind::Claude => ProviderImpl::Claude(ClaudeProvider::new()?),
             ProviderKind::Codex => ProviderImpl::Codex(CodexProvider::new()?),
+            ProviderKind::Copilot => ProviderImpl::Copilot(CopilotProvider::new()?),
+            ProviderKind::CopilotVscode => {
+                ProviderImpl::CopilotVscode(CopilotVscodeProvider::new()?)
+            }
             ProviderKind::OpenClaw => ProviderImpl::OpenClaw(OpenClawProvider::new()?),
             ProviderKind::Pi => ProviderImpl::Pi(PiProvider::new()?),
         };

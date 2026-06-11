@@ -7,7 +7,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use claudex::providers::{
-    ClaudeProvider, CodexProvider, DiscoveredFile, OpenClawProvider, PiProvider, SessionProvider,
+    ClaudeProvider, CodexProvider, CopilotProvider, CopilotVscodeProvider, DiscoveredFile,
+    OpenClawProvider, PiProvider, SessionProvider,
 };
 use claudex::store::SessionStore;
 use tempfile::TempDir;
@@ -682,4 +683,407 @@ fn openclaw_enumerates_external_trajectory_dir_from_session_store() {
     assert_eq!(files.len(), 1);
     assert!(files[0].path.ends_with("external_session.jsonl"));
     assert_eq!(files[0].project_display, "/repo/ext");
+}
+
+// --- GitHub Copilot CLI ---
+
+fn copilot_session_start(session_id: &str, cwd: &str, model: &str) -> String {
+    format!(
+        r#"{{"type":"session.start","data":{{"sessionId":"{session_id}","copilotVersion":"1.0.61","selectedModel":"{model}","context":{{"cwd":"{cwd}","gitRoot":"{cwd}","branch":"main","repository":"utensils/claudex"}}}},"timestamp":"2026-06-11T17:31:01.212Z"}}"#
+    )
+}
+
+#[test]
+fn copilot_enumerate_finds_event_logs_and_skips_extras() {
+    let tmp = TempDir::new().unwrap();
+    let copilot = tmp.path().join(".copilot");
+    write_lines(
+        &copilot.join("session-state/aaaaaaaa-0000-0000-0000-000000000001/events.jsonl"),
+        &[&copilot_session_start("s1", "/repo", "claude-sonnet-4.6")],
+    );
+    // Sidecar artifacts in the same session dir must not be enumerated.
+    let dir = copilot.join("session-state/aaaaaaaa-0000-0000-0000-000000000001");
+    fs::write(dir.join("workspace.yaml"), "id: s1\ncwd: /repo\n").unwrap();
+    fs::write(dir.join("session.db"), b"sqlite").unwrap();
+    fs::create_dir_all(dir.join("checkpoints")).unwrap();
+    // A session dir without an events.jsonl (created but never run) is skipped.
+    fs::create_dir_all(copilot.join("session-state/bbbbbbbb-0000-0000-0000-000000000002")).unwrap();
+    // Stray files directly under session-state are not session dirs.
+    fs::write(copilot.join("session-state/notes.txt"), "x").unwrap();
+
+    let provider = CopilotProvider::at(copilot);
+    assert_eq!(provider.id(), "copilot");
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].path.ends_with("events.jsonl"));
+    assert!(!files[0].archived);
+}
+
+#[test]
+fn copilot_parse_reads_messages_tools_turns_and_derived_tokens() {
+    let tmp = TempDir::new().unwrap();
+    let copilot = tmp.path().join(".copilot");
+    write_lines(
+        &copilot.join("session-state/cccccccc-0000-0000-0000-000000000003/events.jsonl"),
+        &[
+            &copilot_session_start(
+                "copilot-sess-1",
+                "/Users/me/Projects/demo",
+                "claude-sonnet-4.6",
+            ),
+            r#"{"type":"user.message","data":{"content":"fix the bug","transformedContent":"<reminder>noise</reminder> fix the bug"},"timestamp":"2026-06-11T17:31:02.733Z"}"#,
+            r#"{"type":"assistant.turn_start","data":{"turnId":"0"},"timestamp":"2026-06-11T17:31:03.000Z"}"#,
+            r#"{"type":"assistant.message","data":{"model":"claude-sonnet-4.6","content":"","reasoningText":"thinking about it","toolRequests":[{"name":"bash","arguments":{"command":"ls"}},{"name":"azure-devops-mcp-wit_get_work_item","arguments":{"id":1}}]},"timestamp":"2026-06-11T17:31:05.000Z"}"#,
+            r#"{"type":"assistant.message","data":{"model":"claude-sonnet-4.6","content":"Opened https://github.com/utensils/claudex/pull/99","toolRequests":[]},"timestamp":"2026-06-11T17:31:09.000Z"}"#,
+            r#"{"type":"assistant.turn_end","data":{"turnId":"0"},"timestamp":"2026-06-11T17:31:11.500Z"}"#,
+            r#"{"type":"abort","data":{},"timestamp":"2026-06-11T17:31:12.000Z"}"#,
+            r#"{"type":"session.shutdown","data":{"totalPremiumRequests":2,"totalApiDurationMs":188035,"codeChanges":{"linesAdded":10,"linesRemoved":3,"filesModified":["src/main.rs"]},"modelMetrics":{"claude-sonnet-4.6":{"requests":{"count":17,"cost":1},"usage":{"inputTokens":753841,"outputTokens":10563,"cacheReadTokens":659637,"cacheWriteTokens":85868,"reasoningTokens":1950}}}},"timestamp":"2026-06-11T17:42:58.090Z"}"#,
+        ],
+    );
+
+    let provider = CopilotProvider::at(copilot);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.session_id.as_deref(), Some("copilot-sess-1"));
+    assert_eq!(rec.project_display, "/Users/me/Projects/demo");
+    assert_eq!(rec.model.as_deref(), Some("claude-sonnet-4.6"));
+    assert_eq!(rec.message_count, 3);
+
+    // FTS keeps the raw user text, not the transformed prompt.
+    let user_texts: Vec<&str> = rec
+        .messages
+        .iter()
+        .filter(|m| m.msg_type == "user")
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(user_texts, vec!["fix the bug"]);
+
+    assert_eq!(
+        rec.tool_names,
+        vec!["bash", "azure-devops-mcp-wit_get_work_item"]
+    );
+    assert_eq!(rec.thinking_block_count, 1);
+    assert_eq!(rec.stop_reason_counts.get("abort"), Some(&1));
+
+    // One turn: 17:31:03.000 -> 17:31:11.500.
+    assert_eq!(rec.turn_durations.len(), 1);
+    assert_eq!(rec.turn_durations[0].0, 8500);
+
+    // usage.inputTokens includes cache; without per-model tokenDetails the
+    // non-cache input is derived: 753841 - 659637 - 85868 = 8336.
+    let stats = rec.model_usage.get("claude-sonnet-4.6").unwrap();
+    assert_eq!(stats.usage.input_tokens, 8336);
+    assert_eq!(stats.usage.output_tokens, 10563);
+    assert_eq!(stats.usage.cache_read_tokens, 659637);
+    assert_eq!(stats.usage.cache_creation_tokens, 85868);
+    assert_eq!(stats.assistant_message_count, 17);
+    assert!(stats.embedded_cost.is_none(), "copilot cost is computed");
+
+    assert_eq!(rec.file_paths_modified, vec!["src/main.rs"]);
+    assert_eq!(rec.pr_links.len(), 1);
+    assert_eq!(rec.pr_links[0].0, 99);
+
+    let extras: serde_json::Value = serde_json::from_str(rec.extras.as_deref().unwrap()).unwrap();
+    assert_eq!(extras["premium_requests"].as_u64(), Some(2));
+    assert_eq!(extras["lines_added"].as_u64(), Some(10));
+    assert_eq!(extras["repository"].as_str(), Some("utensils/claudex"));
+    assert_eq!(extras["copilot_version"].as_str(), Some("1.0.61"));
+}
+
+#[test]
+fn copilot_prefers_per_model_token_details_and_keeps_last_shutdown() {
+    let tmp = TempDir::new().unwrap();
+    let copilot = tmp.path().join(".copilot");
+    write_lines(
+        &copilot.join("session-state/dddddddd-0000-0000-0000-000000000004/events.jsonl"),
+        &[
+            &copilot_session_start("copilot-sess-2", "/repo", "gpt-5.5"),
+            // An earlier shutdown (pre-resume) must be superseded by the last one.
+            r#"{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.5":{"requests":{"count":1},"usage":{"inputTokens":10,"outputTokens":1,"cacheReadTokens":0,"cacheWriteTokens":0}}}},"timestamp":"2026-06-11T18:00:00Z"}"#,
+            r#"{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.5":{"requests":{"count":4},"usage":{"inputTokens":1000,"outputTokens":50,"cacheReadTokens":600,"cacheWriteTokens":100},"tokenDetails":{"input":{"tokenCount":280},"output":{"tokenCount":50}}},"claude-sonnet-4.6":{"requests":{"count":2},"usage":{"inputTokens":500,"outputTokens":20,"cacheReadTokens":400,"cacheWriteTokens":0}}}},"timestamp":"2026-06-11T18:10:00Z"}"#,
+        ],
+    );
+
+    let provider = CopilotProvider::at(copilot);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.model_usage.len(), 2);
+    // Per-model tokenDetails wins over the derived subtraction (1000-600-100=300).
+    let gpt = rec.model_usage.get("gpt-5.5").unwrap();
+    assert_eq!(gpt.usage.input_tokens, 280);
+    assert_eq!(gpt.assistant_message_count, 4);
+    // No tokenDetails for the second model: derived 500-400-0=100.
+    let sonnet = rec.model_usage.get("claude-sonnet-4.6").unwrap();
+    assert_eq!(sonnet.usage.input_tokens, 100);
+    assert_eq!(sonnet.usage.cache_read_tokens, 400);
+    // The record-level rollup sums the last shutdown only.
+    assert_eq!(rec.usage.input_tokens, 380);
+    assert_eq!(rec.usage.output_tokens, 70);
+}
+
+#[test]
+fn copilot_session_without_shutdown_degrades_to_zero_usage() {
+    let tmp = TempDir::new().unwrap();
+    let copilot = tmp.path().join(".copilot");
+    write_lines(
+        &copilot.join("session-state/eeeeeeee-0000-0000-0000-000000000005/events.jsonl"),
+        &[
+            r#"{"type":"user.message","data":{"content":"hello"},"timestamp":"2026-06-11T19:00:00Z"}"#,
+            r#"{"type":"assistant.message","data":{"model":"claude-sonnet-4.6","content":"hi"},"timestamp":"2026-06-11T19:00:10Z"}"#,
+        ],
+    );
+    // Killed sessions keep their sidecar; cwd and title come from it.
+    fs::write(
+        copilot.join("session-state/eeeeeeee-0000-0000-0000-000000000005/workspace.yaml"),
+        "id: eeeeeeee-0000-0000-0000-000000000005\ncwd: /Users/me/work\nname: \"quoted \\\"title\\\"\"\nclient_name: github/cli\n",
+    )
+    .unwrap();
+
+    let provider = CopilotProvider::at(copilot);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    // No session.start: the directory uuid stands in for the session id.
+    assert_eq!(
+        rec.session_id.as_deref(),
+        Some("eeeeeeee-0000-0000-0000-000000000005")
+    );
+    assert_eq!(rec.project_display, "/Users/me/work");
+    assert_eq!(rec.usage.total_tokens(), 0);
+    assert!(rec.model_usage.is_empty());
+    assert_eq!(rec.message_count, 2);
+    assert_eq!(rec.duration_ms, 10_000);
+
+    let extras: serde_json::Value = serde_json::from_str(rec.extras.as_deref().unwrap()).unwrap();
+    assert_eq!(extras["name"].as_str(), Some("quoted \"title\""));
+    assert_eq!(extras["client_name"].as_str(), Some("github/cli"));
+}
+
+// --- VS Code Copilot Chat ---
+
+#[test]
+fn copilot_vscode_enumerate_maps_workspace_folders_and_empty_window() {
+    let tmp = TempDir::new().unwrap();
+    let user_dir = tmp.path().join("Code/User");
+    let ws = user_dir.join("workspaceStorage");
+
+    fs::create_dir_all(ws.join("hash1/chatSessions")).unwrap();
+    fs::write(
+        ws.join("hash1/workspace.json"),
+        r#"{"folder":"file:///Users/me/My%20Project"}"#,
+    )
+    .unwrap();
+    fs::write(ws.join("hash1/chatSessions/a.json"), "{}").unwrap();
+
+    // .code-workspace setups store a `workspace` URI instead of `folder`.
+    fs::create_dir_all(ws.join("hash2/chatSessions")).unwrap();
+    fs::write(
+        ws.join("hash2/workspace.json"),
+        r#"{"workspace":"file:///Users/me/multi.code-workspace"}"#,
+    )
+    .unwrap();
+    fs::write(ws.join("hash2/chatSessions/b.jsonl"), "").unwrap();
+
+    // Missing workspace.json is tolerated (no project label).
+    fs::create_dir_all(ws.join("hash3/chatSessions")).unwrap();
+    fs::write(ws.join("hash3/chatSessions/c.json"), "{}").unwrap();
+
+    // Hashes without chatSessions are not sessions.
+    fs::create_dir_all(ws.join("hash4")).unwrap();
+    fs::write(ws.join("hash4/workspace.json"), r#"{"folder":"file:///x"}"#).unwrap();
+
+    fs::create_dir_all(user_dir.join("globalStorage/emptyWindowChatSessions")).unwrap();
+    fs::write(
+        user_dir.join("globalStorage/emptyWindowChatSessions/e.json"),
+        "{}",
+    )
+    .unwrap();
+
+    let provider = CopilotVscodeProvider::at(user_dir);
+    assert_eq!(provider.id(), "copilot-vscode");
+    assert!(provider.enabled());
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 4);
+
+    let by_name = |name: &str| {
+        files
+            .iter()
+            .find(|f| f.path.file_name().unwrap().to_string_lossy() == name)
+            .unwrap()
+    };
+    assert_eq!(by_name("a.json").project_display, "/Users/me/My Project");
+    assert_eq!(
+        by_name("b.jsonl").project_display,
+        "/Users/me/multi.code-workspace"
+    );
+    assert_eq!(by_name("c.json").project_display, "");
+    assert_eq!(by_name("e.json").project_display, "(empty window)");
+}
+
+fn vscode_request(model: &str, ts: i64, user_text: &str, answer: &str) -> serde_json::Value {
+    serde_json::json!({
+        "requestId": format!("req-{ts}"),
+        "message": {"text": user_text},
+        "modelId": model,
+        "timestamp": ts,
+        "response": [
+            {"value": answer, "supportThemeIcons": false},
+            {"kind": "thinking", "value": "hmm"},
+            {"kind": "toolInvocationSerialized", "toolId": "copilot_readFile"},
+            {"kind": "textEditGroup", "uri": {"path": "/Users/me/proj/src/lib.rs", "scheme": "file"}}
+        ],
+        "result": {
+            "metadata": {"toolCallRounds": [{"toolCalls": [{"name": "read_file"}, {"name": "mcp_nixos_nix"}]}]},
+            "timings": {"totalElapsed": 4200}
+        },
+        "modelState": {"completedAt": ts + 5000}
+    })
+}
+
+#[test]
+fn copilot_vscode_parse_monolithic_session() {
+    let tmp = TempDir::new().unwrap();
+    let user_dir = tmp.path().join("Code/User");
+    let dir = user_dir.join("workspaceStorage/hash1/chatSessions");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        user_dir.join("workspaceStorage/hash1/workspace.json"),
+        r#"{"folder":"file:///Users/me/proj"}"#,
+    )
+    .unwrap();
+
+    let session = serde_json::json!({
+        "version": 3,
+        "sessionId": "vsc-sess-1",
+        "creationDate": 1769763926111i64,
+        "lastMessageDate": 1769764442409i64,
+        "customTitle": "MCP Tools Overview",
+        "initialLocation": "panel",
+        "requests": [vscode_request("copilot/claude-sonnet-4.5", 1769763934260i64, "list your MCP tools", "The server exposes **2 tools**.")]
+    });
+    fs::write(dir.join("vsc-sess-1.json"), session.to_string()).unwrap();
+
+    let provider = CopilotVscodeProvider::at(user_dir);
+    let files = provider.enumerate().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].project_display, "/Users/me/proj");
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.session_id.as_deref(), Some("vsc-sess-1"));
+    // The `copilot/` prefix is stripped so pricing tiers match.
+    assert_eq!(rec.model.as_deref(), Some("claude-sonnet-4.5"));
+    assert_eq!(rec.message_count, 2);
+    assert_eq!(
+        rec.usage.total_tokens(),
+        0,
+        "VS Code stores no token counts"
+    );
+    assert!(rec.embedded_cost.is_none());
+
+    let stats = rec.model_usage.get("claude-sonnet-4.5").unwrap();
+    assert_eq!(stats.usage.total_tokens(), 0);
+    assert_eq!(stats.assistant_message_count, 1);
+
+    let texts: Vec<(&str, &str)> = rec
+        .messages
+        .iter()
+        .map(|m| (m.msg_type.as_str(), m.content.as_str()))
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            ("user", "list your MCP tools"),
+            ("assistant", "The server exposes **2 tools**.")
+        ]
+    );
+
+    // toolCallRounds is authoritative; the serialized part is its rendering.
+    assert_eq!(rec.tool_names, vec!["read_file", "mcp_nixos_nix"]);
+    assert_eq!(rec.thinking_block_count, 1);
+    assert_eq!(rec.file_paths_modified, vec!["/Users/me/proj/src/lib.rs"]);
+    assert_eq!(
+        rec.turn_durations,
+        vec![(4200, "2026-01-30T09:05:34.260Z".to_string())]
+    );
+
+    assert_eq!(
+        rec.first_timestamp.unwrap().timestamp_millis(),
+        1769763926111
+    );
+    assert_eq!(
+        rec.last_timestamp.unwrap().timestamp_millis(),
+        1769764442409
+    );
+
+    let extras: serde_json::Value = serde_json::from_str(rec.extras.as_deref().unwrap()).unwrap();
+    assert_eq!(extras["custom_title"].as_str(), Some("MCP Tools Overview"));
+    assert_eq!(extras["format"].as_str(), Some("json"));
+}
+
+#[test]
+fn copilot_vscode_parse_replays_delta_log() {
+    let tmp = TempDir::new().unwrap();
+    let user_dir = tmp.path().join("Code/User");
+    let dir = user_dir.join("workspaceStorage/hash1/chatSessions");
+    fs::create_dir_all(&dir).unwrap();
+
+    // Snapshot has no requests and no lastMessageDate (common in delta logs);
+    // ops append two requests, then patch the second one's text in place.
+    let snapshot = serde_json::json!({
+        "kind": 0,
+        "v": {"version": 3, "sessionId": "vsc-delta-1", "creationDate": 1769700000000i64, "requests": []}
+    });
+    let append = serde_json::json!({
+        "kind": 2, "k": ["requests"], "i": null,
+        "v": [vscode_request("copilot/gpt-5.5", 1769700010000i64, "first", "one")]
+    });
+    let insert = serde_json::json!({
+        "kind": 2, "k": ["requests"], "i": 1,
+        "v": [vscode_request("copilot/gpt-5.5", 1769700020000i64, "second", "two")]
+    });
+    let set = serde_json::json!({
+        "kind": 1, "k": ["requests", 1, "message", "text"], "v": "second (edited)"
+    });
+    let unknown = serde_json::json!({"kind": 9, "k": ["whatever"], "v": 1});
+    write_lines(
+        &dir.join("vsc-delta-1.jsonl"),
+        &[
+            &snapshot.to_string(),
+            &append.to_string(),
+            &insert.to_string(),
+            &set.to_string(),
+            &unknown.to_string(),
+        ],
+    );
+
+    let provider = CopilotVscodeProvider::at(user_dir);
+    let files = provider.enumerate().unwrap();
+    let rec = provider.parse(&files[0]).unwrap();
+
+    assert_eq!(rec.session_id.as_deref(), Some("vsc-delta-1"));
+    assert_eq!(rec.message_count, 4);
+    let user_texts: Vec<&str> = rec
+        .messages
+        .iter()
+        .filter(|m| m.msg_type == "user")
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(user_texts, vec!["first", "second (edited)"]);
+
+    // No lastMessageDate: the newest request activity stands in
+    // (second request's modelState.completedAt).
+    assert_eq!(
+        rec.first_timestamp.unwrap().timestamp_millis(),
+        1769700000000
+    );
+    assert_eq!(
+        rec.last_timestamp.unwrap().timestamp_millis(),
+        1769700025000
+    );
+    assert_eq!(rec.usage.total_tokens(), 0);
+
+    let extras: serde_json::Value = serde_json::from_str(rec.extras.as_deref().unwrap()).unwrap();
+    assert_eq!(extras["format"].as_str(), Some("jsonl"));
 }

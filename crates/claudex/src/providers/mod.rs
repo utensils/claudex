@@ -4,13 +4,13 @@
 //! turn one into a normalized [`ProviderRecord`] (`parse`). The index sync loop
 //! is provider-agnostic: it reconciles the enumerated files against the rows it
 //! already holds for that provider and writes the parsed records, tagging every
-//! row with [`SessionProvider::id`]. Claude, Codex, Pi, and OpenClaw all share
-//! this contract.
+//! row with [`SessionProvider::id`]. Claude, Codex, Copilot (CLI and VS Code),
+//! Pi, and OpenClaw all share this contract.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::parser::ModelSessionStats;
@@ -18,14 +18,31 @@ use crate::types::TokenUsage;
 
 pub mod claude;
 pub mod codex;
+pub mod copilot;
+pub mod copilot_vscode;
 pub mod openclaw;
 pub mod pi;
 pub(crate) mod pr;
 
 pub use claude::ClaudeProvider;
 pub use codex::CodexProvider;
+pub use copilot::CopilotProvider;
+pub use copilot_vscode::CopilotVscodeProvider;
 pub use openclaw::OpenClawProvider;
 pub use pi::PiProvider;
+
+/// Expand a leading `~/` (or bare `~`) to the user's home directory. Used by
+/// providers whose data root can be overridden through an environment variable.
+pub(crate) fn expand_home(value: &str) -> Result<PathBuf> {
+    if let Some(rest) = value.strip_prefix("~/") {
+        let home = dirs::home_dir().context("could not find home directory")?;
+        Ok(home.join(rest))
+    } else if value == "~" {
+        dirs::home_dir().context("could not find home directory")
+    } else {
+        Ok(PathBuf::from(value))
+    }
+}
 
 /// A transcript file discovered by a provider, with the metadata the sync loop
 /// needs that does not come from parsing the file's contents.
@@ -115,6 +132,8 @@ pub trait SessionProvider {
 pub enum Provider {
     Claude(ClaudeProvider),
     Codex(CodexProvider),
+    Copilot(CopilotProvider),
+    CopilotVscode(CopilotVscodeProvider),
     OpenClaw(OpenClawProvider),
     Pi(PiProvider),
 }
@@ -124,6 +143,8 @@ impl Provider {
         match self {
             Provider::Claude(p) => p,
             Provider::Codex(p) => p,
+            Provider::Copilot(p) => p,
+            Provider::CopilotVscode(p) => p,
             Provider::OpenClaw(p) => p,
             Provider::Pi(p) => p,
         }
@@ -157,6 +178,8 @@ pub fn enabled_default() -> Result<Vec<Provider>> {
     let candidates = vec![
         Provider::Claude(ClaudeProvider::new()?),
         Provider::Codex(CodexProvider::new()?),
+        Provider::Copilot(CopilotProvider::new()?),
+        Provider::CopilotVscode(CopilotVscodeProvider::new()?),
         Provider::OpenClaw(OpenClawProvider::new()?),
         Provider::Pi(PiProvider::new()?),
     ];

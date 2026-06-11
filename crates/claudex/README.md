@@ -2,7 +2,7 @@
 
 Reusable Rust library for indexing and querying local agent coding sessions.
 
-The crate reads Claude Code, OpenAI Codex, Pi, and OpenClaw transcripts through
+The crate reads Claude Code, OpenAI Codex, GitHub Copilot (CLI and VS Code), Pi, and OpenClaw transcripts through
 the same provider/index pipeline used by the CLI, then returns typed report
 structs instead of terminal-rendered tables.
 
