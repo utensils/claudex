@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/utensils/claudex/compare/v0.10.1...v0.11.0) (2026-06-11)
+
+
+### Features
+
+* **providers:** add GitHub Copilot CLI and VS Code Copilot Chat providers ([#77](https://github.com/utensils/claudex/issues/77)) ([e668ec6](https://github.com/utensils/claudex/commit/e668ec66b78701d3942779d8ab57cc9f840c6d96))
+
 ## [0.10.1](https://github.com/utensils/claudex/compare/v0.10.0...v0.10.1) (2026-06-10)
 
 
