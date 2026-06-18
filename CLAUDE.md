@@ -101,8 +101,10 @@ breaking change bumps the minor (not major).
 
 To **re-build/re-publish an existing tag** (e.g. a flaked runner), use the
 workflow's `workflow_dispatch` with the `tag` input (`vX.Y.Z`). That path
-rebuilds assets and refreshes the release but deliberately **does not
-republish to crates.io or the AUR**.
+rebuilds assets, refreshes the GitHub Release, and idempotently resumes
+crates.io publishing for any workspace crates that are still missing for that
+version. Already-published crates are skipped. It deliberately **does not
+republish to the AUR**.
 
 ### Version bump — where it lands (all automatic)
 
@@ -137,9 +139,10 @@ actually includes every registered file.
 Jobs run in order: `release-please` (maintains the release PR / cuts the
 tag + draft release on push to `main`) → `resolve-tag` (emits the tag, or
 mints one from the `workflow_dispatch` input) → `build` → `publish-crates`
-→ `publish-release` → `publish-aur`. `publish-crates` is a successful no-op
-for `workflow_dispatch` rebuilds, so manual asset refreshes never republish
-crates.io packages.
+→ `publish-release` → `publish-aur`. `publish-crates` checks crates.io with
+an explicit user agent, skips package versions that are already visible, and
+publishes any missing workspace crates. Manual rebuilds still never republish
+to the AUR.
 
 Build matrix targets (4):
 

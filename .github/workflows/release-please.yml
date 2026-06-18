@@ -22,6 +22,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CRATES_IO_USER_AGENT: claudex-release-ci (https://github.com/utensils/claudex)
 
 jobs:
   release-please:
@@ -297,61 +298,98 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
-      - name: Skip crates.io publish on manual rebuild
-        if: github.event_name == 'workflow_dispatch'
-        run: echo "Skipping crates.io publish for workflow_dispatch rebuild."
-
       - uses: actions/checkout@v6
-        if: github.event_name == 'push'
         with:
           ref: ${{ needs.resolve-tag.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
-        if: github.event_name == 'push'
 
       - uses: Swatinem/rust-cache@v2
-        if: github.event_name == 'push'
         with:
           key: crates-publish
           cache-on-failure: true
 
-      - name: Gate on CARGO_REGISTRY_TOKEN
-        if: github.event_name == 'push'
+      - name: Publish missing crates.io packages
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
         run: |
-          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
-            echo "::error::CARGO_REGISTRY_TOKEN secret is required to publish crates.io packages"
+          set -euo pipefail
+
+          VERSION="${TAG#v}"
+          if [ "$VERSION" = "$TAG" ]; then
+            echo "::error::Release tag must look like vX.Y.Z; got '$TAG'"
             exit 1
           fi
 
-      - name: Publish library crate
-        if: github.event_name == 'push'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p claudex --locked
-
-      - name: Wait for library crate availability
-        if: github.event_name == 'push'
-        env:
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 60); do
-            if curl -fsS "https://crates.io/api/v1/crates/claudex/${VERSION}" >/dev/null; then
-              exit 0
+          assert_manifest_version() {
+            local package="$1"
+            local manifest="$2"
+            local manifest_version
+            manifest_version="$(awk -F '"' '/^version = / { print $2; exit }' "$manifest")"
+            if [ "$manifest_version" != "$VERSION" ]; then
+              echo "::error::${package} manifest version ${manifest_version} does not match release tag ${TAG}"
+              exit 1
             fi
-            echo "Waiting for claudex ${VERSION} to resolve on crates.io (${attempt}/60)..."
-            sleep 10
-          done
-          echo "::error::claudex ${VERSION} did not become visible on crates.io in time"
-          exit 1
+          }
 
-      - name: Publish CLI crate
-        if: github.event_name == 'push'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p claudex-cli --locked
+          crate_status() {
+            local crate="$1"
+            curl -sS \
+              -A "$CRATES_IO_USER_AGENT" \
+              -o /dev/null \
+              -w '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          }
+
+          crate_exists() {
+            local crate="$1"
+            local status
+            status="$(crate_status "$crate")"
+            case "$status" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *)
+                echo "::error::Unexpected crates.io response for ${crate} ${VERSION}: HTTP ${status}"
+                exit 1
+                ;;
+            esac
+          }
+
+          wait_for_crate() {
+            local crate="$1"
+            for attempt in $(seq 1 60); do
+              if crate_exists "$crate"; then
+                return 0
+              fi
+              echo "Waiting for ${crate} ${VERSION} to resolve on crates.io (${attempt}/60)..."
+              sleep 10
+            done
+            echo "::error::${crate} ${VERSION} did not become visible on crates.io in time"
+            exit 1
+          }
+
+          publish_package() {
+            local package="$1"
+            local crate="$2"
+            if crate_exists "$crate"; then
+              echo "${crate} ${VERSION} is already published; skipping ${package}."
+              return 0
+            fi
+            if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+              echo "::error::CARGO_REGISTRY_TOKEN secret is required to publish ${crate} ${VERSION}"
+              exit 1
+            fi
+
+            cargo publish -p "$package" --locked
+            wait_for_crate "$crate"
+          }
+
+          assert_manifest_version claudex crates/claudex/Cargo.toml
+          assert_manifest_version claudex-cli crates/claudex-cli/Cargo.toml
+
+          publish_package claudex claudex
+          publish_package claudex-cli claudex-cli
 
   publish-aur:
     name: Publish AUR (${{ matrix.pkgname }})
