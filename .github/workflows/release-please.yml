@@ -33,12 +33,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Gate on the AGGREGATE releases_created output, not a per-path one.
-    # release-please attributes the (single, shared-component) release to
-    # whichever package had direct commits — a library-only release sets
-    # crates/claudex--release_created but NOT the CLI's, so keying every
-    # downstream job on the CLI path silently skips the whole publish chain
-    # (this shipped v0.10.1 as an asset-less release). tag_name/version are
-    # coalesced across both paths; they share one vX.Y.Z tag either way.
+    # The linked-versions plugin keeps both crate manifests on one version.
+    # Only the library component creates the shared unprefixed GitHub release;
+    # the CLI component skips its own release to avoid a duplicate vX.Y.Z tag.
+    # Keep the aggregate gate and coalesced outputs for compatibility with
+    # manual recovery of releases created under the previous configuration.
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
       tag_name: ${{ steps.release.outputs['crates/claudex-cli--tag_name'] || steps.release.outputs['crates/claudex--tag_name'] }}
