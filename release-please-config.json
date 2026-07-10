@@ -11,7 +11,14 @@
     { "type": "build", "section": "Build", "hidden": true },
     { "type": "ci", "section": "CI", "hidden": true }
   ],
-  "plugins": ["cargo-workspace"],
+  "plugins": [
+    { "type": "cargo-workspace", "merge": false },
+    {
+      "type": "linked-versions",
+      "groupName": "claudex",
+      "components": ["claudex", "claudex-cli"]
+    }
+  ],
   "packages": {
     "crates/claudex": {
       "release-type": "rust",
@@ -23,8 +30,9 @@
     "crates/claudex-cli": {
       "release-type": "rust",
       "package-name": "claudex-cli",
-      "component": "claudex",
+      "component": "claudex-cli",
       "include-component-in-tag": false,
+      "skip-github-release": true,
       "extra-files": [
         "README.md",
         "/README.md",

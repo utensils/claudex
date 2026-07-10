@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.11.1](https://github.com/utensils/claudex/compare/v0.11.0...v0.11.1) (2026-07-10)
+## [0.12.0](https://github.com/utensils/claudex/compare/v0.11.0...v0.12.0) (2026-07-10)
 
 
 ### Dependencies
