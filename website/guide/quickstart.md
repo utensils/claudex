@@ -38,8 +38,10 @@ claudex cost --limit 10
 ```
 
 Aggregates token usage across every session in each project and every provider,
-applies the correct pricing tier per model (Fable / Opus / Sonnet / Haiku, OpenAI
-gpt-5 / gpt-4; Pi/OpenClaw report their own cost when available; Copilot is priced at API-equivalent rates), and sorts by cost descending.
+applies the correct pricing tier per model (Fable / Opus / Sonnet / Haiku,
+OpenAI Sol / Terra / Luna / gpt-5 / gpt-4; Pi/OpenClaw report their own cost
+when available; Copilot is priced at API-equivalent rates), and sorts by cost
+descending.
 
 Add `--per-session` to break it out by individual session,
 `--project utensils` to filter to projects whose path contains `utensils`, or

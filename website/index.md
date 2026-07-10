@@ -41,7 +41,7 @@ features:
       provider key for unambiguous scripting.
   - title: Honest pricing math
     details:
-      Fable / Opus / Sonnet / Haiku and OpenAI gpt-5 / gpt-4 tiers, applied per model.
+      Fable / Opus / Sonnet / Haiku and OpenAI Sol / Terra / Luna / gpt-5 / gpt-4 tiers, applied per model.
       Pi and OpenClaw report their own per-message cost when available (local
       models = $0). Sub-cent values fall back to four decimals.
   - title: FTS5 full-text search

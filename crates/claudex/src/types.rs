@@ -95,6 +95,14 @@ impl ModelPricing {
             }
         } else if m.contains("sonnet") {
             sonnet_pricing()
+        } else if has_any(&m, &["gpt-5.6-sol"]) {
+            // GPT-5.6+ bills cache writes at 1.25x uncached input and cache
+            // reads at 0.1x, unlike earlier OpenAI models in this table.
+            openai_56_pricing(5.0, 30.0)
+        } else if has_any(&m, &["gpt-5.6-terra"]) {
+            openai_56_pricing(2.50, 15.0)
+        } else if has_any(&m, &["gpt-5.6-luna"]) {
+            openai_56_pricing(1.0, 6.0)
         } else if has_any(&m, &["gpt-5.5-pro"]) {
             openai_pricing(30.0, 30.0, 180.0)
         } else if has_any(&m, &["gpt-5.5"]) {
@@ -162,6 +170,12 @@ impl ModelPricing {
             "Haiku"
         } else if m.contains("sonnet") {
             "Sonnet"
+        } else if m.contains("gpt-5.6-sol") {
+            "Sol"
+        } else if m.contains("gpt-5.6-terra") {
+            "Terra"
+        } else if m.contains("gpt-5.6-luna") {
+            "Luna"
         } else if has_any(&m, &["gpt-oss", "gpt_oss", "gptoss"]) {
             "GPT-OSS"
         } else if is_gpt5(&m) {
@@ -248,6 +262,15 @@ impl ModelPricing {
 
 fn is_gpt5(m: &str) -> bool {
     m.contains("gpt-5") || m.contains("gpt5")
+}
+
+fn openai_56_pricing(input_per_mtok: f64, output_per_mtok: f64) -> ModelPricing {
+    ModelPricing {
+        input_per_mtok,
+        output_per_mtok,
+        cache_write_per_mtok: input_per_mtok * 1.25,
+        cache_read_per_mtok: input_per_mtok * 0.10,
+    }
 }
 
 fn is_gpt4(m: &str) -> bool {
@@ -628,6 +651,20 @@ mod tests {
     }
 
     #[test]
+    fn gpt56_tiers_price_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // Input + output + 1.25x cache write + 0.1x cache read.
+        assert!((u.cost_for_model(Some("gpt-5.6-sol")) - 41.75).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("gpt-5.6-terra")) - 20.875).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("gpt-5.6-luna")) - 8.35).abs() < 0.0001);
+    }
+
+    #[test]
     fn gpt4_all_token_types() {
         let u = TokenUsage {
             input_tokens: 1_000_000,
@@ -660,6 +697,9 @@ mod tests {
 
     #[test]
     fn gpt_name_labels() {
+        assert_eq!(ModelPricing::name(Some("gpt-5.6-sol")), "Sol");
+        assert_eq!(ModelPricing::name(Some("gpt-5.6-terra")), "Terra");
+        assert_eq!(ModelPricing::name(Some("gpt-5.6-luna")), "Luna");
         assert_eq!(ModelPricing::name(Some("gpt-5.5")), "GPT-5");
         assert_eq!(ModelPricing::name(Some("gpt-5-codex")), "GPT-5");
         assert_eq!(ModelPricing::name(Some("gpt-4o")), "GPT-4");
