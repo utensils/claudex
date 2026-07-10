@@ -39,18 +39,18 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 
 ## Columns
 
-| Column      | Source                                                                         |
-| ----------- | ------------------------------------------------------------------------------ |
-| Model       | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). |
-| Family      | Fable / Opus / Sonnet / Haiku / GPT-5 / GPT-4 / … (derived from the name).     |
-| Sessions    | Distinct sessions that used the model.                                         |
-| Input       | Total input tokens.                                                            |
-| Output      | Total output tokens.                                                           |
-| Cache Write | Total cache-creation tokens.                                                   |
-| Cache Read  | Total cache-read tokens.                                                       |
-| Avg/Session | Average spend per session using the model.                                     |
-| Avg Tokens  | Average total tokens per session using the model.                              |
-| Cost (USD)  | Model-specific cost.                                                           |
+| Column      | Source                                                                                          |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| Model       | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`).                  |
+| Family      | Sol / Terra / Luna / Fable / Opus / Sonnet / Haiku / GPT-5 / GPT-4 / … (derived from the name). |
+| Sessions    | Distinct sessions that used the model.                                                          |
+| Input       | Total input tokens.                                                                             |
+| Output      | Total output tokens.                                                                            |
+| Cache Write | Total cache-creation tokens.                                                                    |
+| Cache Read  | Total cache-read tokens.                                                                        |
+| Avg/Session | Average spend per session using the model.                                                      |
+| Avg Tokens  | Average total tokens per session using the model.                                               |
+| Cost (USD)  | Model-specific cost.                                                                            |
 
 ## JSON shape
 
@@ -79,7 +79,8 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 
 - **Family detection.** `model_family` is a substring match on the model tag:
   `fable` → `Fable`, `mythos` → `Mythos`, `opus` → `Opus`, `haiku` → `Haiku`,
-  `sonnet` (or a missing model id) → `Sonnet`, `gpt-5`/`gpt5` → `GPT-5`,
+  `sonnet` (or a missing model id) → `Sonnet`, GPT-5.6 model IDs → `Sol`,
+  `Terra`, or `Luna`, other `gpt-5`/`gpt5` → `GPT-5`,
   `gpt-4`/`gpt4` → `GPT-4`, plus dedicated labels for common local and
   open-weight families (Qwen, Llama, DeepSeek, Mistral, …); anything
   unrecognized → `Other`. See [Pricing model](/reference/pricing).

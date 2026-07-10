@@ -18,9 +18,11 @@ claudex sessions
 
 ## Costs look too low / too high
 
-Costs are _estimated_, not invoiced. They come from the token-usage blocks
-Claude Code records, multiplied by published Fable / Opus / Sonnet / Haiku
-pricing tiers.
+Costs are _estimated_, not invoiced. For Claude, Codex, and Copilot CLI they
+come from locally recorded token-usage blocks multiplied by the matching
+published model tier, including OpenAI Sol / Terra / Luna. Pi and OpenClaw use
+provider-reported costs when available, while VS Code Copilot Chat has no local
+token counts and reports $0.
 
 - **Too low?** Check for mixed-model sessions. Each message is priced by its
   own model, so a session that started with Opus and finished with Sonnet

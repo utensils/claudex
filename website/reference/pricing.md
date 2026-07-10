@@ -30,30 +30,51 @@ is cheaper still — so claudex routes each to a dedicated branch.
 ## OpenAI (`gpt-*`) tiers
 
 OpenAI models carry many sub-tiers. claudex matches the **most specific** name
-first, falling back to a base `gpt-5` / `gpt-4o` rate. For OpenAI models the
-**cache-write** rate equals the input rate, and the **cache-read** rate is the
-posted "cached input" rate.
+first, falling back to a base `gpt-5` / `gpt-4o` rate. Claudex currently uses
+the **Standard short-context** schedule because provider transcripts do not
+record the billing context-length band. For OpenAI models the
+**cache-read** rate is the posted "cached input" rate. For GPT-5.6 and later,
+cache writes cost 1.25x uncached input; earlier OpenAI rows use the input rate.
+The GPT-5.6 rates and cache policy come from OpenAI's
+[launch announcement](https://openai.com/index/previewing-gpt-5-6-sol/) and
+[preview documentation](https://help.openai.com/en/articles/20001325-a-preview-of-gpt-5-6-sol-terra-and-luna).
 
-| Model match                                 | Input         | Output         | Cache read    |
-| ------------------------------------------- | ------------- | -------------- | ------------- |
-| `gpt-5.5-pro`, `gpt-5.4-pro`                | $30.00 / MTok | $180.00 / MTok | $30.00 / MTok |
-| `gpt-5-pro`                                 | $15.00 / MTok | $120.00 / MTok | $15.00 / MTok |
-| `gpt-5.5`                                   | $5.00 / MTok  | $30.00 / MTok  | $0.50 / MTok  |
-| `gpt-5.4`                                   | $2.50 / MTok  | $15.00 / MTok  | $0.25 / MTok  |
-| `gpt-5.4-mini`                              | $0.75 / MTok  | $4.50 / MTok   | $0.075 / MTok |
-| `gpt-5.4-nano`                              | $0.20 / MTok  | $1.25 / MTok   | $0.02 / MTok  |
-| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2` | $1.75 / MTok  | $14.00 / MTok  | $0.175 / MTok |
-| `gpt-5` (base / other `gpt-5*`)             | $1.25 / MTok  | $10.00 / MTok  | $0.125 / MTok |
-| `gpt-4.1`                                   | $2.00 / MTok  | $8.00 / MTok   | $0.50 / MTok  |
-| `gpt-4.1-mini`                              | $0.40 / MTok  | $1.60 / MTok   | $0.10 / MTok  |
-| `gpt-4.1-nano`                              | $0.10 / MTok  | $0.40 / MTok   | $0.025 / MTok |
-| `gpt-4.5-preview`                           | $75.00 / MTok | $150.00 / MTok | $37.50 / MTok |
-| `gpt-4o-mini`                               | $0.15 / MTok  | $0.60 / MTok   | $0.075 / MTok |
-| `gpt-4o-2024-05-13`                         | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok  |
-| `gpt-4-turbo`, `gpt-4-1106`, `gpt-4-0125`   | $10.00 / MTok | $30.00 / MTok  | $10.00 / MTok |
-| `gpt-4-32k`                                 | $60.00 / MTok | $120.00 / MTok | $60.00 / MTok |
-| `gpt-4` (classic 8k / 0613)                 | $30.00 / MTok | $60.00 / MTok  | $30.00 / MTok |
-| `gpt-4o` (base / other `gpt-4*`)            | $2.50 / MTok  | $10.00 / MTok  | $1.25 / MTok  |
+| Model match                                 | Input         | Output         | Cache write   | Cache read    |
+| ------------------------------------------- | ------------- | -------------- | ------------- | ------------- |
+| `gpt-5.6-sol`                               | $5.00 / MTok  | $30.00 / MTok  | $6.25 / MTok  | $0.50 / MTok  |
+| `gpt-5.6-terra`                             | $2.50 / MTok  | $15.00 / MTok  | $3.125 / MTok | $0.25 / MTok  |
+| `gpt-5.6-luna`                              | $1.00 / MTok  | $6.00 / MTok   | $1.25 / MTok  | $0.10 / MTok  |
+| `gpt-5.5-pro`, `gpt-5.4-pro`                | $30.00 / MTok | $180.00 / MTok | $30.00 / MTok | $30.00 / MTok |
+| `gpt-5-pro`                                 | $15.00 / MTok | $120.00 / MTok | $15.00 / MTok | $15.00 / MTok |
+| `gpt-5.5`                                   | $5.00 / MTok  | $30.00 / MTok  | $5.00 / MTok  | $0.50 / MTok  |
+| `gpt-5.4`                                   | $2.50 / MTok  | $15.00 / MTok  | $2.50 / MTok  | $0.25 / MTok  |
+| `gpt-5.4-mini`                              | $0.75 / MTok  | $4.50 / MTok   | $0.75 / MTok  | $0.075 / MTok |
+| `gpt-5.4-nano`                              | $0.20 / MTok  | $1.25 / MTok   | $0.20 / MTok  | $0.02 / MTok  |
+| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2` | $1.75 / MTok  | $14.00 / MTok  | $1.75 / MTok  | $0.175 / MTok |
+| `gpt-5` (base / other `gpt-5*`)             | $1.25 / MTok  | $10.00 / MTok  | $1.25 / MTok  | $0.125 / MTok |
+| `gpt-4.1`                                   | $2.00 / MTok  | $8.00 / MTok   | $2.00 / MTok  | $0.50 / MTok  |
+| `gpt-4.1-mini`                              | $0.40 / MTok  | $1.60 / MTok   | $0.40 / MTok  | $0.10 / MTok  |
+| `gpt-4.1-nano`                              | $0.10 / MTok  | $0.40 / MTok   | $0.10 / MTok  | $0.025 / MTok |
+| `gpt-4.5-preview`                           | $75.00 / MTok | $150.00 / MTok | $75.00 / MTok | $37.50 / MTok |
+| `gpt-4o-mini`                               | $0.15 / MTok  | $0.60 / MTok   | $0.15 / MTok  | $0.075 / MTok |
+| `gpt-4o-2024-05-13`                         | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok  | $5.00 / MTok  |
+| `gpt-4-turbo`, `gpt-4-1106`, `gpt-4-0125`   | $10.00 / MTok | $30.00 / MTok  | $10.00 / MTok | $10.00 / MTok |
+| `gpt-4-32k`                                 | $60.00 / MTok | $120.00 / MTok | $60.00 / MTok | $60.00 / MTok |
+| `gpt-4` (classic 8k / 0613)                 | $30.00 / MTok | $60.00 / MTok  | $30.00 / MTok | $30.00 / MTok |
+| `gpt-4o` (base / other `gpt-4*`)            | $2.50 / MTok  | $10.00 / MTok  | $2.50 / MTok  | $1.25 / MTok  |
+
+OpenAI also publishes these higher **Standard long-context** GPT-5.6 rates:
+
+| Model match     | Input         | Output        | Cache write   | Cache read   |
+| --------------- | ------------- | ------------- | ------------- | ------------ |
+| `gpt-5.6-sol`   | $10.00 / MTok | $45.00 / MTok | $12.50 / MTok | $1.00 / MTok |
+| `gpt-5.6-terra` | $5.00 / MTok  | $22.50 / MTok | $6.25 / MTok  | $0.50 / MTok |
+| `gpt-5.6-luna`  | $2.00 / MTok  | $9.00 / MTok  | $2.50 / MTok  | $0.20 / MTok |
+
+These are documented for completeness but cannot be selected reliably from
+the local transcript data, so claudex estimates long-context sessions at the
+short-context rates above. Batch, Flex, Priority, and regional-processing
+adjustments are likewise outside the transcript-derived estimate.
 
 (OpenAI tiers are list rates and approximate. The classic GPT-4 / Turbo / 32k
 tiers predate prompt caching, so their cache-read rate falls back to the input
@@ -69,7 +90,8 @@ The tier is chosen by substring-matching the model name, **most specific first**
 - `opus-4-5`/`4.6`/`4.7`/`4.8` → Opus 4.5+ rates; any other `opus` → legacy Opus.
 - `haiku-4-5` → Haiku 4.5; `3-haiku` (but not `3-5-haiku`) → the cheapest
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
-- `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
+- `gpt-5.6-sol` / `terra` / `luna` → dedicated rates and family labels.
+- Other `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
   including `gpt-4-turbo`/`-32k` and classic `gpt-4` — win over the `gpt-4o`
   base rate).
 - `sonnet`, or a **missing/empty** model id (old Claude transcripts) → Sonnet.
@@ -81,8 +103,8 @@ The tier is chosen by substring-matching the model name, **most specific first**
 So `claude-fable-5` maps to **Fable 5** ($10/$50), `claude-opus-4-8` maps to
 **Opus 4.5+** ($5/$25), an older `claude-opus-3` maps to **legacy Opus**
 ($15/$75), and unrecognized names are not charged. Note that the display
-**family label** (`models` command) is just `Fable`/`Mythos`/`Opus`/`Haiku`/
-`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
+**family label** (`models` command) is `Sol`/`Terra`/`Luna` for GPT-5.6, or
+`Fable`/`Mythos`/`Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
 (or fast from standard), but the **cost** does.
 
 ## Provider-supplied cost
