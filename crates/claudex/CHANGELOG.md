@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/utensils/claudex/compare/v0.11.0...v0.12.0) (2026-07-10)
+
+
+### Features
+
+* **pricing:** add GPT-5.6 model tiers ([#81](https://github.com/utensils/claudex/issues/81)) ([d1737e8](https://github.com/utensils/claudex/commit/d1737e8f8cdcf43de234b85d91806ca3f32d1187))
+
 ## [0.11.0](https://github.com/utensils/claudex/compare/v0.10.1...v0.11.0) (2026-06-11)
 
 
