@@ -9,23 +9,32 @@ Source of truth: `crates/claudex/src/types.rs`, `ModelPricing::for_model`.
 ## Anthropic (Claude) tiers
 
 Each Claude family carries one or more rate cards: Fable 5 sits above Opus as
-the frontier tier, the current Opus 4.5+ generation is priced well below older
-Opus models, fast-mode Opus carries a premium, and the original Claude 3 Haiku
-is cheaper still — so claudex routes each to a dedicated branch.
+the frontier tier, Opus 5 and the current 4.5+ generation are priced well below
+older Opus models, fast-mode Opus carries a premium, Sonnet 5 has a time-limited
+introductory rate, and the original Claude 3 Haiku is cheaper still.
 
-| Model tier              | Input         | Output         | Cache write    | Cache read    |
-| ----------------------- | ------------- | -------------- | -------------- | ------------- |
-| **Fable 5 / Mythos 5**  | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
-| **Opus 4.5+** (4.5–4.8) | $5.00 / MTok  | $25.00 / MTok  | $6.25 / MTok   | $0.50 / MTok  |
-| **Opus fast** (4.6/4.7) | $30.00 / MTok | $150.00 / MTok | $37.50 / MTok  | $3.00 / MTok  |
-| **Opus 4.8 fast**       | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
-| **Opus** (legacy 3/4)   | $15.00 / MTok | $75.00 / MTok  | $18.75 / MTok  | $1.50 / MTok  |
-| **Sonnet** (default)    | $3.00 / MTok  | $15.00 / MTok  | $3.75 / MTok   | $0.30 / MTok  |
-| **Haiku 4.5** (latest)  | $1.00 / MTok  | $5.00 / MTok   | $1.25 / MTok   | $0.10 / MTok  |
-| **Haiku 3.5** (legacy)  | $0.80 / MTok  | $4.00 / MTok   | $1.00 / MTok   | $0.08 / MTok  |
-| **Haiku 3**             | $0.25 / MTok  | $1.25 / MTok   | $0.3125 / MTok | $0.025 / MTok |
+| Model tier                                 | Input         | Output        | Cache write    | Cache read    |
+| ------------------------------------------ | ------------- | ------------- | -------------- | ------------- |
+| **Fable 5 / Mythos 5**                     | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus 5 / Opus 4.5–4.8**                  | $5.00 / MTok  | $25.00 / MTok | $6.25 / MTok   | $0.50 / MTok  |
+| **Opus 5 / Opus 4.8 fast**                 | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus** (legacy 3/4)                      | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok  | $1.50 / MTok  |
+| **Sonnet 5** (through August 31, 2026)     | $2.00 / MTok  | $10.00 / MTok | $2.50 / MTok   | $0.20 / MTok  |
+| **Sonnet 5** (starting September 1, 2026)¹ | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok   | $0.30 / MTok  |
+| **Sonnet 4.x / legacy default**            | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok   | $0.30 / MTok  |
+| **Haiku 4.5** (latest)                     | $1.00 / MTok  | $5.00 / MTok  | $1.25 / MTok   | $0.10 / MTok  |
+| **Haiku 3.5** (legacy)                     | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok   | $0.08 / MTok  |
+| **Haiku 3**                                | $0.25 / MTok  | $1.25 / MTok  | $0.3125 / MTok | $0.025 / MTok |
 
 (MTok = million tokens. These are Anthropic's published rates.)
+
+¹ Claudex currently computes Sonnet 5 with its introductory $2/$10 card. The
+scheduled standard row is documented now for visibility; a pricing-revision
+bump will switch computed rows after the introductory period ends. Cache-write
+figures use Anthropic's five-minute cache-write rate because transcripts do not
+distinguish five-minute from one-hour cache creation. See Anthropic's
+[model pricing](https://platform.claude.com/docs/en/about-claude/pricing) and
+[model overview](https://platform.claude.com/docs/en/about-claude/models/overview).
 
 ## OpenAI (`gpt-*`) tiers
 
@@ -85,24 +94,27 @@ rate. Pi-reported sessions use Pi's own cost instead — see below.)
 The tier is chosen by substring-matching the model name, **most specific first**:
 
 - `fable` / `mythos` → the Fable 5 frontier tier ($10/$50).
-- `opus-4-5`–`4.8` + `fast` → the fast-mode premium card ($30/$150 on 4.6/4.7,
-  $10/$50 on 4.8).
-- `opus-4-5`/`4.6`/`4.7`/`4.8` → Opus 4.5+ rates; any other `opus` → legacy Opus.
+- `opus-5` / `opus-4-8` + `fast` → the supported fast-mode premium card
+  ($10/$50).
+- `opus-5` or `opus-4-5`/`4.6`/`4.7`/`4.8` → current Opus rates; any other
+  `opus` → legacy Opus.
+- `sonnet-5` → the current introductory Sonnet 5 card through August 31, 2026;
+  other `sonnet` ids and missing/empty legacy model ids → standard Sonnet.
 - `haiku-4-5` → Haiku 4.5; `3-haiku` (but not `3-5-haiku`) → the cheapest
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
 - `gpt-5.6-sol` / `terra` / `luna` → dedicated rates and family labels.
 - Other `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
   including `gpt-4-turbo`/`-32k` and classic `gpt-4` — win over the `gpt-4o`
   base rate).
-- `sonnet`, or a **missing/empty** model id (old Claude transcripts) → Sonnet.
 - Anything else — local, open-weight, and unrecognized models (including
   Claude's `<synthetic>`) → **$0**, unless the provider reported its own cost
   (see below). This avoids fabricating Sonnet charges for Ollama/MLX/vLLM-style
   models.
 
-So `claude-fable-5` maps to **Fable 5** ($10/$50), `claude-opus-4-8` maps to
-**Opus 4.5+** ($5/$25), an older `claude-opus-3` maps to **legacy Opus**
-($15/$75), and unrecognized names are not charged. Note that the display
+So `claude-fable-5` maps to **Fable 5** ($10/$50), `claude-opus-5` maps to
+**current Opus** ($5/$25), `claude-sonnet-5` maps to its current introductory
+card ($2/$10), an older `claude-opus-3` maps to **legacy Opus** ($15/$75), and
+unrecognized names are not charged. Note that the display
 **family label** (`models` command) is `Sol`/`Terra`/`Luna` for GPT-5.6, or
 `Fable`/`Mythos`/`Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
 (or fast from standard), but the **cost** does.
@@ -177,10 +189,12 @@ accurate enough.
 ## Opus:Sonnet ratio
 
 **Legacy** Opus is exactly 5× Sonnet on every dimension ($15 vs $3 input, $75 vs
-$15 output, etc.). **Current** Opus 4.5+ is much cheaper — $5/$25 input/output,
-roughly 1.7× Sonnet — so do _not_ assume a 5× multiple for present-day Opus
-sessions. If an Opus cost looks lower than you expect, that's usually the 4.5+
-rate card, not an error; mid-session model switching can also lower it.
+$15 output, etc.). **Current** Opus 5 / 4.5+ is much cheaper — $5/$25
+input/output, roughly 1.7× the standard Sonnet card and 2.5× Sonnet 5's
+introductory card — so do _not_ assume a 5× multiple for present-day Opus
+sessions. If an Opus cost looks lower than you expect, that's usually the
+current Opus rate card, not an error; mid-session model switching can also
+lower it.
 
 ## Rendering
 

@@ -41,7 +41,7 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 
 | Column      | Source                                                                                          |
 | ----------- | ----------------------------------------------------------------------------------------------- |
-| Model       | Full model tag from Claude Code (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`).                  |
+| Model       | Full model tag from Claude Code (e.g. `claude-opus-5`, `claude-sonnet-5`).                      |
 | Family      | Sol / Terra / Luna / Fable / Opus / Sonnet / Haiku / GPT-5 / GPT-4 / … (derived from the name). |
 | Sessions    | Distinct sessions that used the model.                                                          |
 | Input       | Total input tokens.                                                                             |
@@ -57,7 +57,7 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 ```json
 [
   {
-    "model": "claude-opus-4-6",
+    "model": "claude-opus-5",
     "model_family": "Opus",
     "session_count": 467,
     "input_tokens": 1050304,

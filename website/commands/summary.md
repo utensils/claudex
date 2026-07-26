@@ -80,7 +80,7 @@ claudex summary --plan flat-monthly:250 --json | jq '.leverage_this_week_multipl
     "project": "claudex",
     "session_id": "e1a2f4...",
     "date": "2026-04-18T14:22:13+00:00",
-    "model": "claude-sonnet-4-6",
+    "model": "claude-sonnet-5",
     "message_count": 83
   }
 }

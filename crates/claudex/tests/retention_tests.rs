@@ -494,6 +494,38 @@ fn reprice_corrects_stale_computed_costs() {
 }
 
 #[test]
+fn reprice_applies_sonnet_5_introductory_rates() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+
+    // A row ingested before Sonnet 5 had its dedicated introductory card.
+    seed_v5_db(
+        &db,
+        &[(
+            "sess-sonnet-5",
+            "claude",
+            "claude-sonnet-5",
+            1_000_000,
+            0,
+            3.0,
+        )],
+    );
+
+    let _idx = IndexStore::open_at(&db).unwrap();
+
+    let (cost, source) = token_cost(&db, "sess-sonnet-5");
+    assert_eq!(source, "computed");
+    assert!(
+        (cost - 2.0).abs() < 1e-9,
+        "expected repriced $2.00, got {cost}"
+    );
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
+}
+
+#[test]
 fn reprice_corrects_open_source_models_mispriced_as_sonnet() {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("index.db");

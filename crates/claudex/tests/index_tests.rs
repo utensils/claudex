@@ -273,7 +273,9 @@ fn test_model_pricing_name_detection() {
 
     assert_eq!(ModelPricing::name(Some("claude-opus-4-6")), "Opus");
     assert_eq!(ModelPricing::name(Some("claude-opus-4-7")), "Opus");
+    assert_eq!(ModelPricing::name(Some("claude-opus-5")), "Opus");
     assert_eq!(ModelPricing::name(Some("claude-sonnet-4-6")), "Sonnet");
+    assert_eq!(ModelPricing::name(Some("claude-sonnet-5")), "Sonnet");
     assert_eq!(
         ModelPricing::name(Some("claude-haiku-4-5-20251001")),
         "Haiku"

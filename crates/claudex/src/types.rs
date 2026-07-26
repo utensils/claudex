@@ -39,22 +39,13 @@ impl ModelPricing {
             }
         } else if is_claude_opus_fast(&m) {
             // Fast mode (research preview) carries premium rates over standard
-            // Opus: $30/$150 on Opus 4.6/4.7, $10/$50 on Opus 4.8. The cache
-            // multipliers (1.25x write / 0.1x read) stack on the fast input rate.
-            if has_any(&m, &["opus-4-8", "opus-4.8"]) {
-                Self {
-                    input_per_mtok: 10.0,
-                    output_per_mtok: 50.0,
-                    cache_write_per_mtok: 12.50,
-                    cache_read_per_mtok: 1.00,
-                }
-            } else {
-                Self {
-                    input_per_mtok: 30.0,
-                    output_per_mtok: 150.0,
-                    cache_write_per_mtok: 37.50,
-                    cache_read_per_mtok: 3.00,
-                }
+            // Opus 5 / 4.8: $10/$50. The cache multipliers (1.25x write /
+            // 0.1x read) stack on the fast input rate.
+            Self {
+                input_per_mtok: 10.0,
+                output_per_mtok: 50.0,
+                cache_write_per_mtok: 12.50,
+                cache_read_per_mtok: 1.00,
             }
         } else if is_claude_opus_latest(&m) {
             Self {
@@ -92,6 +83,16 @@ impl ModelPricing {
                 output_per_mtok: 4.0,
                 cache_write_per_mtok: 1.00,
                 cache_read_per_mtok: 0.08,
+            }
+        } else if is_claude_sonnet_5(&m) {
+            // Introductory pricing through August 31, 2026. Claudex applies
+            // current rates to all computed rows; update this card and bump
+            // PRICING_REVISION when the standard $3/$15 rate takes effect.
+            Self {
+                input_per_mtok: 2.0,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 2.50,
+                cache_read_per_mtok: 0.20,
             }
         } else if m.contains("sonnet") {
             sonnet_pricing()
@@ -278,10 +279,9 @@ fn is_gpt4(m: &str) -> bool {
 }
 
 fn is_claude_opus_fast(m: &str) -> bool {
-    // Fast-mode Opus ids (`claude-opus-4-6-fast`, `claude-opus-4-8-fast`).
-    // Fast mode only exists on Opus 4.6+, so anchor on the modern-Opus match
-    // rather than `fast` alone to avoid false positives.
-    is_claude_opus_latest(m) && m.contains("fast")
+    // Fast mode is currently supported on Opus 5 and Opus 4.8. Recognize the
+    // explicit `-fast` variants used by pricing callers.
+    has_any(m, &["opus-5", "opus-4-8", "opus-4.8"]) && m.contains("fast")
 }
 
 fn is_claude_fable_tier(m: &str) -> bool {
@@ -295,9 +295,13 @@ fn is_claude_opus_latest(m: &str) -> bool {
         m,
         &[
             "opus-4-5", "opus-4.5", "opus-4-6", "opus-4.6", "opus-4-7", "opus-4.7", "opus-4-8",
-            "opus-4.8",
+            "opus-4.8", "opus-5",
         ],
     )
+}
+
+fn is_claude_sonnet_5(m: &str) -> bool {
+    has_any(m, &["sonnet-5", "sonnet-5.0"])
 }
 
 fn is_claude_haiku_latest(m: &str) -> bool {
@@ -403,7 +407,7 @@ mod tests {
         assert_eq!(u.total_tokens(), 0);
     }
 
-    // --- Sonnet pricing (default fallback) ---
+    // --- Sonnet pricing (default fallback / standard card) ---
 
     #[test]
     fn sonnet_input_1m() {
@@ -455,6 +459,19 @@ mod tests {
         };
         // $3 + $15 + $3.75 + $0.30 = $22.05
         assert!((u.cost_for_model(Some("claude-sonnet-4-6")) - 22.05).abs() < 0.0001);
+    }
+
+    #[test]
+    fn sonnet_5_introductory_pricing_all_token_types() {
+        let u = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        // Introductory card through August 31, 2026:
+        // $2 + $10 + $2.50 + $0.20 = $14.70
+        assert!((u.cost_for_model(Some("claude-sonnet-5")) - 14.70).abs() < 0.0001);
     }
 
     // --- Opus pricing ---
@@ -509,6 +526,7 @@ mod tests {
         };
         // $5 + $25 + $6.25 + $0.50 = $36.75
         assert!((u.cost_for_model(Some("claude-opus-4-7")) - 36.75).abs() < 0.0001);
+        assert!((u.cost_for_model(Some("claude-opus-5")) - 36.75).abs() < 0.0001);
     }
 
     // --- Haiku pricing ---
@@ -613,25 +631,23 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        // Opus 4.6 / 4.7 fast: $30 + $150 = $180
-        assert!((u.cost_for_model(Some("claude-opus-4-6-fast")) - 180.0).abs() < 0.0001);
-        assert!((u.cost_for_model(Some("claude-opus-4-7-fast")) - 180.0).abs() < 0.0001);
-        // Opus 4.8 fast: $10 + $50 = $60
+        // Supported Opus 5 / 4.8 fast: $10 + $50 = $60.
+        assert!((u.cost_for_model(Some("claude-opus-5-fast")) - 60.0).abs() < 0.0001);
         assert!((u.cost_for_model(Some("claude-opus-4-8-fast")) - 60.0).abs() < 0.0001);
         // Standard Opus ids must stay on the $5/$25 card.
+        assert!((u.cost_for_model(Some("claude-opus-5")) - 30.0).abs() < 0.0001);
         assert!((u.cost_for_model(Some("claude-opus-4-8")) - 30.0).abs() < 0.0001);
         // Fast ids still display as the Opus family.
-        assert_eq!(ModelPricing::name(Some("claude-opus-4-6-fast")), "Opus");
+        assert_eq!(ModelPricing::name(Some("claude-opus-5-fast")), "Opus");
     }
 
     #[test]
     fn opus_fast_cache_rates_stack_on_fast_input() {
-        let p = ModelPricing::for_model(Some("claude-opus-4-6-fast"));
-        assert_eq!(p.cache_write_per_mtok, 37.50); // 1.25x of $30
-        assert_eq!(p.cache_read_per_mtok, 3.00); // 0.1x of $30
-        let p8 = ModelPricing::for_model(Some("claude-opus-4-8-fast"));
-        assert_eq!(p8.cache_write_per_mtok, 12.50);
-        assert_eq!(p8.cache_read_per_mtok, 1.00);
+        for model in ["claude-opus-5-fast", "claude-opus-4-8-fast"] {
+            let p = ModelPricing::for_model(Some(model));
+            assert_eq!(p.cache_write_per_mtok, 12.50);
+            assert_eq!(p.cache_read_per_mtok, 1.00);
+        }
     }
 
     // --- OpenAI GPT pricing (Codex) ---
@@ -801,6 +817,7 @@ mod tests {
     fn model_pricing_name() {
         assert_eq!(ModelPricing::name(Some("claude-fable-5")), "Fable");
         assert_eq!(ModelPricing::name(Some("claude-mythos-5")), "Mythos");
+        assert_eq!(ModelPricing::name(Some("claude-opus-5")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-opus-4-7")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-opus-4-6")), "Opus");
         assert_eq!(ModelPricing::name(Some("claude-haiku-4-5")), "Haiku");
@@ -808,6 +825,7 @@ mod tests {
             ModelPricing::name(Some("claude-haiku-4-5-20251001")),
             "Haiku"
         );
+        assert_eq!(ModelPricing::name(Some("claude-sonnet-5")), "Sonnet");
         assert_eq!(ModelPricing::name(Some("claude-sonnet-4-6")), "Sonnet");
         assert_eq!(ModelPricing::name(None), "Sonnet");
         assert_eq!(ModelPricing::name(Some("")), "Sonnet");
@@ -882,7 +900,7 @@ mod tests {
 
     #[test]
     fn pricing_constants_opus() {
-        let p = ModelPricing::for_model(Some("claude-opus-4-6"));
+        let p = ModelPricing::for_model(Some("claude-opus-5"));
         assert_eq!(p.input_per_mtok, 5.0);
         assert_eq!(p.output_per_mtok, 25.0);
         assert_eq!(p.cache_write_per_mtok, 6.25);
@@ -896,6 +914,15 @@ mod tests {
         assert_eq!(p.output_per_mtok, 15.0);
         assert_eq!(p.cache_write_per_mtok, 3.75);
         assert_eq!(p.cache_read_per_mtok, 0.30);
+    }
+
+    #[test]
+    fn pricing_constants_sonnet_5_introductory() {
+        let p = ModelPricing::for_model(Some("claude-sonnet-5"));
+        assert_eq!(p.input_per_mtok, 2.0);
+        assert_eq!(p.output_per_mtok, 10.0);
+        assert_eq!(p.cache_write_per_mtok, 2.50);
+        assert_eq!(p.cache_read_per_mtok, 0.20);
     }
 
     #[test]

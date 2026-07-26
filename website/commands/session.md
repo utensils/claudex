@@ -66,7 +66,7 @@ claudex session ab --project claudex
   },
   "models": [
     {
-      "model": "claude-opus-4-6",
+      "model": "claude-opus-5",
       "model_family": "Opus",
       "assistant_message_count": 3,
       "input_tokens": 1000,

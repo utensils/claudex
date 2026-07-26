@@ -108,7 +108,7 @@ contributed to the project's cost. Sorted by `cost_usd` descending.
     "session_id": "f69d4985-f914-4968-81c0-009ea004fbc5",
     "date": "2026-04-01T16:36:41.451+00:00",
     "model": null,
-    "models": ["claude-opus-4-6", "claude-sonnet-4-6"],
+    "models": ["claude-opus-5", "claude-sonnet-5"],
     "input_tokens": 34960,
     "output_tokens": 483151,
     "cache_creation_tokens": 4027298,
