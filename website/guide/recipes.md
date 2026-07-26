@@ -58,7 +58,7 @@ claudex models --json \
 
 ```json
 {
-  "model": "claude-opus-4-6",
+  "model": "claude-opus-5",
   "sessions": 467,
   "cost_usd": 30051.13
 }

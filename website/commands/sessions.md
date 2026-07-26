@@ -63,7 +63,7 @@ claudex sessions --json --limit 5
     "date": "2026-04-18T14:22:13+00:00",
     "message_count": 83,
     "duration_ms": 1283410,
-    "model": "claude-sonnet-4-6"
+    "model": "claude-sonnet-5"
   }
 ]
 ```
