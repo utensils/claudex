@@ -54,7 +54,7 @@ export default defineConfig({
       { text: 'Commands', link: '/commands/' },
       { text: 'Reference', link: '/reference/' },
       {
-        text: 'v0.11.1', // x-release-please-version
+        text: 'v0.13.0', // x-release-please-version
         items: [
           {
             text: 'Changelog',
