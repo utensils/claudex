@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/utensils/claudex/compare/v0.12.0...v0.13.0) (2026-07-26)
+
+
+### Features
+
+* **pricing:** add Claude Opus 5 and Sonnet 5 ([#86](https://github.com/utensils/claudex/issues/86)) ([1ab7b8f](https://github.com/utensils/claudex/commit/1ab7b8f1519e3975a31bd47f0a23c8d4df6cc372))
+
 ## [0.12.0](https://github.com/utensils/claudex/compare/v0.11.0...v0.12.0) (2026-07-10)
 
 

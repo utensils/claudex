@@ -44,7 +44,7 @@ Pick one. All four paths are covered in depth in the [installation guide](https:
 curl -fsSL https://raw.githubusercontent.com/utensils/claudex/main/install.sh | sh
 ```
 
-Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.11.1` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`. <!-- x-release-please-version -->
+Fetches a prebuilt, stripped, SHA256-verified binary into `~/.local/bin/claudex`. Override with `CLAUDEX_VERSION=v0.12.1` or `CLAUDEX_INSTALL_DIR=/usr/local/bin`. <!-- x-release-please-version -->
 
 ### Cargo
 
@@ -60,7 +60,7 @@ cargo install claudex-cli
 
 ```toml
 [dependencies]
-claudex = "0.11.1" # x-release-please-version
+claudex = "0.12.1" # x-release-please-version
 ```
 
 ```rust
