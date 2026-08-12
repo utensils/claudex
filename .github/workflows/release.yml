@@ -1,8 +1,8 @@
-name: Release Please
+name: Release
 
 on:
   push:
-    branches: [main]
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -12,10 +12,9 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
-  group: release-please-${{ github.ref }}
+  group: release-${{ github.ref }}
   # Never cancel a release mid-flight — a half-published release (assets
   # uploaded but draft never lifted) is worse than waiting.
   cancel-in-progress: false
@@ -25,63 +24,13 @@ env:
   CRATES_IO_USER_AGENT: claudex-release-ci (https://github.com/utensils/claudex)
 
 jobs:
-  release-please:
-    name: Release Please
-    # Only the push-to-main path maintains the release PR / cuts the tag.
-    # workflow_dispatch is the manual-rebuild escape hatch and skips straight
-    # to resolve-tag.
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    # Gate on the AGGREGATE releases_created output, not a per-path one.
-    # The linked-versions plugin keeps both crate manifests on one version.
-    # Only the library component creates the shared unprefixed GitHub release;
-    # the CLI component skips its own release to avoid a duplicate vX.Y.Z tag.
-    # Keep the aggregate gate and coalesced outputs for compatibility with
-    # manual recovery of releases created under the previous configuration.
-    outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['crates/claudex-cli--tag_name'] || steps.release.outputs['crates/claudex--tag_name'] }}
-      version: ${{ steps.release.outputs['crates/claudex-cli--version'] || steps.release.outputs['crates/claudex--version'] }}
-    steps:
-      # Mint a short-lived GitHub App token so the release PR is authored by a
-      # real identity. The default GITHUB_TOKEN triggers GitHub's recursion
-      # guard, suppressing pull_request events — CI never fires on the release
-      # PR and required checks sit in "Expected" forever (unmergeable).
-      - name: Generate app token
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.RELEASE_PLEASE_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
-
-      - id: release
-        uses: googleapis/release-please-action@v4
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-
-      # release-please creates the GitHub Release itself (body = changelog) the
-      # moment the release PR merges. Draft it immediately so users never see an
-      # asset-less release; publish-release lifts the draft after assets upload.
-      - name: Mark release as draft
-        if: steps.release.outputs.releases_created == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ steps.release.outputs['crates/claudex-cli--tag_name'] || steps.release.outputs['crates/claudex--tag_name'] }}" --draft --repo "${{ github.repository }}"
-
   resolve-tag:
     name: Resolve Tag
     runs-on: ubuntu-latest
-    needs: release-please
-    if: >-
-      always() && (
-        (github.event_name == 'push' && needs.release-please.outputs.releases_created == 'true') ||
-        github.event_name == 'workflow_dispatch'
-      )
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
-        if: github.event_name == 'workflow_dispatch'
         with:
           fetch-depth: 0
 
@@ -108,7 +57,12 @@ jobs:
             fi
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ needs.release-please.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+            TAG="$GITHUB_REF_NAME"
+            if ! printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::Release tag must look like vX.Y.Z; got '$TAG'"
+              exit 1
+            fi
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           fi
 
   build:
@@ -208,8 +162,8 @@ jobs:
       - name: Generate checksums
         run: cd artifacts && sha256sum -- *.tar.gz > SHA256SUMS
 
-      # Combine notes: keep the release-please changelog body (auto notes) and
-      # append the curated Install template. The marker makes this idempotent —
+      # Combine notes: keep the exact root changelog entry and append the
+      # curated Install template. The marker makes this idempotent —
       # re-running (e.g. via workflow_dispatch) strips the prior Install block
       # before re-appending rather than duplicating it.
       - name: Publish release with combined notes
@@ -219,13 +173,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ensure a draft release exists. release-please already created one on
-          # the push path; workflow_dispatch rebuilds of an untagged-release need
-          # one minted with generated notes.
+          VERSION="${TAG#v}"
+          CHANGELOG_NOTES=$(mktemp)
+          trap 'rm -f "$CHANGELOG_NOTES"' EXIT
+          scripts/release/extract-changelog-section.sh CHANGELOG.md "$VERSION" > "$CHANGELOG_NOTES"
+
+          # Ensure a draft release exists. release-plz creates only the tag;
+          # this publisher owns the GitHub release and its product changelog.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" --draft --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" --draft --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
+            gh release create "$TAG" --draft --title "$TAG" --notes-file "$CHANGELOG_NOTES" --repo "$GITHUB_REPOSITORY"
           fi
 
           MARKER="<!-- claudex-install-instructions -->"
@@ -284,17 +242,10 @@ jobs:
 
   publish-crates:
     name: Publish crates.io packages
-    needs: [release-please, resolve-tag, build]
+    needs: [resolve-tag, build]
     if: >-
       always() && needs.resolve-tag.result == 'success'
       && needs.build.result == 'success'
-      && (
-        github.event_name == 'workflow_dispatch' ||
-        (
-          github.event_name == 'push'
-          && needs.release-please.outputs.releases_created == 'true'
-        )
-      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -321,16 +272,22 @@ jobs:
             exit 1
           fi
 
-          assert_manifest_version() {
-            local package="$1"
-            local manifest="$2"
-            local manifest_version
-            manifest_version="$(awk -F '"' '/^version = / { print $2; exit }' "$manifest")"
-            if [ "$manifest_version" != "$VERSION" ]; then
-              echo "::error::${package} manifest version ${manifest_version} does not match release tag ${TAG}"
+          WORKSPACE_VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$WORKSPACE_VERSION" != "$VERSION" ]; then
+            echo "::error::Workspace version ${WORKSPACE_VERSION} does not match release tag ${TAG}"
+            exit 1
+          fi
+          for manifest in crates/claudex/Cargo.toml crates/claudex-cli/Cargo.toml; do
+            if ! grep -qx 'version.workspace = true' "$manifest"; then
+              echo "::error::${manifest} must inherit the workspace release version"
               exit 1
             fi
-          }
+          done
+          DEPENDENCY_VERSION=$(sed -n 's/^claudex = .*version = "\([^"]*\)".*/\1/p' crates/claudex-cli/Cargo.toml)
+          if [ "$DEPENDENCY_VERSION" != "$VERSION" ]; then
+            echo "::error::claudex-cli dependency version ${DEPENDENCY_VERSION} does not match ${TAG}"
+            exit 1
+          fi
 
           crate_status() {
             local crate="$1"
@@ -384,24 +341,17 @@ jobs:
             wait_for_crate "$crate"
           }
 
-          assert_manifest_version claudex crates/claudex/Cargo.toml
-          assert_manifest_version claudex-cli crates/claudex-cli/Cargo.toml
-
           publish_package claudex claudex
           publish_package claudex-cli claudex-cli
 
   publish-aur:
     name: Publish AUR (${{ matrix.pkgname }})
-    needs: [release-please, resolve-tag, publish-release]
+    needs: [resolve-tag, publish-release]
     # Genuine releases publish to the AUR. Manual recovery may publish only
     # when rebuilding the current latest release; a step-level guard below
     # prevents historical rebuilds from downgrading the AUR packages.
     if: >-
       always() && needs.publish-release.result == 'success'
-      && (
-        (github.event_name == 'push' && needs.release-please.outputs.releases_created == 'true') ||
-        github.event_name == 'workflow_dispatch'
-      )
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

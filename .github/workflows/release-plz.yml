@@ -1,0 +1,106 @@
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  # Maintain one product release PR: `chore: release vX.Y.Z` with the root
+  # changelog, workspace version, package dependency, docs, and lockfile in
+  # sync. A GitHub App token is required so CI runs on the generated PR.
+  release-plz-pr:
+    name: Release PR
+    if: github.repository_owner == 'utensils'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz release-pr
+        id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Sync release PR version surfaces
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_PR_JSON: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_PR_JSON" ]; then
+            echo "release-plz returned no PR; nothing to sync."
+            exit 0
+          fi
+          number=$(jq -r '.number // empty' <<< "$RELEASE_PR_JSON")
+          branch=$(jq -r '.head_branch // empty' <<< "$RELEASE_PR_JSON")
+          if [ -z "$number" ] || [ -z "$branch" ]; then
+            echo "release-plz did not create or update a PR; nothing to sync."
+            exit 0
+          fi
+
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "+refs/heads/$branch:refs/heads/$branch"
+          git checkout "$branch"
+          scripts/release/sync-release-pr.sh
+          if ! git diff --quiet; then
+            git config user.name "claudex-release-plz[bot]"
+            git config user.email "290228096+claudex-release-plz[bot]@users.noreply.github.com"
+            git commit -am "chore(release): sync product version surfaces"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
+          else
+            echo "Release PR files already in sync."
+          fi
+
+  # A merged release-plz PR is the only main commit eligible to create the
+  # product tag. Publishing is disabled in release-plz.toml; the tag triggers
+  # release.yml, which performs the recoverable multi-artifact publish flow.
+  release-plz-release:
+    name: Release tag
+    if: github.repository_owner == 'utensils'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

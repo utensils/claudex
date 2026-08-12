@@ -86,6 +86,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check release contract
+        run: scripts/release/check-release-contract.sh
       - run: cargo package -p claudex --locked
       # `claudex-cli` depends on the same-version `claudex` library crate.
       # Before release, that exact library version is not on crates.io yet, so

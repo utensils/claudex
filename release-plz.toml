@@ -1,0 +1,37 @@
+# release-plz owns the product release PR and the single vX.Y.Z tag. The
+# tag-triggered release workflow continues to build binaries, publish both
+# crates, publish the GitHub release, and update the AUR.
+
+[workspace]
+repo_url = "https://github.com/utensils/claudex"
+pr_name = "chore: release v{{ version }}"
+pr_body = """
+## Claudex v{{ version }}
+
+{% for release in releases -%}
+{% if release.changelog -%}
+{{ release.changelog }}
+{% endif -%}
+{% endfor %}
+
+---
+This PR was generated with [release-plz](https://github.com/release-plz/release-plz/).
+"""
+publish = false
+git_release_enable = false
+git_tag_enable = false
+changelog_update = false
+features_always_increment_minor = true
+semver_check = false
+release_always = false
+
+# claudex-cli is the shipped product and depends on the claudex library, so it
+# is the one release surface that always moves when either package changes.
+# Its changelog includes library commits and is written at the repository root.
+[[package]]
+name = "claudex-cli"
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["claudex"]
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
