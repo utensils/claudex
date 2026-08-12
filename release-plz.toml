@@ -35,3 +35,13 @@ changelog_path = "./CHANGELOG.md"
 changelog_include = ["claudex"]
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
+
+[changelog]
+commit_parsers = [
+  { message = "^.*\\(release\\)", skip = true },
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^.*", group = "Changed" },
+]
