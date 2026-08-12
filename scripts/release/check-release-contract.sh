@@ -23,6 +23,7 @@ grep -q '^## Claudex v{{ release.next_version }}$' release-plz.toml
 grep -q 'changelog_path = "./CHANGELOG.md"' release-plz.toml
 grep -q 'changelog_include = \["claudex"\]' release-plz.toml
 grep -q 'git_tag_name = "v{{ version }}"' release-plz.toml
+grep -q '{ message = "\^\.\*\\\\(release\\\\)", skip = true }' release-plz.toml
 
 dependency_version=$(sed -n 's/^claudex = .*version = "\([^"]*\)".*/\1/p' crates/claudex-cli/Cargo.toml)
 if [ "$dependency_version" != "$version" ]; then
