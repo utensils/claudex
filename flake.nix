@@ -60,9 +60,9 @@
             pkgs.libiconv
           ];
 
-          # Cargo manifests are the source of truth for package metadata. The
-          # CLI crate owns the published version and description (release-please
-          # maintains the crate manifests; the root workspace carries no version).
+          # Cargo manifests are the source of truth for package metadata. All
+          # crates inherit the product version that release-plz maintains in
+          # [workspace.package].
           workspaceToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           cliCargoToml = builtins.fromTOML (builtins.readFile ./crates/claudex-cli/Cargo.toml);
 
@@ -85,7 +85,7 @@
           commonArgs = {
             inherit src;
             pname = "claudex";
-            version = cliCargoToml.package.version;
+            version = workspaceToml.workspace.package.version;
             strictDeps = true;
             buildInputs = darwinInputs;
             meta = claudexMeta;

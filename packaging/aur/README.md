@@ -14,8 +14,8 @@ that CI force-publishes to on every release.
 
 ## Release flow
 
-When release-please cuts a release (a merged release PR on `main`),
-`.github/workflows/release-please.yml` builds the release artifacts,
+When release-plz cuts a `vX.Y.Z` tag from a merged release PR,
+`.github/workflows/release.yml` builds the release artifacts,
 publishes the GitHub Release, then runs a `publish-aur` matrix job
 (one entry per AUR package, currently `claudex-bin` and `claudex`).
 The job:

@@ -48,62 +48,53 @@ cargo test decode_                                  # all tests whose name conta
 
 ### CI (GitHub Actions, `.github/workflows/`)
 
-Three workflows:
+Four workflows:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | push to `main`, pull_request to `main` | `docs` (bun fmt:check + build), workspace `fmt`, `check`, `clippy -D warnings`, `test`, `cargo build --release -p claudex-cli --bin claudex`, and package checks. Plus non-blocking `coverage` (cargo llvm-cov → Codecov). |
 | `pages.yml` | push to `main` touching `website/**` | Builds VitePress and deploys to GitHub Pages via `actions/deploy-pages@v4`. Base path `/claudex/`. |
-| `release-please.yml` | push to `main`, or manual `workflow_dispatch` with required `tag` input | Maintains the release PR; on merge cuts the tag, builds prebuilt binaries (4 targets), publishes crates.io packages, publishes the GitHub Release, and pushes to the AUR. See [Release process](#release-process). |
+| `release-plz.yml` | push to `main` | Maintains the product release PR and creates the single `vX.Y.Z` tag after that PR merges. |
+| `release.yml` | push of `vX.Y.Z`, or manual `workflow_dispatch` with required `tag` input | Builds prebuilt binaries (4 targets), publishes crates.io packages, publishes the GitHub Release, and pushes to the AUR. See [Release process](#release-process). |
 
 Run `ci-local` (devshell) before pushing — mirrors the Rust-side checks
 exactly.
 
 ## Release process
 
-Releases are driven by [release-please](https://github.com/googleapis/release-please)
-(`.github/workflows/release-please.yml`). **There is no manual version
-bump and no `release/vX.Y.Z` branch** — the version surfaces and the
-CHANGELOG are maintained for you. `release-please-config.json` +
-`.release-please-manifest.json` (repo root) hold the config and the
-current version.
+Releases are driven by [release-plz](https://release-plz.dev/)
+(`.github/workflows/release-plz.yml` + `release-plz.toml`). **There is no manual
+version bump and no `release/vX.Y.Z` branch.** Both crates inherit one product
+version from root `[workspace.package]`. `claudex-cli` is the designated product
+package because it depends on the library, so a change in either package moves
+the shipped CLI. It owns the one root `CHANGELOG.md` (including `claudex`
+commits) and the one unprefixed `vX.Y.Z` tag. There are no package-local
+changelogs.
 
-Both workspace packages intentionally share the `claudex` release component
-with `include-component-in-tag: false`. Together with the `cargo-workspace`
-plugin, that preserves one unprefixed `vX.Y.Z` tag/release train while still
-letting release-please update the library, CLI, and internal dependency version
-surfaces. The grouped release PR title is explicitly product-scoped so it does
-not fall back to release-please's generic `chore: release main` default. The
-library package writes release notes to the root `CHANGELOG.md` using the
-repo-root `/CHANGELOG.md` form; the CLI package
-skips its dependency-only package changelog. Package-local changelogs are
-historical and must not be treated as the current release history. If you change
-release-please config, dry-run a library-only and a CLI-only change before
-merging it.
-
-**Workflow gates must use the aggregate `releases_created` output.**
-release-please attributes the shared release to whichever package had direct
-commits, so per-path outputs (`crates/claudex-cli--release_created`) are empty
-on library-only releases — gating on one path silently skips the entire
-build/publish chain (this shipped v0.10.1 asset-less on first cut).
-`tag_name`/`version` are coalesced across both paths in `release-please.yml`.
+This is intentionally the same release shape as Mold: the generated PR title is
+`chore: release vX.Y.Z`, the body contains one product changelog, and workspace
+crate mechanics do not appear as separate release sections.
+`scripts/release/check-release-contract.sh`
+guards these invariants in CI.
 
 ### Cutting a release
 
 1. Land PRs to `main` using Conventional Commits (`feat:`, `fix:`,
-   `feat!:`/`BREAKING CHANGE:` for major). release-please derives the next
+   `feat!:`/`BREAKING CHANGE:` for major). release-plz derives the next
    semver and changelog from those commit messages.
-2. release-please keeps a standing **release PR** open against `main`. It
-   bumps every version surface (below) and updates `CHANGELOG.md`. Review
-   it like any PR.
-3. **Merge the release PR.** release-please then tags `vX.Y.Z`, creates the
-   draft GitHub Release (changelog body), and the same workflow builds the
-   four target binaries, publishes `claudex` then `claudex-cli` to crates.io,
-   attaches assets + `SHA256SUMS`, lifts the GitHub Release, and publishes to
-   the AUR.
+2. release-plz keeps a standing **release PR** open against `main`. It bumps
+   root `[workspace.package].version`, both inherited crate versions, the
+   internal dependency, `Cargo.lock`, and root `CHANGELOG.md`. The workflow's
+   bot-authored sync commit updates documentation version surfaces.
+3. **Merge the release PR.** release-plz creates the single `vX.Y.Z` tag.
+   That tag triggers `release.yml`, which builds the four target binaries,
+   publishes `claudex` then `claudex-cli` to crates.io, creates a draft GitHub
+   Release from the exact root changelog entry, attaches assets + `SHA256SUMS`,
+   lifts the release, and publishes to the AUR.
 
-`bump-minor-pre-major` is set, so pre-1.0 a `feat:` bumps the minor and a
-breaking change bumps the minor (not major).
+`features_always_increment_minor` is set, so pre-1.0 a `feat:` bumps the minor.
+`release_always = false` ensures ordinary pushes to `main` cannot cut a tag;
+only merging a `release-plz-*` release PR can do so.
 
 To **re-build/re-publish an existing tag** (e.g. a flaked runner), use the
 workflow's `workflow_dispatch` with the `tag` input (`vX.Y.Z`). That path
@@ -114,41 +105,32 @@ republish to the AUR**.
 
 ### Version bump — where it lands (all automatic)
 
-release-please rewrites these inside the release PR; do not hand-edit for a
+release-plz and the bot sync step rewrite these inside the release PR; do not hand-edit for a
 release:
 
 | Surface | Field | How |
 |---------|-------|-----|
-| root `Cargo.toml` | nothing — `[workspace.package]` intentionally carries **no** `version` (the plugin doesn't maintain it for non-inheriting crates, so the field drifted; removed in 0.10.x) | n/a |
-| `crates/claudex*/Cargo.toml` | package versions and internal path dependency versions | `cargo-workspace` plugin |
-| `Cargo.lock` | the `claudex` / `claudex-cli` `[[package]]` blocks | `cargo-workspace` plugin |
-| root `CHANGELOG.md` | authoritative project history; new `## [X.Y.Z]` section prepended | library package `changelog-path`; CLI package uses `skip-changelog` |
-| `flake.nix` | nothing — reads the CLI crate manifest (version, description) and root workspace (homepage) via `fromTOML` | n/a |
-| `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | `extra-files` + `// x-release-please-version` marker |
-| `README.md` and crate READMEs | `CLAUDEX_VERSION=vX.Y.Z`, `claudex = "X.Y.Z"`, and `--version X.Y.Z` snippets | `extra-files` + release-please markers |
-| `website/reference/library.md` | library install snippet | `extra-files` + `# x-release-please-version` marker |
+| root `Cargo.toml` | `[workspace.package].version` | release-plz workspace version |
+| `crates/claudex*/Cargo.toml` | `version.workspace = true`; internal path dependency requirement | inherited version + release-plz dependency update |
+| `Cargo.lock` | the `claudex` / `claudex-cli` `[[package]]` blocks | release-plz/Cargo update |
+| root `CHANGELOG.md` | authoritative project history; one product version section | `claudex-cli` changelog with `changelog_include = ["claudex"]` |
+| `flake.nix` | nothing — reads the root workspace version and CLI description via `fromTOML` | n/a |
+| `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | bot sync + `// x-release-plz-version` marker |
+| `README.md` and crate READMEs | `CLAUDEX_VERSION=vX.Y.Z`, `claudex = "X.Y.Z"`, and `--version X.Y.Z` snippets | bot sync + release-plz markers |
+| `website/reference/library.md` | library install snippet | bot sync + release-plz marker |
 | `packaging/aur/*/PKGBUILD` | `pkgver` + `sha256sums` | CI runs `scripts/aur/update-pkgbuild.sh` (`claudex-bin`/`claudex`); `claudex-git` hand-bumped only |
 
-**The release-please markers are load-bearing** — if you remove them, those
-surfaces silently stop tracking the version. The `config.ts` marker is a
-trailing line comment that must survive `bun run fmt:check` (prettier keeps it).
+**The `x-release-plz-version` markers are load-bearing.** The sync script only
+rewrites explicitly marked snippets, and CI runs the script plus a clean-diff
+assertion. The `config.ts` trailing marker must survive Prettier.
 
-**`extra-files` paths are package-relative** — entries resolve against the
-package directory (`crates/claudex*`), and files outside it need a leading `/`
-(repo-root-relative). A wrong path does not error; the surface just silently
-stops updating (this drifted README/website versions after the workspace
-split). When touching `extra-files`, verify the next release PR's diff
-actually includes every registered file.
+### What the release workflows do
 
-### What `release-please.yml` does
-
-Jobs run in order: `release-please` (maintains the release PR / cuts the
-tag + draft release on push to `main`) → `resolve-tag` (emits the tag, or
-mints one from the `workflow_dispatch` input) → `build` → `publish-crates`
-→ `publish-release` → `publish-aur`. `publish-crates` checks crates.io with
-an explicit user agent, skips package versions that are already visible, and
-publishes any missing workspace crates. Manual rebuilds still never republish
-to the AUR.
+`release-plz.yml` maintains the PR and cuts the tag. `release.yml` handles the
+tag: `resolve-tag` → `build` → `publish-crates` → `publish-release` →
+`publish-aur`. `publish-crates` checks crates.io with an explicit user agent,
+skips versions already visible, and publishes missing crates. Manual rebuilds
+remain idempotent and cannot downgrade AUR packages.
 
 Build matrix targets (4):
 
@@ -163,10 +145,9 @@ signature; unsigned Apple Silicon binaries get SIGKILLed at launch), tar.
 Linux runners are pinned to `ubuntu-22.04` so the glibc ABI floor stays stable
 across runner image upgrades.
 
-`release-please` drafts the release immediately so users never see an
-asset-less release. On real releases, crates.io publishing must complete before
-`publish-release` aggregates artifacts, generates `SHA256SUMS`, sets the notes
-to the **release-please changelog body plus a curated Install template**
+On real releases, crates.io publishing must complete before `publish-release`
+creates the draft, aggregates artifacts, generates `SHA256SUMS`, sets the notes
+to the **exact root changelog section plus a curated Install template**
 (idempotent via a `<!-- claudex-install-instructions -->` marker), uploads
 assets, then lifts the draft — which makes it "latest" (what `install.sh` /
 `claudex update` resolve via `/releases/latest`).
@@ -195,7 +176,7 @@ All documented in `website/guide/installation.md`:
 PKGBUILDs live in [`packaging/aur/`](./packaging/aur/) as the source
 of truth. The AUR git repos (`ssh://aur@aur.archlinux.org/<pkg>.git`)
 are downstream mirrors that CI force-publishes to on every release,
-via the `publish-aur` matrix job in `release-please.yml` and the
+via the `publish-aur` matrix job in `release.yml` and the
 `KSXGitHub/github-actions-deploy-aur` action. See
 [`packaging/aur/README.md`](./packaging/aur/README.md) for the full
 release flow and one-time bootstrap.
@@ -245,10 +226,10 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 
 ### Module layout
 
-- Root `Cargo.toml` — virtual workspace only. Shared edition, MSRV, metadata,
-  and dependency versions live under `workspace.package` /
-  `workspace.dependencies`; the **package versions live in the crate
-  manifests** (maintained by release-please), not in the workspace.
+- Root `Cargo.toml` — virtual workspace only. The product version, shared
+  edition, MSRV, and metadata live under `workspace.package`; dependency
+  versions live under `workspace.dependencies`. Both crate manifests inherit
+  the product version, which release-plz maintains in the workspace.
 - `crates/claudex/src/lib.rs` — reusable library entrypoint. Re-exports
   `api`, `filter`, `index`, `parser`, `plan`, `providers`, `stats`, `store`,
   `time_utils`, and `types`, plus `claudex_dir()` → `~/.claudex`
