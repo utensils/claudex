@@ -541,6 +541,228 @@ fn codex_exec_wrapper_inherits_model_from_single_forked_child() {
 }
 
 #[test]
+fn codex_token_revision_reindexes_unchanged_cumulative_transcripts() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    write_jsonl(
+        &codex.join("sessions/2026/08/11/rollout-2026-08-11T00-00-00-resumed.jsonl"),
+        &[
+            r#"{"timestamp":"2026-08-11T00:00:00Z","type":"session_meta","payload":{"id":"resumed","cwd":"/repo"}}"#,
+            r#"{"timestamp":"2026-08-11T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            r#"{"timestamp":"2026-08-11T00:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000000,"cached_input_tokens":900000,"output_tokens":50000},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50}}}}"#,
+            r#"{"timestamp":"2026-08-11T00:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1002000,"cached_input_tokens":901500,"output_tokens":50100},"last_token_usage":{"input_tokens":2000,"cached_input_tokens":1500,"output_tokens":100}}}}"#,
+        ],
+    );
+
+    let db_path = tmp.path().join("index.db");
+    let providers = codex_providers(codex.clone());
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    assert_eq!(idx.sync_now(&providers).unwrap(), 1);
+    let row = idx
+        .query_cost_by_project(None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.input_tokens, 700);
+    assert_eq!(row.output_tokens, 150);
+    assert_eq!(row.cache_read_tokens, 2300);
+    drop(idx);
+
+    // Simulate an index produced by the old cumulative-total derivation. The
+    // revision bump must repair it even though the transcript file is unchanged.
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE token_usage SET input_tokens = 100500, output_tokens = 50100, cache_read_tokens = 901500",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_token_usage_revision', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    assert_eq!(idx.sync_now(&codex_providers(codex)).unwrap(), 1);
+    let row = idx
+        .query_cost_by_project(None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.input_tokens, 700);
+    assert_eq!(row.output_tokens, 150);
+    assert_eq!(row.cache_read_tokens, 2300);
+}
+
+#[test]
+fn codex_cost_queries_count_one_snapshot_per_logical_session() {
+    let tmp = TempDir::new().unwrap();
+    let codex = tmp.path().join(".codex");
+    for (name, id, parent, input, cached, output) in [
+        ("root", "root", None, 1_000, 800, 50),
+        ("resume", "resume", Some("root"), 2_000, 1_500, 100),
+    ] {
+        let parent_field = parent
+            .map(|p| format!(r#", "forked_from_id":"{p}""#))
+            .unwrap_or_default();
+        let meta = format!(
+            r#"{{"timestamp":"2026-08-11T00:00:00Z","type":"session_meta","payload":{{"id":"{id}","cwd":"/repo"{parent_field}}}}}"#
+        );
+        let usage = format!(
+            r#"{{"timestamp":"2026-08-11T00:01:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}},"last_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}}}}}}}}"#
+        );
+        write_jsonl(
+            &codex.join(format!(
+                "sessions/2026/08/11/rollout-2026-08-11T00-00-00-{name}.jsonl"
+            )),
+            &[
+                &meta,
+                r#"{"timestamp":"2026-08-11T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+                &usage,
+            ],
+        );
+    }
+
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&codex_providers(codex)).unwrap();
+
+    let project = idx
+        .query_cost_by_project(None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(project.session_count, 1);
+    assert_eq!(project.input_tokens, 500);
+    assert_eq!(project.output_tokens, 100);
+    assert_eq!(project.cache_read_tokens, 1500);
+
+    let summary = idx.query_cost_summary(None, &all()).unwrap();
+    assert_eq!(summary.input_tokens, 500);
+    assert_eq!(summary.output_tokens, 100);
+    assert_eq!(summary.cache_read_tokens, 1500);
+    let model_cost: f64 = idx
+        .query_model_usage(None, &all())
+        .unwrap()
+        .iter()
+        .map(|row| row.cost_usd)
+        .sum();
+    assert!((summary.cost_usd - model_cost).abs() < 1e-9);
+}
+
+#[test]
+fn claude_project_revision_repairs_lossy_encoded_paths() {
+    let tmp = TempDir::new().unwrap();
+    let projects = tmp.path().join("projects");
+    write_session(
+        &projects,
+        "-Users-test-Projects-nyc-real-estate",
+        "session-1",
+        &[
+            r#"{"type":"user","sessionId":"session-1","cwd":"/Users/test/Projects/nyc-real-estate","timestamp":"2026-08-11T00:00:00Z","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","sessionId":"session-1","cwd":"/Users/test/Projects/nyc-real-estate","timestamp":"2026-08-11T00:00:01Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5},"content":[]}}"#,
+        ],
+    );
+
+    let db_path = tmp.path().join("index.db");
+    let providers = claude_providers(projects.clone());
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    assert_eq!(idx.sync_now(&providers).unwrap(), 1);
+    drop(idx);
+
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE sessions SET project_name = '/Users/test/Projects/nyc/real/estate'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('claude_project_path_revision', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    assert_eq!(idx.sync_now(&claude_providers(projects)).unwrap(), 1);
+    let row = idx
+        .query_cost_by_project(None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.project, "/Users/test/Projects/nyc-real-estate");
+}
+
+#[test]
+fn claude_sync_prefers_resolved_existing_repo_over_stale_cwd() {
+    let tmp = TempDir::new().unwrap();
+    let real_project = tmp.path().join("nyc-real-estate");
+    fs::create_dir(&real_project).unwrap();
+    let encoded = real_project
+        .to_string_lossy()
+        .replace("/.", "--")
+        .replace('/', "-");
+    let projects = tmp.path().join("claude-projects");
+    let stale_cwd = real_project.to_string_lossy().replace('-', "/");
+    let user = format!(
+        r#"{{"type":"user","sessionId":"session-1","cwd":"{stale_cwd}","timestamp":"2026-08-11T00:00:00Z","message":{{"content":"hi"}}}}"#
+    );
+    let assistant = format!(
+        r#"{{"type":"assistant","sessionId":"session-1","cwd":"{stale_cwd}","timestamp":"2026-08-11T00:00:01Z","message":{{"model":"claude-sonnet-4-6","usage":{{"input_tokens":10,"output_tokens":5}},"content":[]}}}}"#
+    );
+    write_session(&projects, &encoded, "session-1", &[&user, &assistant]);
+
+    let mut idx = IndexStore::open_at(&tmp.path().join("index.db")).unwrap();
+    idx.sync_now(&claude_providers(projects)).unwrap();
+    let row = idx
+        .query_cost_by_project(None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.project, real_project.to_string_lossy());
+}
+
+#[test]
+fn claude_project_revision_repairs_retained_off_disk_rows() {
+    let tmp = TempDir::new().unwrap();
+    let real_project = tmp.path().join("nyc-real-estate");
+    fs::create_dir(&real_project).unwrap();
+    let encoded = real_project
+        .to_string_lossy()
+        .replace("/.", "--")
+        .replace('/', "-");
+    let projects = tmp.path().join("claude-projects");
+    let transcript = write_session(
+        &projects,
+        &encoded,
+        "session-1",
+        &[
+            r#"{"type":"user","sessionId":"session-1","timestamp":"2026-08-11T00:00:00Z","message":{"content":"hi"}}"#,
+        ],
+    );
+    let db_path = tmp.path().join("index.db");
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.sync_now(&claude_providers(projects.clone())).unwrap();
+    fs::remove_file(transcript).unwrap();
+    idx.sync_now(&claude_providers(projects.clone())).unwrap();
+    drop(idx);
+
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute("UPDATE sessions SET project_name = '/wrong/path'", [])
+        .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('claude_project_path_revision', '0')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut idx = IndexStore::open_at(&db_path).unwrap();
+    idx.sync_now(&claude_providers(projects)).unwrap();
+    let row = idx
+        .query_sessions(None, None, &all(), 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.project_name, real_project.to_string_lossy());
+    assert!(!row.present_on_disk);
+}
+
+#[test]
 fn pr_link_backfill_repairs_provider_rows_without_full_rebuild() {
     let tmp = TempDir::new().unwrap();
     let codex = tmp.path().join(".codex");

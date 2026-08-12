@@ -6,6 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use claudex::providers::claude::parse_claude_session;
 use claudex::providers::{
     ClaudeProvider, CodexProvider, CopilotProvider, CopilotVscodeProvider, DiscoveredFile,
     OpenClawProvider, PiProvider, SessionProvider,
@@ -158,6 +159,22 @@ fn parse_extracts_tokens_tools_thinking_and_fts_content() {
     assert!(record.extras.is_none());
 }
 
+#[test]
+fn claude_parse_prefers_embedded_cwd_over_lossy_storage_key() {
+    let tmp = TempDir::new().unwrap();
+    let path = write_session(
+        &tmp.path().join("projects"),
+        "-Users-test-Projects-nyc-real-estate",
+        "session-1",
+        &[
+            r#"{"type":"user","sessionId":"session-1","cwd":"/Users/test/Projects/nyc-real-estate","timestamp":"2026-08-11T00:00:00Z","message":{"content":"hi"}}"#,
+        ],
+    );
+
+    let rec = parse_claude_session(&path).unwrap();
+    assert_eq!(rec.project_display, "/Users/test/Projects/nyc-real-estate");
+}
+
 // --- Codex provider ---
 
 fn write_lines(path: &Path, lines: &[&str]) {
@@ -182,8 +199,8 @@ fn codex_enumerate_flags_archived_and_parse_reads_cwd_tokens_tools() {
             r#"{"timestamp":"2026-05-05T00:00:30Z","type":"turn_context","payload":{"model":"gpt-5-codex"}}"#,
             r#"{"timestamp":"2026-05-05T00:01:00Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c"}}"#,
             r#"{"timestamp":"2026-05-05T00:01:30Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"thinking"}}"#,
-            r#"{"timestamp":"2026-05-05T00:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#,
-            r#"{"timestamp":"2026-05-05T00:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500}}}}"#,
+            r#"{"timestamp":"2026-05-05T00:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900010,"cached_input_tokens":900000,"output_tokens":900005},"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#,
+            r#"{"timestamp":"2026-05-05T00:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":901010,"cached_input_tokens":900200,"output_tokens":900505},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"cache_write_input_tokens":100,"output_tokens":500}}}}"#,
         ],
     );
     write_lines(
@@ -206,10 +223,11 @@ fn codex_enumerate_flags_archived_and_parse_reads_cwd_tokens_tools() {
     assert_eq!(rec.session_id.as_deref(), Some("codex-a"));
     assert_eq!(rec.project_display, "/repo");
     assert_eq!(rec.model.as_deref(), Some("gpt-5-codex"));
-    // Cumulative: last total wins; cached input becomes a cache read.
-    assert_eq!(rec.usage.input_tokens, 800);
+    // Per-turn deltas are summed; inherited cumulative totals are ignored.
+    assert_eq!(rec.usage.input_tokens, 710);
     assert_eq!(rec.usage.cache_read_tokens, 200);
-    assert_eq!(rec.usage.output_tokens, 500);
+    assert_eq!(rec.usage.cache_creation_tokens, 100);
+    assert_eq!(rec.usage.output_tokens, 505);
     assert_eq!(rec.tool_names, vec!["shell".to_string()]);
     assert_eq!(rec.thinking_block_count, 1);
     assert!(rec.extras.as_deref().unwrap().contains("0.99.0"));

@@ -3,6 +3,7 @@
 //! (project-name decoding, worktree canonicalization, subagent rollup) and owns
 //! the canonical Claude transcript parser.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -43,9 +44,12 @@ impl SessionProvider for ClaudeProvider {
 
     fn enumerate(&self) -> Result<Vec<DiscoveredFile>> {
         let mut files = Vec::new();
+        let mut decoded_projects = HashMap::new();
         for (project_raw, path) in self.store.all_session_files(None)? {
-            let decoded = decode_project_name(&project_raw);
-            let project_display = canonical_project_path(&decoded).to_string();
+            let decoded = decoded_projects
+                .entry(project_raw.clone())
+                .or_insert_with(|| decode_project_name(&project_raw));
+            let project_display = canonical_project_path(decoded.as_str()).to_string();
             let project_dir = self.store.base_dir.join(&project_raw);
             let parent_session_id = parent_session_id_for_path(&project_dir, &path);
             files.push(DiscoveredFile {
@@ -70,6 +74,12 @@ pub fn parse_claude_session(path: &Path) -> Result<ProviderRecord> {
     let mut entry = ProviderRecord::default();
 
     stream_records(path, |record| {
+        if entry.project_display.is_empty()
+            && let Some(cwd) = record["cwd"].as_str()
+            && !cwd.is_empty()
+        {
+            entry.project_display = canonical_project_path(cwd).to_string();
+        }
         if entry.session_id.is_none()
             && let Some(sid) = record["sessionId"].as_str()
         {
