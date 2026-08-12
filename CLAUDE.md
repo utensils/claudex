@@ -72,8 +72,14 @@ Both workspace packages intentionally share the `claudex` release component
 with `include-component-in-tag: false`. Together with the `cargo-workspace`
 plugin, that preserves one unprefixed `vX.Y.Z` tag/release train while still
 letting release-please update the library, CLI, and internal dependency version
-surfaces. If you change release-please config, dry-run a library-only and a
-CLI-only change before merging it.
+surfaces. The grouped release PR title is explicitly product-scoped so it does
+not fall back to release-please's generic `chore: release main` default. The
+library package writes release notes to the root `CHANGELOG.md` using the
+repo-root `/CHANGELOG.md` form; the CLI package
+skips its dependency-only package changelog. Package-local changelogs are
+historical and must not be treated as the current release history. If you change
+release-please config, dry-run a library-only and a CLI-only change before
+merging it.
 
 **Workflow gates must use the aggregate `releases_created` output.**
 release-please attributes the shared release to whichever package had direct
@@ -116,7 +122,7 @@ release:
 | root `Cargo.toml` | nothing — `[workspace.package]` intentionally carries **no** `version` (the plugin doesn't maintain it for non-inheriting crates, so the field drifted; removed in 0.10.x) | n/a |
 | `crates/claudex*/Cargo.toml` | package versions and internal path dependency versions | `cargo-workspace` plugin |
 | `Cargo.lock` | the `claudex` / `claudex-cli` `[[package]]` blocks | `cargo-workspace` plugin |
-| `CHANGELOG.md` | new `## [X.Y.Z]` section prepended | release-please (native) |
+| root `CHANGELOG.md` | authoritative project history; new `## [X.Y.Z]` section prepended | library package `changelog-path`; CLI package uses `skip-changelog` |
 | `flake.nix` | nothing — reads the CLI crate manifest (version, description) and root workspace (homepage) via `fromTOML` | n/a |
 | `website/.vitepress/config.ts` | `text: 'vX.Y.Z'` nav entry | `extra-files` + `// x-release-please-version` marker |
 | `README.md` and crate READMEs | `CLAUDEX_VERSION=vX.Y.Z`, `claudex = "X.Y.Z"`, and `--version X.Y.Z` snippets | `extra-files` + release-please markers |
