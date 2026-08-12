@@ -80,6 +80,20 @@ impl SessionStore {
 ///
 /// Decoding reverses this left-to-right: `--` → `/.`, `-` → `/`
 pub fn decode_project_name(encoded: &str) -> String {
+    const WORKTREE_MARKER: &str = "--claude-worktrees-";
+    if let Some((base_encoded, branch)) = encoded.split_once(WORKTREE_MARKER)
+        && let Some(base) = resolve_encoded_project_path(base_encoded)
+    {
+        return format!("{base}/.claude/worktrees/{branch}");
+    }
+    if let Some(resolved) = resolve_encoded_project_path(encoded) {
+        return resolved;
+    }
+
+    decode_project_name_lossy(encoded)
+}
+
+fn decode_project_name_lossy(encoded: &str) -> String {
     let mut result = String::with_capacity(encoded.len() + 1);
     let bytes = encoded.as_bytes();
     let mut i = 0;
@@ -98,6 +112,44 @@ pub fn decode_project_name(encoded: &str) -> String {
         }
     }
     result
+}
+
+/// Resolve Claude's ambiguous project key against directories that actually
+/// exist. A literal hyphen and a path separator are both encoded as `-`, so
+/// decoding text alone cannot distinguish `nyc-real-estate` from
+/// `nyc/real/estate`.
+fn resolve_encoded_project_path(encoded: &str) -> Option<String> {
+    if !encoded.starts_with('-') {
+        return None;
+    }
+
+    let mut candidates = vec![(PathBuf::from("/"), 0usize)];
+    while let Some((path, offset)) = candidates.pop() {
+        if offset == encoded.len() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+        let remaining = &encoded[offset..];
+        let Ok(entries) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if !child.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let component = if let Some(hidden) = name.strip_prefix('.') {
+                format!("--{hidden}")
+            } else {
+                format!("-{name}")
+            };
+            if remaining.starts_with(&component) {
+                candidates.push((child, offset + component.len()));
+            }
+        }
+    }
+    None
 }
 
 /// Return the canonical project path used as an index key.
@@ -261,6 +313,36 @@ mod tests {
         assert_eq!(
             decode_project_name("-Users-jamesbrink"),
             "/Users/jamesbrink"
+        );
+    }
+
+    #[test]
+    fn decode_prefers_existing_hyphenated_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("nyc-real-estate");
+        std::fs::create_dir(&project).unwrap();
+        let encoded = project
+            .to_string_lossy()
+            .replace("/.", "--")
+            .replace('/', "-");
+        assert_eq!(decode_project_name(&encoded), project.to_string_lossy());
+    }
+
+    #[test]
+    fn decode_deleted_worktree_preserves_existing_hyphenated_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("nyc-real-estate");
+        std::fs::create_dir(&project).unwrap();
+        let encoded = format!(
+            "{}--claude-worktrees-feat-old-branch",
+            project
+                .to_string_lossy()
+                .replace("/.", "--")
+                .replace('/', "-")
+        );
+        assert_eq!(
+            canonical_project_path(&decode_project_name(&encoded)),
+            project.to_string_lossy()
         );
     }
 

@@ -16,6 +16,7 @@ use crate::providers::pr::{
     extract_github_pr_links, looks_like_final_pr_text, looks_like_gh_pr_command,
 };
 use crate::stats::percentile_sorted;
+use crate::store::{canonical_project_path, decode_project_name};
 use crate::time_utils::local_day_start_ms;
 use crate::types::ModelPricing;
 
@@ -49,6 +50,39 @@ const PR_LINK_DERIVATION_REVISION: i64 = 4;
 /// Revision for Codex fork metadata and wrapper model inheritance. Bump when
 /// the backfill logic changes; older indexes are repaired in place on open.
 const CODEX_FORK_MODEL_REVISION: i64 = 1;
+
+/// Revision for Codex token derivation. A bump reparses every Codex transcript
+/// in place so retained indexes pick up changes to cumulative/delta handling.
+const CODEX_TOKEN_USAGE_REVISION: i64 = 1;
+
+/// Revision for Claude project-path derivation. Claude's encoded storage keys
+/// are lossy (`-` can mean a slash or a literal hyphen), so current parsing
+/// prefers the authoritative `cwd` embedded in each transcript.
+const CLAUDE_PROJECT_PATH_REVISION: i64 = 5;
+
+/// Rank physical transcript files inside each logical session. Codex resume and
+/// fork files can contain copied token history, so aggregate usage must take one
+/// complete representative rather than sum every physical snapshot. Other
+/// providers emit additive child transcripts and always retain rank 1.
+const LOGICAL_USAGE_CTE: &str = r#"
+WITH ranked_usage_sessions AS (
+    SELECT s.*,
+           CASE WHEN s.provider = 'codex' THEN
+               ROW_NUMBER() OVER (
+                   PARTITION BY s.provider, s.project_name,
+                                COALESCE(s.parent_session_id, s.session_id, s.file_path)
+                   ORDER BY COALESCE((
+                                SELECT SUM(tu.input_tokens + tu.output_tokens
+                                           + tu.cache_creation_tokens + tu.cache_read_tokens)
+                                FROM token_usage tu WHERE tu.session_id = s.id
+                            ), 0) DESC,
+                            COALESCE(s.last_timestamp, s.first_timestamp, 0) DESC,
+                            s.id DESC
+               )
+           ELSE 1 END AS usage_rank
+    FROM sessions s
+)
+"#;
 
 const CODEX_INHERIT_WRAPPER_MODEL_SQL: &str = r#"
 UPDATE sessions
@@ -1001,8 +1035,27 @@ impl IndexStore {
         let root = provider.root_dir().to_string_lossy().into_owned();
         let root_changed =
             self.meta_get(&format!("sessions_root:{id}")).as_deref() != Some(root.as_str());
+        let derivation_changed = match id {
+            "codex" => {
+                self.meta_get("codex_token_usage_revision")
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0)
+                    < CODEX_TOKEN_USAGE_REVISION
+            }
+            "claude" => {
+                self.meta_get("claude_project_path_revision")
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0)
+                    < CLAUDE_PROJECT_PATH_REVISION
+            }
+            _ => false,
+        };
         match last_sync {
-            Some(ls) => now_unix_secs().saturating_sub(ls) >= STALE_SECS || root_changed,
+            Some(ls) => {
+                now_unix_secs().saturating_sub(ls) >= STALE_SECS
+                    || root_changed
+                    || derivation_changed
+            }
             None => true,
         }
     }
@@ -1254,6 +1307,19 @@ impl IndexStore {
     /// provider's rows just because they aren't in this provider's enumeration.
     fn sync_provider(&mut self, provider: &Provider) -> Result<usize> {
         let provider_id = provider.id();
+        let rederive_codex_tokens = provider_id == "codex"
+            && self
+                .meta_get("codex_token_usage_revision")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0)
+                < CODEX_TOKEN_USAGE_REVISION;
+        let rederive_claude_project_paths = provider_id == "claude"
+            && self
+                .meta_get("claude_project_path_revision")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0)
+                < CLAUDE_PROJECT_PATH_REVISION;
+        let rederive_provider_data = rederive_codex_tokens || rederive_claude_project_paths;
 
         // Load known file states for THIS provider only. `id`/`present_on_disk`
         // let us re-index in place and un-archive a file that reappears.
@@ -1314,7 +1380,7 @@ impl IndexStore {
             let discovered_source_key = discovered.source_key.clone();
             let prior = known.get(&path_str);
             let reuse_id = match prior {
-                Some(k) if k.size == size && k.mtime == mtime => {
+                Some(k) if k.size == size && k.mtime == mtime && !rederive_provider_data => {
                     // Unchanged on disk. If it was previously archived (file had
                     // disappeared and came back byte-identical), un-archive it.
                     if k.present == 0 {
@@ -1356,7 +1422,11 @@ impl IndexStore {
             // The enumerator's path-derived project is the default; a provider
             // that reads the project from the transcript itself (Codex stores
             // its cwd in `session_meta`) overrides it.
-            let project_display = if entry.project_display.is_empty() {
+            let embedded_project_is_stale = provider_id == "claude"
+                && !entry.project_display.is_empty()
+                && !Path::new(&entry.project_display).exists()
+                && Path::new(&discovered.project_display).exists();
+            let project_display = if entry.project_display.is_empty() || embedded_project_is_stale {
                 discovered.project_display.clone()
             } else {
                 entry.project_display.clone()
@@ -1603,6 +1673,15 @@ impl IndexStore {
         // when a transcript is cleaned off disk. `claudex index --force` is the
         // only path that actually discards retained data.
         for (path, k) in &known {
+            if rederive_claude_project_paths
+                && !seen.contains(path)
+                && let Some(project) = claude_project_from_stored_path(provider.root_dir(), path)
+            {
+                tx.execute(
+                    "UPDATE sessions SET project_name = ? WHERE id = ?",
+                    params![project, k.id],
+                )?;
+            }
             if !seen.contains(path) && k.present == 1 {
                 tx.execute(
                     "UPDATE sessions
@@ -1615,6 +1694,15 @@ impl IndexStore {
 
         if provider_id == "codex" {
             inherit_codex_exec_wrapper_models_tx(&tx)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_token_usage_revision', ?)",
+                params![CODEX_TOKEN_USAGE_REVISION.to_string()],
+            )?;
+        } else if provider_id == "claude" {
+            tx.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('claude_project_path_revision', ?)",
+                params![CLAUDE_PROJECT_PATH_REVISION.to_string()],
+            )?;
         }
 
         tx.execute(
@@ -1773,7 +1861,8 @@ impl IndexStore {
         let fp = opt_like(project_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT s.project_name,
+            r#"{LOGICAL_USAGE_CTE}
+               SELECT s.project_name,
                       COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -1781,9 +1870,10 @@ impl IndexStore {
                       COALESCE(SUM(t.cache_read_tokens), 0),
                       COALESCE(SUM(t.cost_usd), 0),
                       GROUP_CONCAT(DISTINCT t.model)
-               FROM sessions s
+               FROM ranked_usage_sessions s
                LEFT JOIN token_usage t ON t.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
+               WHERE s.usage_rank = 1
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY s.project_name
                ORDER BY COALESCE(SUM(t.cost_usd), 0) DESC
                LIMIT ?"#
@@ -1833,7 +1923,8 @@ impl IndexStore {
         let fp = opt_like(project_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT s.provider, s.project_name,
+            r#"{LOGICAL_USAGE_CTE}
+               SELECT s.provider, s.project_name,
                       COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
                       GROUP_CONCAT(DISTINCT t.model),
@@ -1842,9 +1933,10 @@ impl IndexStore {
                       COALESCE(SUM(t.cache_creation_tokens), 0),
                       COALESCE(SUM(t.cache_read_tokens), 0),
                       COALESCE(SUM(t.cost_usd), 0)
-               FROM sessions s
+               FROM ranked_usage_sessions s
                JOIN token_usage t ON t.session_id = s.id
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
+                 AND s.usage_rank = 1
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
                GROUP BY s.project_name, s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
@@ -1889,7 +1981,8 @@ impl IndexStore {
         let session_key =
             "s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)";
         let sql = format!(
-            r#"SELECT COUNT(DISTINCT {session_key}),
+            r#"{LOGICAL_USAGE_CTE}
+               SELECT COUNT(DISTINCT {session_key}),
                       COUNT(DISTINCT CASE WHEN (COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0) + COALESCE(t.cache_creation_tokens, 0) + COALESCE(t.cache_read_tokens, 0)) > 0 THEN {session_key} END),
                       COUNT(DISTINCT s.project_name),
                       COALESCE(SUM(t.input_tokens), 0),
@@ -1897,9 +1990,10 @@ impl IndexStore {
                       COALESCE(SUM(t.cache_creation_tokens), 0),
                       COALESCE(SUM(t.cache_read_tokens), 0),
                       COALESCE(SUM(t.cost_usd), 0)
-               FROM sessions s
+               FROM ranked_usage_sessions s
                LEFT JOIN token_usage t ON t.session_id = s.id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
+               WHERE s.usage_rank = 1
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
         );
         let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
         binds.extend(pred_params);
@@ -2289,7 +2383,8 @@ impl IndexStore {
         let fp = opt_like(project_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT t.model,
+            r#"{LOGICAL_USAGE_CTE}
+               SELECT t.model,
                       s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
@@ -2301,8 +2396,9 @@ impl IndexStore {
                       t.speed,
                       COALESCE(t.iterations, 0)
                FROM token_usage t
-               JOIN sessions s ON s.id = t.session_id
-               WHERE (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
+               JOIN ranked_usage_sessions s ON s.id = t.session_id
+               WHERE s.usage_rank = 1
+                 AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}"#
         );
         let mut binds: Vec<SqlValue> = vec![fp.clone(), fp.clone(), fp];
         binds.extend(pred_params);
@@ -3174,6 +3270,14 @@ impl IndexStore {
             slow_projects: self.query_turn_stats(None, filter, limit)?,
         })
     }
+}
+
+fn claude_project_from_stored_path(projects_root: &Path, file_path: &str) -> Option<String> {
+    let relative = Path::new(file_path).strip_prefix(projects_root).ok()?;
+    let encoded = relative.components().next()?.as_os_str().to_str()?;
+    let decoded = decode_project_name(encoded);
+    let canonical = canonical_project_path(&decoded);
+    Path::new(canonical).exists().then(|| canonical.to_string())
 }
 
 fn id_filter(row_ids: &[i64], column: &str) -> String {

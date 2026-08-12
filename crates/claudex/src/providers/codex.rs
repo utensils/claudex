@@ -94,13 +94,46 @@ fn parse_ts(ts: &str) -> Option<DateTime<Utc>> {
         .ok()
 }
 
-/// Codex's `total_token_usage` is a running cumulative total, so we keep only
-/// the last one observed and map it onto claudex's token model: the cached
-/// portion of the prompt is billed as a cache read, the rest as fresh input.
+/// Token usage normalized into claudex's fresh/cache-write/cache-read buckets.
 struct CodexTokens {
     input: u64,
     cached_input: u64,
+    cache_write_input: u64,
     output: u64,
+}
+
+impl CodexTokens {
+    fn add(&mut self, other: &Self) {
+        self.input += other.input;
+        self.cached_input += other.cached_input;
+        self.cache_write_input += other.cache_write_input;
+        self.output += other.output;
+    }
+}
+
+#[derive(Default)]
+struct CodexTokenTracker {
+    cumulative: Option<CodexTokens>,
+    delta: Option<CodexTokens>,
+}
+
+impl CodexTokenTracker {
+    fn observe(&mut self, info: &Value) {
+        if let Some(tokens) = codex_tokens(&info["total_token_usage"]) {
+            self.cumulative = Some(tokens);
+        }
+        if let Some(tokens) = codex_tokens(&info["last_token_usage"]) {
+            if let Some(acc) = &mut self.delta {
+                acc.add(&tokens);
+            } else {
+                self.delta = Some(tokens);
+            }
+        }
+    }
+
+    fn into_usage(self) -> Option<CodexTokens> {
+        self.delta.or(self.cumulative)
+    }
 }
 
 fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
@@ -112,7 +145,7 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
     let mut model_provider: Option<String> = None;
     let mut forked_from_id: Option<String> = None;
     let mut git_branch: Option<String> = None;
-    let mut last_tokens: Option<CodexTokens> = None;
+    let mut tokens = CodexTokenTracker::default();
     let mut pr_links_seen = BTreeSet::new();
     let mut gh_pr_call_ids = BTreeSet::new();
 
@@ -154,7 +187,7 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
             Some("response_item") | Some("event_msg") => {
                 handle_payload(
                     &mut entry,
-                    &mut last_tokens,
+                    &mut tokens,
                     &mut pr_links_seen,
                     &mut gh_pr_call_ids,
                     &record["payload"],
@@ -165,7 +198,7 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
             Some("message") => {
                 handle_payload(
                     &mut entry,
-                    &mut last_tokens,
+                    &mut tokens,
                     &mut pr_links_seen,
                     &mut gh_pr_call_ids,
                     record,
@@ -191,11 +224,17 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
     entry.project_display = cwd.clone().unwrap_or_else(|| "unknown".to_string());
     entry.parent_session_id = forked_from_id.clone();
 
-    if let Some(t) = last_tokens {
-        entry.usage.input_tokens = t.input.saturating_sub(t.cached_input);
+    // Modern Codex transcripts expose `last_token_usage`, the per-turn delta.
+    // Summing those values keeps resumed/forked rollout files additive. Falling
+    // back to the last cumulative total preserves support for older transcripts.
+    if let Some(t) = tokens.into_usage() {
+        entry.usage.input_tokens = t
+            .input
+            .saturating_sub(t.cached_input)
+            .saturating_sub(t.cache_write_input);
         entry.usage.cache_read_tokens = t.cached_input;
+        entry.usage.cache_creation_tokens = t.cache_write_input;
         entry.usage.output_tokens = t.output;
-        entry.usage.cache_creation_tokens = 0;
     }
 
     // Stash provider-specific metadata for `sessions.extras`.
@@ -229,7 +268,7 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
 
 fn handle_payload(
     entry: &mut ProviderRecord,
-    last_tokens: &mut Option<CodexTokens>,
+    tokens: &mut CodexTokenTracker,
     pr_links_seen: &mut BTreeSet<String>,
     gh_pr_call_ids: &mut BTreeSet<String>,
     payload: &Value,
@@ -238,14 +277,7 @@ fn handle_payload(
 ) {
     match payload["type"].as_str() {
         Some("token_count") => {
-            let usage = &payload["info"]["total_token_usage"];
-            if usage.is_object() {
-                *last_tokens = Some(CodexTokens {
-                    input: usage["input_tokens"].as_u64().unwrap_or(0),
-                    cached_input: usage["cached_input_tokens"].as_u64().unwrap_or(0),
-                    output: usage["output_tokens"].as_u64().unwrap_or(0),
-                });
-            }
+            tokens.observe(&payload["info"]);
         }
         Some("message") => {
             let role = payload["role"].as_str().unwrap_or("");
@@ -341,6 +373,15 @@ fn handle_payload(
         }
         _ => {}
     }
+}
+
+fn codex_tokens(usage: &Value) -> Option<CodexTokens> {
+    usage.is_object().then(|| CodexTokens {
+        input: usage["input_tokens"].as_u64().unwrap_or(0),
+        cached_input: usage["cached_input_tokens"].as_u64().unwrap_or(0),
+        cache_write_input: usage["cache_write_input_tokens"].as_u64().unwrap_or(0),
+        output: usage["output_tokens"].as_u64().unwrap_or(0),
+    })
 }
 
 fn push_tool(entry: &mut ProviderRecord, name: &str) {
