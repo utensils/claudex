@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.1](https://github.com/utensils/claudex/compare/v0.13.0...v0.13.1) (2026-08-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * claudex bumped from 0.13.0 to 0.13.1
+
 ## [0.13.0](https://github.com/utensils/claudex/compare/v0.12.0...v0.13.0) (2026-07-26)
 
 
