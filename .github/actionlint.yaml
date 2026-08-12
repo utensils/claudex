@@ -1,0 +1,7 @@
+paths:
+  .github/workflows/release-plz.yml:
+    # actionlint 1.7.12 still vendors the pre-deprecation v3 metadata. GitHub's
+    # hosted action warns on app-id and accepts client-id instead.
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
