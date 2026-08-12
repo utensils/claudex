@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-please](https://github.com/googleapis/release-please),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.13.1](https://github.com/utensils/claudex/compare/v0.13.0...v0.13.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **cost:** correct cumulative usage and project paths ([#87](https://github.com/utensils/claudex/issues/87)) ([863214d](https://github.com/utensils/claudex/commit/863214d7389edda39625c0bff5a4bb934619daf7))
+
 ## [0.13.0](https://github.com/utensils/claudex/compare/v0.12.0...v0.13.0) (2026-07-26)
 
 ### Features

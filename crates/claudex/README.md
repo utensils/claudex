@@ -10,7 +10,7 @@ structs instead of terminal-rendered tables.
 
 ```toml
 [dependencies]
-claudex = "0.13.0" # x-release-please-version
+claudex = "0.13.1" # x-release-please-version
 ```
 
 ## Example
