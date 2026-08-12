@@ -19,7 +19,7 @@ done
 
 grep -q 'name = "claudex-cli"' release-plz.toml
 grep -q 'pr_name = "chore: release v{{ version }}"' release-plz.toml
-grep -q '^## Claudex v{{ version }}$' release-plz.toml
+grep -q '^## Claudex v{{ release.next_version }}$' release-plz.toml
 grep -q 'changelog_path = "./CHANGELOG.md"' release-plz.toml
 grep -q 'changelog_include = \["claudex"\]' release-plz.toml
 grep -q 'git_tag_name = "v{{ version }}"' release-plz.toml

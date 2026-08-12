@@ -6,10 +6,10 @@
 repo_url = "https://github.com/utensils/claudex"
 pr_name = "chore: release v{{ version }}"
 pr_body = """
-## Claudex v{{ version }}
-
 {% for release in releases -%}
 {% if release.changelog -%}
+## Claudex v{{ release.next_version }}
+
 {{ release.changelog }}
 {% endif -%}
 {% endfor %}
