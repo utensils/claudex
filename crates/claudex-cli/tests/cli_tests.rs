@@ -247,6 +247,43 @@ fn codex_cost_uses_last_cumulative_tokens_and_gpt_pricing() {
 }
 
 #[test]
+fn astra_codex_cost_and_family() {
+    let home = fixture_home_with_codex();
+    let path = home
+        .path()
+        .join(".codex/sessions/2026/05/05/rollout-2026-05-05T00-00-00-codex-a.jsonl");
+    let transcript = fs::read_to_string(&path)
+        .unwrap()
+        .replace("gpt-5-codex", "gpt-6-astra");
+    fs::write(path, transcript).unwrap();
+    let out = run(home.path(), &["cost", "--json"]);
+    assert!(out.status.success());
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["project"]
+                .as_str()
+                .is_some_and(|p| p.contains("codexproj"))
+        })
+        .unwrap();
+    // 800K uncached input + 200K cached input + 500K output.
+    assert!((row["cost_usd"].as_f64().unwrap() - 33.2).abs() < 1e-9);
+    assert!(
+        row["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == "Astra")
+    );
+    let out = run(home.path(), &["models"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Astra"));
+}
+
+#[test]
 fn codex_session_drilldown_resolves_indexed_id() {
     let home = fixture_home_with_codex();
     let out = run(home.path(), &["session", "codex-a", "--json"]);
