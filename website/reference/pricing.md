@@ -50,6 +50,7 @@ The GPT-5.6 rates and cache policy come from OpenAI's
 
 | Model match                                 | Input         | Output         | Cache write   | Cache read    |
 | ------------------------------------------- | ------------- | -------------- | ------------- | ------------- |
+| `gpt-6-astra`                               | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok | $1.00 / MTok  |
 | `gpt-5.6-sol`                               | $5.00 / MTok  | $30.00 / MTok  | $6.25 / MTok  | $0.50 / MTok  |
 | `gpt-5.6-terra`                             | $2.50 / MTok  | $15.00 / MTok  | $3.125 / MTok | $0.25 / MTok  |
 | `gpt-5.6-luna`                              | $1.00 / MTok  | $6.00 / MTok   | $1.25 / MTok  | $0.10 / MTok  |
@@ -71,6 +72,13 @@ The GPT-5.6 rates and cache policy come from OpenAI's
 | `gpt-4-32k`                                 | $60.00 / MTok | $120.00 / MTok | $60.00 / MTok | $60.00 / MTok |
 | `gpt-4` (classic 8k / 0613)                 | $30.00 / MTok | $60.00 / MTok  | $30.00 / MTok | $30.00 / MTok |
 | `gpt-4o` (base / other `gpt-4*`)            | $2.50 / MTok  | $10.00 / MTok  | $2.50 / MTok  | $1.25 / MTok  |
+
+Astra rates are verified against the [official model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
+For Astra requests above 272K input tokens, OpenAI doubles input and cache
+rates and multiplies output rates by 1.5. Batch and Flex cost 50% of Standard;
+Fast mode costs 2x the applicable rates. Claudex uses Standard short-context
+estimates because its aggregated usage does not reliably retain these billing
+conditions; it does not apply a request threshold to session totals.
 
 OpenAI also publishes these higher **Standard long-context** GPT-5.6 rates:
 
@@ -102,6 +110,7 @@ The tier is chosen by substring-matching the model name, **most specific first**
   other `sonnet` ids and missing/empty legacy model ids → standard Sonnet.
 - `haiku-4-5` → Haiku 4.5; `3-haiku` (but not `3-5-haiku`) → the cheapest
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
+- `gpt-6-astra` → dedicated rates and the `Astra` family label.
 - `gpt-5.6-sol` / `terra` / `luna` → dedicated rates and family labels.
 - Other `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
   including `gpt-4-turbo`/`-32k` and classic `gpt-4` — win over the `gpt-4o`
@@ -115,7 +124,7 @@ So `claude-fable-5` maps to **Fable 5** ($10/$50), `claude-opus-5` maps to
 **current Opus** ($5/$25), `claude-sonnet-5` maps to its current introductory
 card ($2/$10), an older `claude-opus-3` maps to **legacy Opus** ($15/$75), and
 unrecognized names are not charged. Note that the display
-**family label** (`models` command) is `Sol`/`Terra`/`Luna` for GPT-5.6, or
+**family label** (`models` command) is `Astra` for GPT-6 Astra, `Sol`/`Terra`/`Luna` for GPT-5.6, or
 `Fable`/`Mythos`/`Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
 (or fast from standard), but the **cost** does.
 

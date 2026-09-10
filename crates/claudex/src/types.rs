@@ -96,6 +96,10 @@ impl ModelPricing {
             }
         } else if m.contains("sonnet") {
             sonnet_pricing()
+        } else if m.contains("gpt-6-astra") {
+            // Standard short-context rates, verified 2026-09-10:
+            // https://developers.openai.com/api/docs/models/gpt-6-astra
+            openai_56_pricing(10.0, 50.0)
         } else if has_any(&m, &["gpt-5.6-sol"]) {
             // GPT-5.6+ bills cache writes at 1.25x uncached input and cache
             // reads at 0.1x, unlike earlier OpenAI models in this table.
@@ -171,6 +175,8 @@ impl ModelPricing {
             "Haiku"
         } else if m.contains("sonnet") {
             "Sonnet"
+        } else if m.contains("gpt-6-astra") {
+            "Astra"
         } else if m.contains("gpt-5.6-sol") {
             "Sol"
         } else if m.contains("gpt-5.6-terra") {
@@ -664,6 +670,30 @@ mod tests {
         assert!((u.cost_for_model(Some("gpt-5")) - 12.625).abs() < 0.0001);
         assert!((u.cost_for_model(Some("gpt-5-codex")) - 12.625).abs() < 0.0001);
         assert!((u.cost_for_model(Some("gpt-5.5")) - 40.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn astra_rates_and_labels() {
+        for model in ["gpt-6-astra", "openai/gpt-6-astra", "GPT-6-ASTRA"] {
+            let rates = ModelPricing::for_model(Some(model));
+            assert_eq!(rates.input_per_mtok, 10.0);
+            assert_eq!(rates.output_per_mtok, 50.0);
+            assert_eq!(rates.cache_write_per_mtok, 12.5);
+            assert_eq!(rates.cache_read_per_mtok, 1.0);
+            assert_eq!(ModelPricing::name(Some(model)), "Astra");
+            let usage = TokenUsage {
+                input_tokens: 100_000,
+                output_tokens: 10_000,
+                cache_creation_tokens: 20_000,
+                cache_read_tokens: 50_000,
+            };
+            assert!((usage.cost_for_model(Some(model)) - 1.8).abs() < 1e-9);
+        }
+        assert_eq!(ModelPricing::name(Some("gpt-6-unknown")), "Other");
+        assert_eq!(
+            ModelPricing::for_model(Some("gpt-6-unknown")).input_per_mtok,
+            0.0
+        );
     }
 
     #[test]

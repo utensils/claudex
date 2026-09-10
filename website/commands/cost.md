@@ -50,16 +50,16 @@ object.
 
 ## Columns (aggregated)
 
-| Column      | Source                                                                      |
-| ----------- | --------------------------------------------------------------------------- |
-| Project     | Decoded project name.                                                       |
-| Sessions    | Number of sessions counted.                                                 |
-| Input       | Total input tokens.                                                         |
-| Output      | Total output tokens.                                                        |
-| Cache Write | Cache-write tokens.                                                         |
-| Cache Read  | Cache-read tokens.                                                          |
-| Model(s)    | Model families seen (Sol/Terra/Luna/Fable/Opus/Sonnet/Haiku/GPT-5/GPT-4/…). |
-| Cost (USD)  | Sum of per-message costs.                                                   |
+| Column      | Source                                                                            |
+| ----------- | --------------------------------------------------------------------------------- |
+| Project     | Decoded project name.                                                             |
+| Sessions    | Number of sessions counted.                                                       |
+| Input       | Total input tokens.                                                               |
+| Output      | Total output tokens.                                                              |
+| Cache Write | Cache-write tokens.                                                               |
+| Cache Read  | Cache-read tokens.                                                                |
+| Model(s)    | Model families seen (Astra/Sol/Terra/Luna/Fable/Opus/Sonnet/Haiku/GPT-5/GPT-4/…). |
+| Cost (USD)  | Sum of per-message costs.                                                         |
 
 ## Columns (per-session)
 
@@ -95,7 +95,7 @@ object.
 ]
 ```
 
-Note: `models` is an **array of model-family names** (Sol / Terra / Luna /
+Note: `models` is an **array of model-family names** (Astra / Sol / Terra / Luna /
 Fable / Opus / Sonnet / Haiku / GPT-5 / GPT-4 / …) for any model that
 contributed to the project's cost. Sorted by `cost_usd` descending.
 

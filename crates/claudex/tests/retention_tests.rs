@@ -526,6 +526,30 @@ fn reprice_applies_sonnet_5_introductory_rates() {
 }
 
 #[test]
+fn reprice_applies_astra_rates_to_retained_rows() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+    seed_v5_db(&db, &[("astra", "codex", "gpt-6-astra", 1_000_000, 0, 0.0)]);
+    // Upgrade once, then simulate the immediately preceding pricing revision.
+    drop(IndexStore::open_at(&db).unwrap());
+    let conn = Connection::open(&db).unwrap();
+    conn.execute("UPDATE token_usage SET cost_usd = 0", [])
+        .unwrap();
+    conn.execute("UPDATE sessions SET present_on_disk = 0", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '5' WHERE key = 'pricing_revision'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    drop(IndexStore::open_at(&db).unwrap());
+    let (cost, source) = token_cost(&db, "astra");
+    assert_eq!(source, "computed");
+    assert!((cost - 10.0).abs() < 1e-9);
+}
+
+#[test]
 fn reprice_corrects_open_source_models_mispriced_as_sonnet() {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("index.db");
