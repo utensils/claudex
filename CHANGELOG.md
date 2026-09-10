@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-plz](https://release-plz.dev/),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.14.0](https://github.com/utensils/claudex/compare/v0.13.1...v0.14.0) - 2026-09-10
+
+### Added
+
+- *(pricing)* support GPT-6 Astra ([#96](https://github.com/utensils/claudex/pull/96))
+
 ## [0.13.1](https://github.com/utensils/claudex/compare/v0.13.0...v0.13.1) - 2026-08-12
 
 ### Fixed
