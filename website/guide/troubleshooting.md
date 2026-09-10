@@ -20,7 +20,7 @@ claudex sessions
 
 Costs are _estimated_, not invoiced. For Claude, Codex, and Copilot CLI they
 come from locally recorded token-usage blocks multiplied by the matching
-published model tier, including OpenAI Sol / Terra / Luna. Pi and OpenClaw use
+published model tier, including OpenAI Astra / Sol / Terra / Luna. Pi and OpenClaw use
 provider-reported costs when available, while VS Code Copilot Chat has no local
 token counts and reports $0.
 
