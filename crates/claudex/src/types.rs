@@ -119,20 +119,22 @@ impl ModelPricing {
             // Standard short-context rates, verified 2026-09-10:
             // https://developers.openai.com/api/docs/models/gpt-6-astra
             openai_56_pricing(10.0, 50.0)
-        } else if m.contains("gpt-6-sol") {
+        } else if matches_model_id(&m, "gpt-6-sol") {
             openai_56_pricing(2.0, 10.0)
-        } else if m.contains("gpt-6-luna") {
+        } else if matches_model_id(&m, "gpt-6-luna") {
             openai_56_pricing(0.10, 0.50)
-        } else if has_any(&m, &["gpt-5.6-cyber"]) {
+        } else if matches_model_id(&m, "gpt-5.6-cyber") {
             openai_56_pricing(12.50, 75.0)
-        } else if has_any(&m, &["gpt-5.6-sol"]) || m == "gpt-5.6" || m.ends_with("/gpt-5.6") {
+        } else if matches_model_id(&m, "gpt-5.6-sol") || matches_model_id(&m, "gpt-5.6") {
             // GPT-5.6+ bills cache writes at 1.25x uncached input and cache
             // reads at 0.1x, unlike earlier OpenAI models in this table.
             openai_56_pricing(4.0, 20.0)
-        } else if has_any(&m, &["gpt-5.6-terra"]) {
+        } else if matches_model_id(&m, "gpt-5.6-terra") {
             openai_56_pricing(2.0, 12.0)
-        } else if has_any(&m, &["gpt-5.6-luna"]) {
+        } else if matches_model_id(&m, "gpt-5.6-luna") {
             openai_56_pricing(0.20, 1.20)
+        } else if m.contains("gpt-5.6") {
+            free_pricing()
         } else if has_any(&m, &["gpt-5.5-pro"]) {
             openai_pricing(30.0, 30.0, 180.0)
         } else if has_any(&m, &["gpt-5.5"]) {
@@ -180,19 +182,19 @@ impl ModelPricing {
         } else if is_gpt4(&m) {
             // GPT-4o (base) and anything else in the gpt-4 family.
             openai_pricing(2.50, 1.25, 10.0)
-        } else if has_any(
-            &m,
-            &["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
-        ) {
+        } else if ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]
+            .iter()
+            .any(|id| matches_model_id(&m, id))
+        {
             // Google paid-tier Standard promotional text-token rates through
             // 2026-12-31. Cache creation is estimated at input price because
             // transcript usage lacks Google's cache storage duration.
             openai_pricing(0.75, 0.075, 3.75)
-        } else if m.contains("gemini-3.5-flash-lite") {
+        } else if matches_model_id(&m, "gemini-3.5-flash-lite") {
             openai_pricing(0.30, 0.03, 2.50)
-        } else if m.contains("gemini-3.5-flash") {
+        } else if matches_model_id(&m, "gemini-3.5-flash") {
             openai_pricing(1.50, 0.15, 9.0)
-        } else if m.contains("grok-4.7") {
+        } else if matches_model_id(&m, "grok-4.7") {
             // xAI Standard global rates below the 200K prompt threshold.
             openai_pricing(2.0, 0.50, 6.0)
         } else {
@@ -217,15 +219,17 @@ impl ModelPricing {
             "Sonnet"
         } else if m.contains("gpt-6-astra") {
             "Astra"
-        } else if m.contains("gpt-6-sol") {
+        } else if matches_model_id(&m, "gpt-6-sol") {
             "Sol"
-        } else if m.contains("gpt-6-luna") {
+        } else if matches_model_id(&m, "gpt-6-luna") {
             "Luna"
-        } else if m.contains("gpt-5.6-sol") || m == "gpt-5.6" || m.ends_with("/gpt-5.6") {
+        } else if matches_model_id(&m, "gpt-5.6-cyber") {
+            "Cyber"
+        } else if matches_model_id(&m, "gpt-5.6-sol") || matches_model_id(&m, "gpt-5.6") {
             "Sol"
-        } else if m.contains("gpt-5.6-terra") {
+        } else if matches_model_id(&m, "gpt-5.6-terra") {
             "Terra"
-        } else if m.contains("gpt-5.6-luna") {
+        } else if matches_model_id(&m, "gpt-5.6-luna") {
             "Luna"
         } else if has_any(&m, &["gpt-oss", "gpt_oss", "gptoss"]) {
             "GPT-OSS"
@@ -387,6 +391,10 @@ fn is_gpt4_classic(m: &str) -> bool {
 
 fn has_any(m: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| m.contains(needle))
+}
+
+fn matches_model_id(model: &str, id: &str) -> bool {
+    model.rsplit('/').next() == Some(id)
 }
 
 fn sonnet_pricing() -> ModelPricing {
@@ -814,6 +822,7 @@ mod tests {
         assert!((u.cost_for_model(Some("gpt-5.6-terra")) - 16.7).abs() < 0.0001);
         assert!((u.cost_for_model(Some("gpt-5.6-luna")) - 1.67).abs() < 0.0001);
         assert!((u.cost_for_model(Some("gpt-5.6-cyber")) - 104.375).abs() < 0.0001);
+        assert_eq!(ModelPricing::name(Some("gpt-5.6-cyber")), "Cyber");
     }
 
     #[test]
@@ -854,6 +863,24 @@ mod tests {
         assert_eq!(p.cache_write_per_mtok, 2.0);
         assert_eq!(p.cache_read_per_mtok, 0.50);
         assert_eq!(ModelPricing::name(Some("xai/grok-4.7")), "Grok");
+    }
+
+    #[test]
+    fn unknown_suffixed_models_do_not_inherit_new_rates() {
+        for model in [
+            "gemini-3.8-flash-lite",
+            "gemini-3.5-flash-image",
+            "grok-4.7-fast",
+            "grok-4.7-mini",
+            "gpt-5.6-codex",
+            "gpt-6-sol-mini",
+        ] {
+            assert_eq!(
+                ModelPricing::for_model(Some(model)).input_per_mtok,
+                0.0,
+                "{model} requires a verified rate"
+            );
+        }
     }
 
     #[test]

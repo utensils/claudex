@@ -537,7 +537,11 @@ fn reprice_revision_7_updates_new_models_and_retained_cache_reads() {
             ("sol", "codex", "gpt-6-sol", 1_000_000, 0, 0.0),
             ("luna", "codex", "gpt-6-luna", 1_000_000, 0, 0.0),
             ("sol56", "codex", "gpt-5.6", 1_000_000, 0, 5.0),
+            ("terra56", "codex", "gpt-5.6-terra", 1_000_000, 0, 2.5),
+            ("luna56", "codex", "gpt-5.6-luna", 1_000_000, 0, 1.0),
+            ("cyber56", "codex", "gpt-5.6-cyber", 1_000_000, 0, 0.0),
             ("gemini", "copilot", "gemini-3.5-flash", 1_000_000, 0, 0.0),
+            ("grok", "copilot", "grok-4.7", 1_000_000, 0, 0.0),
             ("pi", "pi", "openai/gpt-6-sol", 1_000_000, 0, 0.77),
         ],
     );
@@ -569,7 +573,11 @@ fn reprice_revision_7_updates_new_models_and_retained_cache_reads() {
         ("sol", 2.0),
         ("luna", 0.10),
         ("sol56", 4.0),
+        ("terra56", 2.0),
+        ("luna56", 0.20),
+        ("cyber56", 12.50),
         ("gemini", 1.50),
+        ("grok", 2.0),
     ] {
         let (cost, source) = token_cost(&db, session);
         assert_eq!(source, "computed");

@@ -45,7 +45,7 @@ cache writes cost 1.25x uncached input; earlier OpenAI rows use the input rate.
 The GPT-5.6 rates and cache policy come from OpenAI's
 [current model pages](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
 and [pricing table](https://developers.openai.com/api/docs/pricing). The Sol
-rate is promotional at least through November 21, 2026.
+rate is promotional at least through November 21, 2026; review it after that date.
 
 | Model match                                 | Input         | Output         | Cache write    | Cache read    |
 | ------------------------------------------- | ------------- | -------------- | -------------- | ------------- |
@@ -106,7 +106,8 @@ rate. Pi-reported sessions use Pi's own cost instead — see below.)
 
 For Gemini Flash model IDs, claudex estimates paid-tier Standard **text** token
 costs using [Google's current rate card](https://ai.google.dev/gemini-api/docs/pricing).
-Gemini 3.6–3.8 Flash rates are promotional through December 31, 2026.
+Gemini 3.6–3.8 Flash rates are promotional through December 31, 2026; review
+them before the scheduled increase.
 
 | Model match                                  | Input        | Output       | Cache read    |
 | -------------------------------------------- | ------------ | ------------ | ------------- |
@@ -143,7 +144,8 @@ The tier is chosen by substring-matching the model name, **most specific first**
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
 - `gpt-6-astra` / `sol` / `luna` → dedicated rates and family labels.
 - `gpt-5.6` alias / `gpt-5.6-sol` / `terra` / `luna` → dedicated rates and family labels;
-  `gpt-5.6-cyber` → its specialized rate card.
+  `gpt-5.6-cyber` → its specialized rate card and `Cyber` label. Unknown
+  `gpt-5.6-*` suffixes stay unpriced until their rates are verified.
 - Supported `gemini-3.x-flash` IDs → the matching paid text rates above.
 - `grok-4.7` → the xAI Standard short-context card above.
 - Other `gpt-5*` / `gpt-4*` → the matching OpenAI row above (specific variants —
@@ -158,7 +160,7 @@ So `claude-fable-5-1` maps to **Fable 5.1** ($10/$50 with $0.25 cache reads),
 `claude-opus-5-5` maps to **Opus 5.5** ($4/$20), `claude-sonnet-5` maps to
 its permanent $2/$10 card, an older `claude-opus-3` maps to **legacy Opus** ($15/$75), and
 unrecognized names are not charged. Note that the display
-**family label** (`models` command) is `Astra`/`Sol`/`Luna` for GPT-6, `Sol`/`Terra`/`Luna` for GPT-5.6, or
+**family label** (`models` command) is `Astra`/`Sol`/`Luna` for GPT-6, `Sol`/`Terra`/`Luna`/`Cyber` for GPT-5.6, or
 `Fable`/`Mythos`/`Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
 (or fast from standard), but the **cost** does.
 
@@ -232,8 +234,8 @@ accurate enough.
 ## Opus:Sonnet ratio
 
 **Legacy** Opus is exactly 5× Sonnet on every dimension ($15 vs $3 input, $75 vs
-$15 output, etc.). **Current** Opus 5.5 is $4/$20 input/output, 2× Sonnet 5
-on base input and output — so do _not_ assume a 5× multiple for present-day Opus
+$15 output, etc.). Opus 5 / 4.5–4.8 is $5/$25, or 2.5× Sonnet 5 on base input
+and output. **Current** Opus 5.5 is $4/$20, or 2× Sonnet 5 — so do _not_ assume a 5× multiple for present-day Opus
 sessions. If an Opus cost looks lower than you expect, that's usually the
 current Opus rate card, not an error; mid-session model switching can also
 lower it.
