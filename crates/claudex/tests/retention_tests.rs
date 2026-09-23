@@ -494,11 +494,11 @@ fn reprice_corrects_stale_computed_costs() {
 }
 
 #[test]
-fn reprice_applies_sonnet_5_introductory_rates() {
+fn reprice_applies_sonnet_5_permanent_rates() {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("index.db");
 
-    // A row ingested before Sonnet 5 had its dedicated introductory card.
+    // A row ingested before Sonnet 5 had its dedicated rate card.
     seed_v5_db(
         &db,
         &[(
@@ -519,6 +519,63 @@ fn reprice_applies_sonnet_5_introductory_rates() {
         (cost - 2.0).abs() < 1e-9,
         "expected repriced $2.00, got {cost}"
     );
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
+}
+
+#[test]
+fn reprice_revision_7_updates_new_models_and_retained_cache_reads() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+    seed_v5_db(
+        &db,
+        &[
+            ("opus", "claude", "claude-opus-5-5", 1_000_000, 0, 0.0),
+            ("fable", "claude", "claude-fable-5-1", 0, 0, 0.0),
+            ("sol", "codex", "gpt-6-sol", 1_000_000, 0, 0.0),
+            ("luna", "codex", "gpt-6-luna", 1_000_000, 0, 0.0),
+            ("sol56", "codex", "gpt-5.6", 1_000_000, 0, 5.0),
+            ("gemini", "copilot", "gemini-3.5-flash", 1_000_000, 0, 0.0),
+            ("pi", "pi", "openai/gpt-6-sol", 1_000_000, 0, 0.77),
+        ],
+    );
+    drop(IndexStore::open_at(&db).unwrap());
+    let conn = Connection::open(&db).unwrap();
+    conn.execute(
+        "UPDATE token_usage SET cost_usd = 999 WHERE cost_source = 'computed'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE token_usage SET cache_read_tokens = 1000000 WHERE model = 'claude-fable-5-1'",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE sessions SET present_on_disk = 0", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '6' WHERE key = 'pricing_revision'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    drop(IndexStore::open_at(&db).unwrap());
+    for (session, expected) in [
+        ("opus", 4.0),
+        ("fable", 0.25),
+        ("sol", 2.0),
+        ("luna", 0.10),
+        ("sol56", 4.0),
+        ("gemini", 1.50),
+    ] {
+        let (cost, source) = token_cost(&db, session);
+        assert_eq!(source, "computed");
+        assert!((cost - expected).abs() < 1e-9, "{session}: {cost}");
+    }
+    assert_eq!(token_cost(&db, "pi"), (0.77, "provider".to_string()));
     assert_eq!(
         meta_val(&db, "pricing_revision"),
         Some(claudex::index::PRICING_REVISION.to_string())
