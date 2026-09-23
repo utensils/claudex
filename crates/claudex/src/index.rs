@@ -40,7 +40,9 @@ const SCHEMA_VERSION: i64 = 7;
 /// `ModelPricing::for_model`; on the next open, every `cost_source = 'computed'`
 /// row is repriced in place (see `maybe_reprice`). Independent of
 /// `SCHEMA_VERSION`, which tracks table shape rather than cost values.
-pub const PRICING_REVISION: i64 = 6;
+/// Review promotional rates after 2026-11-21 (GPT-5.6 Sol) and 2026-12-31
+/// (Gemini 3.6–3.8 Flash); any changed published rate needs another bump.
+pub const PRICING_REVISION: i64 = 7;
 
 /// Revision for provider-derived PR links. Bump when Codex/Pi PR extraction
 /// changes; `claudex prs` then performs a targeted, line-prefiltered backfill

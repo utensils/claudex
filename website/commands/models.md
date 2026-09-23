@@ -79,8 +79,8 @@ claudex models --json | jq 'sort_by(-.cost_usd)[0] | {model, cost_usd}'
 
 - **Family detection.** `model_family` is a substring match on the model tag:
   `fable` → `Fable`, `mythos` → `Mythos`, `opus` → `Opus`, `haiku` → `Haiku`,
-  `sonnet` (or a missing model id) → `Sonnet`, `gpt-6-astra` → `Astra`, GPT-5.6 model IDs → `Sol`,
-  `Terra`, or `Luna`, other `gpt-5`/`gpt5` → `GPT-5`,
+  `sonnet` (or a missing model id) → `Sonnet`, GPT-6 model IDs → `Astra`,
+  `Sol`, or `Luna`, GPT-5.6 model IDs → `Sol`, `Terra`, `Luna`, or `Cyber`, other `gpt-5`/`gpt5` → `GPT-5`,
   `gpt-4`/`gpt4` → `GPT-4`, plus dedicated labels for common local and
   open-weight families (Qwen, Llama, DeepSeek, Mistral, …); anything
   unrecognized → `Other`. See [Pricing model](/reference/pricing).
