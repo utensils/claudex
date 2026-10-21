@@ -32,7 +32,25 @@ Key types:
 - `Claudex` — owns an index handle and the configured providers.
 - `ClaudexConfig` — optional state directory and provider list.
 - `QueryFilter` / `Filter` — provider, model, date, and on-disk filters.
-- `ProviderKind` / `Provider` — Claude, Codex, Copilot (CLI and VS Code), Pi, and OpenClaw selectors.
+- `ProviderKind` / `Provider` — Claude, Codex, Copilot (CLI and VS Code), Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw selectors.
+
+## Additional sources
+
+`Claudex::new()` and `Claudex::with_config()` load the same source configuration
+as the CLI. For explicit embedding, supply `SourceConfig` directly:
+
+```rust
+use claudex::api::{Claudex, ClaudexConfig};
+use claudex::config::SourceConfig;
+
+let mut sources = SourceConfig::default();
+sources.add_directory("omp=/path/to/sessions")?;
+let mut cx = Claudex::with_sources(ClaudexConfig::default(), &sources)?;
+cx.sync_now()?;
+```
+
+Sources add to standard discovery. Relative paths in JSON files resolve beside
+the configuration file; programmatic/CLI additions resolve from cwd.
 
 ## Query Pattern
 

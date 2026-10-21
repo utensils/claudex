@@ -212,6 +212,9 @@ Three invariants worth knowing:
 ~/.copilot/session-state/**       (GitHub Copilot CLI) ├─ source transcripts
 VS Code workspaceStorage/**       (VS Code Copilot)    │
 ~/.pi/agent/sessions/**           (Pi)                 │
+~/.omp/agent/sessions/**          (OMP)                │
+~/.gemini/tmp/**/chats/**         (Gemini CLI)         │
+~/.local/share/opencode/**        (OpenCode DB/JSON)   │
 ~/.trajectory/** + state files     (OpenClaw)           ┘
         │
         ▼   claudex::providers::* (SessionProvider: enumerate + parse → ProviderRecord)
@@ -240,7 +243,7 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 - `crates/claudex/src/filter.rs` — shared provider/model/date/on-disk filter
   logic. CLI clap types convert into these library filters instead of
   duplicating business rules.
-- `crates/claudex/src/providers/{mod,claude,codex,copilot,copilot_vscode,openclaw,pi}.rs`
+- `crates/claudex/src/providers/{mod,claude,codex,copilot,copilot_vscode,openclaw,pi,omp,gemini,opencode,cline,additional}.rs`
   — provider abstraction. `SessionProvider` + `Provider` enum discover each agent's
   transcripts and normalize them to `ProviderRecord`. `providers/pr.rs` is the
   crate-internal GitHub PR link extractor that populates
@@ -282,11 +285,12 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 ### Key invariants
 
 - **Providers are first-class and additive.** Claude, Codex, Copilot (CLI and
-  VS Code), Pi, and OpenClaw flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
+  VS Code), Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
   `force_rebuild` take provider lists; default reporting spans every provider
   whose root exists (`providers::enabled_default()`). Filtering happens at
   query time (`--provider`), never at sync time — the index always holds
   everything available.
+- **Extra session directories are additive.** `config::SourceConfig` loads `config.json` from the state directory, `CLAUDEX_CONFIG`, or CLI `--config`; repeatable global `--session-dir PROVIDER=PATH` adds directories for every provider. Relative config paths resolve beside the file. `AdditionalProvider` unions and deduplicates all sources before retention reconciliation; the complete root list stamps freshness. Database-backed providers override `source_fingerprint` for virtual session paths. Library callers can use `Claudex::with_sources`.
 - **The index is retentive, not a cache.** A session whose source file is archived or deleted is soft-deleted (`present_on_disk=0`, `archived_at` stamped) and RETAINED with its derived rows + FTS. The ONLY destructive path is `claudex index --force` (`force_rebuild`). Per-provider sync scoping (`WHERE provider = ?`) is mandatory so one provider's sync never archives another's rows.
 - **Index staleness window = 300 s** (`STALE_SECS`), tracked per provider (`last_sync:<id>` / `sessions_root:<id>` meta keys). `claudex index` forces sync; `claudex index --force` wipes and rebuilds.
 - **Schema migrations are forward-only and non-destructive.** Bumping `SCHEMA_VERSION` runs the `migrate_schema` ladder (guarded `ALTER TABLE ADD COLUMN`) — never `DROP`, because retained data can't be rebuilt from disk. Add columns to the `CREATE TABLE IF NOT EXISTS` block AND an additive migration step, then bump the version.

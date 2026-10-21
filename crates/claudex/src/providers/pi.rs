@@ -95,7 +95,7 @@ fn parse_ts(ts: &str) -> Option<DateTime<Utc>> {
         .ok()
 }
 
-fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
+pub(crate) fn parse_pi_session(path: &Path) -> Result<ProviderRecord> {
     let mut entry = ProviderRecord::default();
     let mut session_cwd: Option<String> = None;
     let mut current_model: Option<String> = None;
@@ -316,8 +316,11 @@ fn model_key(provider: &str, model: &str) -> String {
     }
 }
 
-/// Join the text blocks of a Pi message `content` array.
+/// Read plain text content or join the text blocks of a Pi message array.
 fn content_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str().filter(|text| !text.is_empty()) {
+        return Some(text.to_string());
+    }
     let arr = content.as_array()?;
     let parts: Vec<&str> = arr
         .iter()

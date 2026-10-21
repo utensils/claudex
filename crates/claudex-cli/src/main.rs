@@ -22,6 +22,14 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto, global = true)]
     color: ColorChoice,
 
+    /// Read source directories from a JSON configuration file
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<std::path::PathBuf>,
+
+    /// Add a transcript directory (repeatable, PROVIDER=PATH)
+    #[arg(long, global = true, value_name = "PROVIDER=PATH")]
+    session_dir: Vec<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -406,6 +414,10 @@ fn main() {
         Ok(cli) => cli,
         Err(e) => render_cli_error(e, choice),
     };
+    if let Err(error) = claudex::config::configure_cli(cli.config.as_deref(), &cli.session_dir) {
+        eprintln!("error: {error:#}");
+        std::process::exit(1);
+    }
     let result = match cli.command {
         Commands::Sessions {
             project,

@@ -22,6 +22,7 @@ pub fn run(json: bool, deep: bool, filter: &ResolvedFilter) -> Result<()> {
                 serde_json::json!({
                     "provider": r.provider,
                     "root_dir": r.root_dir,
+                    "root_dirs": providers.iter().find(|p| p.id() == r.provider).map(|p| p.root_dirs()).unwrap_or_default(),
                     "enabled": r.enabled,
                     "discovered_files": r.discovered_files,
                     "parse_failures": r.parse_failures,

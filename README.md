@@ -4,9 +4,9 @@
 [![Deploy Docs](https://github.com/utensils/claudex/actions/workflows/pages.yml/badge.svg)](https://github.com/utensils/claudex/actions/workflows/pages.yml)
 [![codecov](https://codecov.io/gh/utensils/claudex/graph/badge.svg)](https://codecov.io/gh/utensils/claudex)
 
-**Query, search, and analyze your Claude Code, OpenAI Codex, GitHub Copilot, Pi, and OpenClaw sessions from the command line.**
+**Query, search, and analyze your Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw sessions from the command line.**
 
-claudex reads the local transcripts of six coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), GitHub Copilot CLI (`~/.copilot/session-state/`), VS Code Copilot Chat (VS Code `workspaceStorage`), Pi (`~/.pi/agent/`), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all six providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
+claudex reads the local transcripts of eleven coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), GitHub Copilot CLI (`~/.copilot/session-state/`), VS Code Copilot Chat (VS Code `workspaceStorage`), Pi (`~/.pi/agent/`), OMP (`~/.omp/agent/sessions/`), Gemini CLI (`~/.gemini/tmp/`), OpenCode (`~/.local/share/opencode/`), Cline (SDK and VS Code tasks), Roo Code (VS Code tasks), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all eleven providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
 
 ![demo](assets/demo.gif)
 
@@ -33,6 +33,17 @@ claudex skills install                       # install the agent skill for Claud
 ```
 
 See the [flag support matrix](https://utensils.io/claudex/commands/) for per-command `--json` / `--no-index` coverage.
+
+## Additional session directories
+
+Keep standard discovery and add any number of transcript directories per provider:
+
+```bash
+claudex --session-dir omp=/path/to/extra/sessions index
+claudex --config /path/to/config.json sessions --provider opencode --json
+```
+
+Persistent configuration lives in `~/.claudex/config.json` (or `$CLAUDEX_DIR/config.json`); select another file with `--config` or `CLAUDEX_CONFIG`. See [provider configuration](https://utensils.io/claudex/guide/providers#additional-session-directories) for the JSON format and provider layouts.
 
 ## Install
 

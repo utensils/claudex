@@ -97,7 +97,10 @@ fn resolve_indexed(selector: &str, project_filter: Option<&str>) -> Result<Vec<I
     Ok(idx
         .query_session_matches(selector, project_filter)?
         .into_iter()
-        .filter(|row| row.present_on_disk && Path::new(&row.file_path).exists())
+        .filter(|row| {
+            row.present_on_disk
+                && (row.provider == "opencode" || Path::new(&row.file_path).exists())
+        })
         .collect())
 }
 
@@ -140,6 +143,20 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
     }
     buf.push_str("\n---\n\n");
 
+    if matches!(
+        row.provider.as_str(),
+        "gemini" | "opencode" | "cline" | "roo"
+    ) {
+        for message in normalized_record(row)?.messages {
+            buf.push_str(&format!(
+                "## {}\n\n{}\n\n---\n\n",
+                title_case(&message.msg_type),
+                message.content
+            ));
+        }
+        return Ok(buf);
+    }
+
     // VS Code chat sessions are one (possibly delta-logged) JSON document, not
     // message-per-line JSONL — replay and flatten instead of streaming.
     if row.provider == "copilot-vscode" {
@@ -176,7 +193,16 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
 fn build_indexed_json_value(row: &IndexedSession) -> Result<Value> {
     let mut records = Vec::new();
     let mut messages = Vec::new();
-    if row.provider == "copilot-vscode" {
+    if matches!(
+        row.provider.as_str(),
+        "gemini" | "opencode" | "cline" | "roo"
+    ) {
+        for message in normalized_record(row)?.messages {
+            messages.push(serde_json::json!({"role": message.msg_type, "text": message.content,
+                "timestamp": message.timestamp_ms.and_then(DateTime::from_timestamp_millis).map(|d| d.to_rfc3339())}));
+        }
+        records = messages.clone();
+    } else if row.provider == "copilot-vscode" {
         let session = copilot_vscode::load_session_value(Path::new(&row.file_path))?;
         for msg in copilot_vscode::session_messages(&session) {
             messages.push(serde_json::json!({
@@ -265,7 +291,7 @@ fn generic_message_text(provider: &str, record: &Value) -> Option<(String, Strin
                 _ => None,
             }
         }
-        "pi" | "openclaw" => {
+        "pi" | "omp" | "openclaw" => {
             let msg = if record["type"].as_str() == Some("message") {
                 &record["message"]
             } else {
@@ -455,4 +481,22 @@ fn build_json_value(project: &str, path: &Path) -> Result<Value> {
         "message_count": stats.message_count,
         "messages": messages,
     }))
+}
+
+fn normalized_record(row: &IndexedSession) -> Result<claudex::providers::ProviderRecord> {
+    use claudex::providers::{DiscoveredFile, SessionProvider};
+    let file = DiscoveredFile {
+        path: row.file_path.clone().into(),
+        project_display: row.project_name.clone(),
+        parent_session_id: None,
+        archived: false,
+        source_key: None,
+    };
+    match row.provider.as_str() {
+        "gemini" => claudex::providers::GeminiProvider::new()?.parse(&file),
+        "opencode" => claudex::providers::OpenCodeProvider::new()?.parse(&file),
+        "cline" => claudex::providers::ClineProvider::new()?.parse(&file),
+        "roo" => claudex::providers::RooProvider::new()?.parse(&file),
+        _ => anyhow::bail!("unsupported normalized provider"),
+    }
 }

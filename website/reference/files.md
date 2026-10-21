@@ -65,6 +65,23 @@ classic `<session-id>.jsonl` transcripts for canonical message/usage data, and
 status and trajectory-only sessions. Trajectory-only rows are keyed by logical
 OpenClaw session source, so they are reused when the classic transcript appears.
 
+### Additional harness storage
+
+OMP reads `~/.omp/agent/sessions/**`, including nested subagents and separate
+model-usage entries. Gemini CLI reads `~/.gemini/tmp/**/chats/session-*` in JSON
+or append-only JSONL format. OpenCode reads `~/.local/share/opencode/opencode.db`
+through read-only SQLite connections (including live WAL updates), or its legacy
+`storage/session`, `storage/message`, and `storage/part` JSON trees.
+
+Cline reads SDK session artifacts under `~/.cline/data/sessions/` and editor
+Cline task trees. Roo Code reads editor Roo task trees, including per-task
+`history_item.json`. Both include API conversation text, UI-recorded usage/costs,
+model metadata, and tools. Stable VS Code, Insiders, and VSCodium roots are discovered.
+
+All providers can add transcript directories through `~/.claudex/config.json`,
+`CLAUDEX_CONFIG`, global `--config`, and repeatable `--session-dir PROVIDER=PATH`.
+See [provider configuration](/guide/providers#additional-session-directories).
+
 ## Writes
 
 Claudex writes exclusively under `~/.claudex/` (or `$CLAUDEX_DIR`):

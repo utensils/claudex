@@ -16,19 +16,28 @@ use chrono::{DateTime, Utc};
 use crate::parser::ModelSessionStats;
 use crate::types::TokenUsage;
 
+mod additional;
 pub mod claude;
+pub mod cline;
 pub mod codex;
 pub mod copilot;
 pub mod copilot_vscode;
+pub mod gemini;
+pub mod omp;
 pub mod openclaw;
+pub mod opencode;
 pub mod pi;
 pub(crate) mod pr;
 
 pub use claude::ClaudeProvider;
+pub use cline::{ClineProvider, RooProvider};
 pub use codex::CodexProvider;
 pub use copilot::CopilotProvider;
 pub use copilot_vscode::CopilotVscodeProvider;
+pub use gemini::GeminiProvider;
+pub use omp::OmpProvider;
 pub use openclaw::OpenClawProvider;
+pub use opencode::OpenCodeProvider;
 pub use pi::PiProvider;
 
 /// Expand a leading `~/` (or bare `~`) to the user's home directory. Used by
@@ -117,12 +126,26 @@ pub trait SessionProvider {
     fn id(&self) -> &'static str;
     /// Root directory the provider reads transcripts from.
     fn root_dir(&self) -> &Path;
+    /// Every standard discovery root, including alternate editor installations.
+    fn root_dirs(&self) -> Vec<PathBuf> {
+        vec![self.root_dir().to_path_buf()]
+    }
     /// Whether the provider has data to index (its root exists).
     fn enabled(&self) -> bool {
         self.root_dir().exists()
     }
     /// Discover every transcript the provider currently has on disk.
     fn enumerate(&self) -> Result<Vec<DiscoveredFile>>;
+    /// Stable source change fingerprint (size, modification time by default).
+    /// Database-backed providers override this for their virtual session paths.
+    fn source_fingerprint(&self, file: &DiscoveredFile) -> Result<(i64, i64)> {
+        let metadata = std::fs::metadata(&file.path)?;
+        let mtime = metadata
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        Ok((metadata.len() as i64, mtime))
+    }
     /// Parse one discovered transcript into a normalized record.
     fn parse(&self, file: &DiscoveredFile) -> Result<ProviderRecord>;
 }
@@ -136,6 +159,12 @@ pub enum Provider {
     CopilotVscode(CopilotVscodeProvider),
     OpenClaw(OpenClawProvider),
     Pi(PiProvider),
+    Omp(OmpProvider),
+    Gemini(GeminiProvider),
+    OpenCode(OpenCodeProvider),
+    Cline(ClineProvider),
+    Roo(RooProvider),
+    Additional(Box<additional::AdditionalProvider>),
 }
 
 impl Provider {
@@ -147,6 +176,12 @@ impl Provider {
             Provider::CopilotVscode(p) => p,
             Provider::OpenClaw(p) => p,
             Provider::Pi(p) => p,
+            Provider::Omp(p) => p,
+            Provider::Gemini(p) => p,
+            Provider::OpenCode(p) => p,
+            Provider::Cline(p) => p,
+            Provider::Roo(p) => p,
+            Provider::Additional(p) => p.as_ref(),
         }
     }
 
@@ -166,6 +201,50 @@ impl Provider {
         self.inner().enumerate()
     }
 
+    pub fn source_fingerprint(&self, file: &DiscoveredFile) -> Result<(i64, i64)> {
+        self.inner().source_fingerprint(file)
+    }
+
+    /// Add transcript directories while retaining standard discovery.
+    pub fn with_session_dirs(self, mut directories: Vec<PathBuf>) -> Self {
+        if directories.is_empty() {
+            return self;
+        }
+        directories = directories
+            .into_iter()
+            .map(|dir| std::fs::canonicalize(&dir).unwrap_or(dir))
+            .collect();
+        directories.sort();
+        directories.dedup();
+        Self::Additional(Box::new(additional::AdditionalProvider {
+            base: self,
+            directories,
+        }))
+    }
+
+    pub fn root_dirs(&self) -> Vec<PathBuf> {
+        let mut roots = match self {
+            Self::Additional(provider) => {
+                let mut roots = provider.base.root_dirs();
+                roots.extend(provider.directories.clone());
+                roots
+            }
+            _ => self.inner().root_dirs(),
+        };
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    pub fn source_stamp(&self) -> String {
+        let roots = self.root_dirs();
+        if roots.len() == 1 {
+            roots[0].to_string_lossy().into_owned()
+        } else {
+            serde_json::to_string(&roots).expect("paths serialize")
+        }
+    }
+
     pub fn parse(&self, file: &DiscoveredFile) -> Result<ProviderRecord> {
         self.inner().parse(file)
     }
@@ -175,6 +254,20 @@ impl Provider {
 /// on disk. Spanning all available providers is intentional — claudex reports
 /// agent usage everywhere, not just Claude.
 pub fn enabled_default() -> Result<Vec<Provider>> {
+    configured(&crate::config::source_config()?)
+}
+
+/// Discover every available provider with explicit additive configuration.
+pub fn configured(config: &crate::config::SourceConfig) -> Result<Vec<Provider>> {
+    Ok(all_configured(config)?
+        .into_iter()
+        .filter(|provider| provider.enabled())
+        .collect())
+}
+
+pub fn all_configured(config: &crate::config::SourceConfig) -> Result<Vec<Provider>> {
+    let mut config = config.clone();
+    config.resolve(&std::env::current_dir()?)?;
     let candidates = vec![
         Provider::Claude(ClaudeProvider::new()?),
         Provider::Codex(CodexProvider::new()?),
@@ -182,6 +275,21 @@ pub fn enabled_default() -> Result<Vec<Provider>> {
         Provider::CopilotVscode(CopilotVscodeProvider::new()?),
         Provider::OpenClaw(OpenClawProvider::new()?),
         Provider::Pi(PiProvider::new()?),
+        Provider::Omp(OmpProvider::new()?),
+        Provider::Gemini(GeminiProvider::new()?),
+        Provider::OpenCode(OpenCodeProvider::new()?),
+        Provider::Cline(ClineProvider::new()?),
+        Provider::Roo(RooProvider::new()?),
     ];
-    Ok(candidates.into_iter().filter(|p| p.enabled()).collect())
+    Ok(candidates
+        .into_iter()
+        .map(|provider| {
+            let directories = config
+                .providers
+                .get(provider.id())
+                .map(|paths| paths.session_dirs.clone())
+                .unwrap_or_default();
+            provider.with_session_dirs(directories)
+        })
+        .collect())
 }
