@@ -82,6 +82,15 @@ impl ModelPricing {
                 cache_write_per_mtok: 18.75,
                 cache_read_per_mtok: 1.50,
             }
+        } else if is_claude_5_5(&m, "haiku") {
+            // Standard <=100K prompt card. This method also prices aggregated
+            // session usage, so a request threshold must not be applied here.
+            Self {
+                input_per_mtok: 0.10,
+                output_per_mtok: 0.50,
+                cache_write_per_mtok: 0.125,
+                cache_read_per_mtok: 0.01,
+            }
         } else if is_claude_haiku_latest(&m) {
             Self {
                 input_per_mtok: 1.0,
@@ -105,6 +114,13 @@ impl ModelPricing {
                 cache_write_per_mtok: 1.00,
                 cache_read_per_mtok: 0.08,
             }
+        } else if is_claude_5_5(&m, "sonnet") {
+            Self {
+                input_per_mtok: 2.0,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 2.50,
+                cache_read_per_mtok: 0.10,
+            }
         } else if is_claude_sonnet_5(&m) {
             // Anthropic made the launch $2/$10 rate permanent in September 2026.
             Self {
@@ -115,17 +131,29 @@ impl ModelPricing {
             }
         } else if m.contains("sonnet") {
             sonnet_pricing()
-        } else if m.contains("gpt-6-astra") {
+        } else if matches_model_id(&m, "gpt-6-astra") {
             // Standard short-context rates, verified 2026-09-10:
             // https://developers.openai.com/api/docs/models/gpt-6-astra
             openai_56_pricing(10.0, 50.0)
+        } else if matches_model_id(&m, "gpt-6.1-sol") {
+            // Verified 2026-10-21 against the official GPT-6.1 Sol model card:
+            // cache reads are 5% of input, versus 10% for GPT-6 Sol.
+            Self {
+                input_per_mtok: 2.0,
+                output_per_mtok: 10.0,
+                cache_write_per_mtok: 2.50,
+                cache_read_per_mtok: 0.10,
+            }
         } else if matches_model_id(&m, "gpt-6-sol") {
             openai_56_pricing(2.0, 10.0)
         } else if matches_model_id(&m, "gpt-6-luna") {
             openai_56_pricing(0.10, 0.50)
         } else if matches_model_id(&m, "gpt-5.6-cyber") {
             openai_56_pricing(12.50, 75.0)
-        } else if matches_model_id(&m, "gpt-5.6-sol") || matches_model_id(&m, "gpt-5.6") {
+        } else if matches_model_id(&m, "gpt-5.6-sol")
+            || matches_model_id(&m, "gpt-5.6")
+            || matches_model_id(&m, "gpt-daybreak-blue-latest")
+        {
             // GPT-5.6+ bills cache writes at 1.25x uncached input and cache
             // reads at 0.1x, unlike earlier OpenAI models in this table.
             openai_56_pricing(4.0, 20.0)
@@ -133,8 +161,16 @@ impl ModelPricing {
             openai_56_pricing(2.0, 12.0)
         } else if matches_model_id(&m, "gpt-5.6-luna") {
             openai_56_pricing(0.20, 1.20)
+        } else if matches_model_id(&m, "gpt-rosalind-research")
+            || matches_model_id(&m, "gpt-rosalind-discovery")
+        {
+            // Rosalind has no separate cache-write fee; estimate any recorded
+            // cache creation at the ordinary input rate.
+            openai_pricing(5.0, 0.50, 25.0)
         } else if m.contains("gpt-5.6") {
             free_pricing()
+        } else if matches_model_id(&m, "gpt-5.5-cyber") {
+            openai_pricing(12.50, 1.25, 75.0)
         } else if has_any(&m, &["gpt-5.5-pro"]) {
             openai_pricing(30.0, 30.0, 180.0)
         } else if has_any(&m, &["gpt-5.5"]) {
@@ -147,10 +183,16 @@ impl ModelPricing {
             openai_pricing(0.20, 0.02, 1.25)
         } else if has_any(&m, &["gpt-5.4"]) {
             openai_pricing(2.50, 0.25, 15.0)
+        } else if has_any(&m, &["gpt-5.2-pro"]) {
+            openai_pricing(21.0, 21.0, 168.0)
         } else if has_any(&m, &["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2"]) {
             openai_pricing(1.75, 0.175, 14.0)
         } else if has_any(&m, &["gpt-5-pro"]) {
             openai_pricing(15.0, 15.0, 120.0)
+        } else if has_any(&m, &["gpt-5-mini"]) {
+            openai_pricing(0.25, 0.025, 2.0)
+        } else if has_any(&m, &["gpt-5-nano"]) {
+            openai_pricing(0.05, 0.005, 0.40)
         } else if is_gpt5(&m) {
             Self {
                 input_per_mtok: 1.25,
@@ -182,6 +224,22 @@ impl ModelPricing {
         } else if is_gpt4(&m) {
             // GPT-4o (base) and anything else in the gpt-4 family.
             openai_pricing(2.50, 1.25, 10.0)
+        } else if matches_model_or_snapshot(&m, "o1-pro") {
+            openai_pricing(150.0, 150.0, 600.0)
+        } else if matches_model_or_snapshot(&m, "o1") {
+            openai_pricing(15.0, 7.50, 60.0)
+        } else if matches_model_or_snapshot(&m, "o3-pro") {
+            openai_pricing(20.0, 20.0, 80.0)
+        } else if matches_model_or_snapshot(&m, "o3-mini") {
+            openai_pricing(1.10, 0.55, 4.40)
+        } else if matches_model_or_snapshot(&m, "o3") {
+            openai_pricing(2.0, 0.50, 8.0)
+        } else if matches_model_or_snapshot(&m, "o4-mini") {
+            openai_pricing(1.10, 0.275, 4.40)
+        } else if matches_model_or_snapshot(&m, "gpt-3.5-turbo")
+            || matches_model_id(&m, "gpt-3.5-turbo-0125")
+        {
+            openai_pricing(0.50, 0.50, 1.50)
         } else if ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]
             .iter()
             .any(|id| matches_model_id(&m, id))
@@ -217,26 +275,44 @@ impl ModelPricing {
             "Haiku"
         } else if m.contains("sonnet") {
             "Sonnet"
-        } else if m.contains("gpt-6-astra") {
+        } else if matches_model_id(&m, "gpt-6-astra") {
             "Astra"
-        } else if matches_model_id(&m, "gpt-6-sol") {
+        } else if matches_model_id(&m, "gpt-6-sol") || matches_model_id(&m, "gpt-6.1-sol") {
             "Sol"
         } else if matches_model_id(&m, "gpt-6-luna") {
             "Luna"
-        } else if matches_model_id(&m, "gpt-5.6-cyber") {
+        } else if matches_model_id(&m, "gpt-5.6-cyber") || matches_model_id(&m, "gpt-5.5-cyber") {
             "Cyber"
-        } else if matches_model_id(&m, "gpt-5.6-sol") || matches_model_id(&m, "gpt-5.6") {
+        } else if matches_model_id(&m, "gpt-5.6-sol")
+            || matches_model_id(&m, "gpt-5.6")
+            || matches_model_id(&m, "gpt-daybreak-blue-latest")
+        {
             "Sol"
         } else if matches_model_id(&m, "gpt-5.6-terra") {
             "Terra"
         } else if matches_model_id(&m, "gpt-5.6-luna") {
             "Luna"
+        } else if matches_model_id(&m, "gpt-rosalind-research")
+            || matches_model_id(&m, "gpt-rosalind-discovery")
+        {
+            "Rosalind"
         } else if has_any(&m, &["gpt-oss", "gpt_oss", "gptoss"]) {
             "GPT-OSS"
         } else if is_gpt5(&m) {
             "GPT-5"
         } else if is_gpt4(&m) {
             "GPT-4"
+        } else if matches_model_or_snapshot(&m, "o1") || matches_model_or_snapshot(&m, "o1-pro") {
+            "o1"
+        } else if matches_model_or_snapshot(&m, "o3")
+            || matches_model_or_snapshot(&m, "o3-mini")
+            || matches_model_or_snapshot(&m, "o3-pro")
+        {
+            "o3"
+        } else if matches_model_or_snapshot(&m, "o4-mini") {
+            "o4"
+        } else if m.contains("gpt-3.5") {
+            "GPT-3.5"
         } else if has_any(&m, &["qwen", "qwq"]) {
             "Qwen"
         } else if has_any(&m, &["deepseek"]) {
@@ -342,6 +418,10 @@ fn is_claude_opus_5_5(m: &str) -> bool {
     has_any(m, &["opus-5-5", "opus-5.5"])
 }
 
+fn is_claude_5_5(m: &str, family: &str) -> bool {
+    m.contains(&format!("{family}-5-5")) || m.contains(&format!("{family}-5.5"))
+}
+
 fn is_claude_fable_5_1(m: &str) -> bool {
     has_any(m, &["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"])
 }
@@ -397,6 +477,16 @@ fn matches_model_id(model: &str, id: &str) -> bool {
     model.rsplit('/').next() == Some(id)
 }
 
+fn matches_model_or_snapshot(model: &str, id: &str) -> bool {
+    let model = model.rsplit('/').next().unwrap_or(model);
+    model == id
+        || model.strip_prefix(id).is_some_and(|suffix| {
+            suffix.len() == 11
+                && suffix.starts_with('-')
+                && chrono::NaiveDate::parse_from_str(&suffix[1..], "%Y-%m-%d").is_ok()
+        })
+}
+
 fn sonnet_pricing() -> ModelPricing {
     ModelPricing {
         input_per_mtok: 3.0,
@@ -432,7 +522,10 @@ impl TokenUsage {
         self.cache_read_tokens += other.cache_read_tokens;
     }
 
-    /// Model-aware cost in USD.
+    /// Model-aware Standard short-context estimate in USD.
+    ///
+    /// Usage may be aggregated across requests. Request-level context bands,
+    /// service tiers, cache TTLs, and regional surcharges are not inferred.
     pub fn cost_for_model(&self, model: Option<&str>) -> f64 {
         let p = ModelPricing::for_model(model);
         (self.input_tokens as f64 * p.input_per_mtok
@@ -752,6 +845,92 @@ mod tests {
         assert_eq!(fast.cache_read_per_mtok, 0.40);
     }
 
+    #[test]
+    fn current_claude_55_short_context_rates() {
+        for (family, input, output, write, read) in [
+            ("sonnet", 2.0, 10.0, 2.50, 0.10),
+            ("haiku", 0.10, 0.50, 0.125, 0.01),
+        ] {
+            for model in [
+                format!("claude-{family}-5-5"),
+                format!("anthropic/claude-{family}-5.5"),
+            ] {
+                let p = ModelPricing::for_model(Some(&model));
+                assert_eq!(p.input_per_mtok, input);
+                assert_eq!(p.output_per_mtok, output);
+                assert_eq!(p.cache_write_per_mtok, write);
+                assert_eq!(p.cache_read_per_mtok, read);
+            }
+        }
+    }
+
+    #[test]
+    fn current_openai_rates_and_namespace_labels() {
+        for (model, input, output, write, read, label) in [
+            ("gpt-6.1-sol", 2.0, 10.0, 2.50, 0.10, "Sol"),
+            ("gpt-daybreak-blue-latest", 4.0, 20.0, 5.0, 0.40, "Sol"),
+            ("gpt-rosalind-research", 5.0, 25.0, 5.0, 0.50, "Rosalind"),
+            ("gpt-rosalind-discovery", 5.0, 25.0, 5.0, 0.50, "Rosalind"),
+        ] {
+            for id in [
+                model.to_string(),
+                format!("openai/{model}"),
+                model.to_uppercase(),
+            ] {
+                let p = ModelPricing::for_model(Some(&id));
+                assert_eq!(p.input_per_mtok, input);
+                assert_eq!(p.output_per_mtok, output);
+                assert_eq!(p.cache_write_per_mtok, write);
+                assert_eq!(p.cache_read_per_mtok, read);
+                assert_eq!(ModelPricing::name(Some(&id)), label);
+            }
+        }
+    }
+
+    #[test]
+    fn additional_openai_standard_text_tiers() {
+        for (model, input, output, read) in [
+            ("gpt-5-mini", 0.25, 2.0, 0.025),
+            ("gpt-5-nano", 0.05, 0.40, 0.005),
+            ("gpt-5.2-pro", 21.0, 168.0, 21.0),
+            ("gpt-5.5-cyber", 12.50, 75.0, 1.25),
+            ("o1", 15.0, 60.0, 7.50),
+            ("o1-pro", 150.0, 600.0, 150.0),
+            ("o3", 2.0, 8.0, 0.50),
+            ("o3-pro", 20.0, 80.0, 20.0),
+            ("o3-mini", 1.10, 4.40, 0.55),
+            ("o4-mini", 1.10, 4.40, 0.275),
+            ("gpt-3.5-turbo", 0.50, 1.50, 0.50),
+        ] {
+            let p = ModelPricing::for_model(Some(model));
+            assert_eq!(p.input_per_mtok, input, "{model}");
+            assert_eq!(p.output_per_mtok, output, "{model}");
+            assert_eq!(p.cache_read_per_mtok, read, "{model}");
+            assert_eq!(p.cache_write_per_mtok, input, "{model}");
+        }
+        assert_eq!(
+            ModelPricing::for_model(Some("openai/o3-2025-04-16")).input_per_mtok,
+            2.0
+        );
+        assert_eq!(ModelPricing::name(Some("openai/o3-2025-04-16")), "o3");
+        assert_eq!(
+            ModelPricing::for_model(Some("o3-unverified")).input_per_mtok,
+            0.0
+        );
+    }
+
+    #[test]
+    fn aggregate_usage_never_selects_request_context_band() {
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+        };
+        assert!((usage.cost_for_model(Some("claude-haiku-5-5")) - 0.735).abs() < 1e-9);
+        assert!((usage.cost_for_model(Some("gpt-6.1-sol")) - 14.60).abs() < 1e-9);
+    }
+
     // --- OpenAI GPT pricing (Codex) ---
 
     #[test]
@@ -874,6 +1053,9 @@ mod tests {
             "grok-4.7-mini",
             "gpt-5.6-codex",
             "gpt-6-sol-mini",
+            "gpt-6.1-sol-mini",
+            "gpt-6-astra-mini",
+            "gpt-rosalind-research-mini",
         ] {
             assert_eq!(
                 ModelPricing::for_model(Some(model)).input_per_mtok,

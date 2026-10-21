@@ -42,7 +42,7 @@ const SCHEMA_VERSION: i64 = 7;
 /// `SCHEMA_VERSION`, which tracks table shape rather than cost values.
 /// Review promotional rates after 2026-11-21 (GPT-5.6 Sol) and 2026-12-31
 /// (Gemini 3.6–3.8 Flash); any changed published rate needs another bump.
-pub const PRICING_REVISION: i64 = 7;
+pub const PRICING_REVISION: i64 = 8;
 
 /// Revision for provider-derived PR links. Bump when Codex/Pi PR extraction
 /// changes; `claudex prs` then performs a targeted, line-prefiltered backfill
@@ -1034,7 +1034,7 @@ impl IndexStore {
         let last_sync: Option<u64> = self
             .meta_get(&format!("last_sync:{id}"))
             .and_then(|s| s.parse().ok());
-        let root = provider.root_dir().to_string_lossy().into_owned();
+        let root = provider.source_stamp();
         let root_changed =
             self.meta_get(&format!("sessions_root:{id}")).as_deref() != Some(root.as_str());
         let derivation_changed = match id {
@@ -1367,17 +1367,10 @@ impl IndexStore {
             let path_str = file_path.to_string_lossy().into_owned();
             seen.insert(path_str.clone());
 
-            let meta = match std::fs::metadata(file_path) {
-                Ok(m) => m,
+            let (size, mtime) = match provider.source_fingerprint(discovered) {
+                Ok(fingerprint) => fingerprint,
                 Err(_) => continue,
             };
-            let size = meta.len() as i64;
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
 
             let discovered_source_key = discovered.source_key.clone();
             let prior = known.get(&path_str);
@@ -1397,16 +1390,12 @@ impl IndexStore {
                 }
                 // Changed: rebuild this session's derived rows in place, keeping
                 // the stable `sessions` rowid (and any retained metadata).
-                Some(k) => {
-                    delete_session_derived(&tx, k.id)?;
-                    Some(k.id)
-                }
+                Some(k) => Some(k.id),
                 None => {
                     if let Some(k) = discovered_source_key
                         .as_ref()
                         .and_then(|source_key| known_by_source.get(source_key))
                     {
-                        delete_session_derived(&tx, k.id)?;
                         seen.insert(k.file_path.clone());
                         Some(k.id)
                     } else {
@@ -1420,6 +1409,12 @@ impl IndexStore {
                 Ok(e) => e,
                 Err(_) => continue,
             };
+
+            // Mutable transcripts can be temporarily incomplete while the harness
+            // writes them. Keep previously indexed rows until parsing succeeds.
+            if let Some(row_id) = reuse_id {
+                delete_session_derived(&tx, row_id)?;
+            }
 
             // The enumerator's path-derived project is the default; a provider
             // that reads the project from the transcript itself (Codex stores
@@ -1721,7 +1716,7 @@ impl IndexStore {
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
             params![
                 format!("sessions_root:{provider_id}"),
-                provider.root_dir().to_string_lossy().into_owned()
+                provider.source_stamp()
             ],
         )?;
         tx.commit()?;

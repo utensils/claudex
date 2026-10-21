@@ -17,9 +17,23 @@ pub enum ProviderKind {
     CopilotVscode,
     OpenClaw,
     Pi,
+    Omp,
+    Gemini,
+    OpenCode,
 }
 
 impl ProviderKind {
+    pub const ALL: &[Self] = &[
+        Self::Claude,
+        Self::Codex,
+        Self::Copilot,
+        Self::CopilotVscode,
+        Self::OpenClaw,
+        Self::Pi,
+        Self::Omp,
+        Self::Gemini,
+        Self::OpenCode,
+    ];
     pub fn id(self) -> &'static str {
         match self {
             ProviderKind::Claude => "claude",
@@ -28,6 +42,9 @@ impl ProviderKind {
             ProviderKind::CopilotVscode => "copilot-vscode",
             ProviderKind::OpenClaw => "openclaw",
             ProviderKind::Pi => "pi",
+            ProviderKind::Omp => "omp",
+            ProviderKind::Gemini => "gemini",
+            ProviderKind::OpenCode => "opencode",
         }
     }
 }

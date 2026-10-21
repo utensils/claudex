@@ -591,6 +591,70 @@ fn reprice_revision_7_updates_new_models_and_retained_cache_reads() {
 }
 
 #[test]
+fn reprice_revision_8_updates_retained_new_model_rates_without_touching_provider_costs() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+    seed_v5_db(
+        &db,
+        &[
+            ("sonnet55", "claude", "claude-sonnet-5-5", 0, 0, 99.0),
+            ("haiku55", "claude", "claude-haiku-5-5", 1_000_000, 0, 99.0),
+            ("sol61", "codex", "gpt-6.1-sol", 0, 0, 99.0),
+            (
+                "rosalind",
+                "codex",
+                "gpt-rosalind-research",
+                1_000_000,
+                0,
+                99.0,
+            ),
+            (
+                "daybreak",
+                "codex",
+                "gpt-daybreak-blue-latest",
+                1_000_000,
+                0,
+                99.0,
+            ),
+            ("embedded", "pi", "claude-haiku-5-5", 1_000_000, 0, 0.73),
+        ],
+    );
+    drop(IndexStore::open_at(&db).unwrap());
+    let conn = Connection::open(&db).unwrap();
+    conn.execute(
+        "UPDATE token_usage SET cost_usd = 99 WHERE cost_source = 'computed'",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE token_usage SET cache_read_tokens = 1000000 WHERE model IN ('claude-sonnet-5-5', 'gpt-6.1-sol')", []).unwrap();
+    conn.execute("UPDATE sessions SET present_on_disk = 0", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '7' WHERE key = 'pricing_revision'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    drop(IndexStore::open_at(&db).unwrap());
+    for (session, expected) in [
+        ("sonnet55", 0.10),
+        ("haiku55", 0.10),
+        ("sol61", 0.10),
+        ("rosalind", 5.0),
+        ("daybreak", 4.0),
+    ] {
+        let (cost, source) = token_cost(&db, session);
+        assert_eq!(source, "computed");
+        assert!((cost - expected).abs() < 1e-9, "{session}: {cost}");
+    }
+    assert_eq!(token_cost(&db, "embedded"), (0.73, "provider".to_string()));
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
+}
+
+#[test]
 fn reprice_applies_astra_rates_to_retained_rows() {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("index.db");

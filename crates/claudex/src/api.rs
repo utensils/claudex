@@ -15,10 +15,7 @@ use crate::index::{
     ProviderStatusRow, RetentionStats, SearchFtsOptions, SearchHit, SessionCostRow, SessionDetail,
     SessionToolRow, SummaryData, TimelineRow, ToolRow, TurnStatsRow,
 };
-use crate::providers::{
-    ClaudeProvider, CodexProvider, CopilotProvider, CopilotVscodeProvider, OpenClawProvider,
-    PiProvider, Provider as ProviderImpl,
-};
+use crate::providers::Provider as ProviderImpl;
 
 pub use crate::filter::{ProviderKind as Provider, QueryFilter as Filter};
 
@@ -53,6 +50,36 @@ impl Claudex {
             None => IndexStore::open()?,
         };
         let providers = providers_for(&config.providers)?;
+        let provider_scope = provider_scope(&providers);
+        Ok(Self {
+            index,
+            providers,
+            provider_scope,
+        })
+    }
+
+    /// Construct with explicit additive sources instead of the on-disk source config.
+    pub fn with_sources(
+        config: ClaudexConfig,
+        sources: &crate::config::SourceConfig,
+    ) -> Result<Self> {
+        let index = match config.state_dir {
+            Some(dir) => IndexStore::open_at(&dir.join("index.db"))?,
+            None => IndexStore::open()?,
+        };
+        let mut providers = if config.providers.is_empty() {
+            crate::providers::configured(sources)?
+        } else {
+            crate::providers::all_configured(sources)?
+        };
+        if !config.providers.is_empty() {
+            providers.retain(|provider| {
+                config
+                    .providers
+                    .iter()
+                    .any(|kind| kind.id() == provider.id())
+            });
+        }
         let provider_scope = provider_scope(&providers);
         Ok(Self {
             index,
@@ -296,23 +323,14 @@ fn provider_scope(providers: &[ProviderImpl]) -> Vec<String> {
 }
 
 fn providers_for(kinds: &[ProviderKind]) -> Result<Vec<ProviderImpl>> {
-    if kinds.is_empty() {
-        return crate::providers::enabled_default();
-    }
-
-    let mut providers = Vec::new();
-    for kind in kinds {
-        let provider = match kind {
-            ProviderKind::Claude => ProviderImpl::Claude(ClaudeProvider::new()?),
-            ProviderKind::Codex => ProviderImpl::Codex(CodexProvider::new()?),
-            ProviderKind::Copilot => ProviderImpl::Copilot(CopilotProvider::new()?),
-            ProviderKind::CopilotVscode => {
-                ProviderImpl::CopilotVscode(CopilotVscodeProvider::new()?)
-            }
-            ProviderKind::OpenClaw => ProviderImpl::OpenClaw(OpenClawProvider::new()?),
-            ProviderKind::Pi => ProviderImpl::Pi(PiProvider::new()?),
-        };
-        providers.push(provider);
+    let sources = crate::config::source_config()?;
+    let mut providers = if kinds.is_empty() {
+        crate::providers::configured(&sources)?
+    } else {
+        crate::providers::all_configured(&sources)?
+    };
+    if !kinds.is_empty() {
+        providers.retain(|provider| kinds.iter().any(|kind| kind.id() == provider.id()));
     }
     Ok(providers)
 }

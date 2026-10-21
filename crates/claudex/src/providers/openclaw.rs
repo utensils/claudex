@@ -946,3 +946,34 @@ fn model_key(provider: &str, model: &str) -> String {
         format!("{provider}/{model}")
     }
 }
+
+/// Discover one file in an explicitly configured transcript directory, preserving
+/// archive naming and classic/trajectory precedence from standard discovery.
+pub(crate) fn additional_file(path: PathBuf) -> Option<DiscoveredFile> {
+    let name = file_name(&path);
+    let (id, archived) = if let Some(classic) = usage_counted_session_id(&name) {
+        classic
+    } else {
+        let id = trajectory_session_id(&name)?;
+        let parent = path.parent()?;
+        if std::fs::read_dir(parent)
+            .ok()?
+            .filter_map(Result::ok)
+            .any(|item| {
+                usage_counted_session_id(&item.file_name().to_string_lossy())
+                    .is_some_and(|(classic, _)| classic == id)
+            })
+        {
+            return None;
+        }
+        (id, false)
+    };
+    let parent = std::fs::canonicalize(path.parent()?).ok()?;
+    Some(DiscoveredFile {
+        path,
+        project_display: String::new(),
+        parent_session_id: None,
+        archived,
+        source_key: Some(format!("directory:{}:session:{id}", parent.display())),
+    })
+}

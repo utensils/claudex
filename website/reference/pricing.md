@@ -4,28 +4,34 @@ All costs in claudex are **approximate**. They come from published per-model
 pricing tiers applied to the token-usage blocks recorded in each session — or,
 for providers that report their own cost, from that figure directly.
 
+Anthropic and OpenAI text-token rates last verified October 21, 2026. These
+are API-equivalent list-price estimates, not ChatGPT or Claude subscription
+charges.
+
 Source of truth: `crates/claudex/src/types.rs`, `ModelPricing::for_model`.
 
 ## Anthropic (Claude) tiers
 
-Each Claude family carries one or more rate cards. Fable/Mythos 5.1 and Opus
-5.5 have cheaper cache reads than their predecessors. Fast-mode Opus carries a
-premium. Anthropic made Sonnet 5's launch rate permanent.
+Each Claude family carries one or more rate cards. Fable/Mythos 5.1, Opus
+5.5, and Sonnet 5.5 have cheaper cache reads than their predecessors. Fast-mode
+Opus carries a premium. Anthropic made Sonnet 5's launch rate permanent.
 
-| Model tier                      | Input         | Output        | Cache write    | Cache read    |
-| ------------------------------- | ------------- | ------------- | -------------- | ------------- |
-| **Fable 5.1 / Mythos 5.1**      | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $0.25 / MTok  |
-| **Fable 5 / Mythos 5**          | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
-| **Opus 5.5**                    | $4.00 / MTok  | $20.00 / MTok | $5.00 / MTok   | $0.20 / MTok  |
-| **Opus 5.5 fast**               | $8.00 / MTok  | $40.00 / MTok | $10.00 / MTok  | $0.40 / MTok  |
-| **Opus 5 / Opus 4.5–4.8**       | $5.00 / MTok  | $25.00 / MTok | $6.25 / MTok   | $0.50 / MTok  |
-| **Opus 5 / Opus 4.8 fast**      | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
-| **Opus** (legacy 3/4)           | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok  | $1.50 / MTok  |
-| **Sonnet 5**                    | $2.00 / MTok  | $10.00 / MTok | $2.50 / MTok   | $0.20 / MTok  |
-| **Sonnet 4.x / legacy default** | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok   | $0.30 / MTok  |
-| **Haiku 4.5** (latest)          | $1.00 / MTok  | $5.00 / MTok  | $1.25 / MTok   | $0.10 / MTok  |
-| **Haiku 3.5** (legacy)          | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok   | $0.08 / MTok  |
-| **Haiku 3**                     | $0.25 / MTok  | $1.25 / MTok  | $0.3125 / MTok | $0.025 / MTok |
+| Model tier                        | Input         | Output        | Cache write    | Cache read    |
+| --------------------------------- | ------------- | ------------- | -------------- | ------------- |
+| **Fable 5.1 / Mythos 5.1**        | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $0.25 / MTok  |
+| **Fable 5 / Mythos 5**            | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus 5.5**                      | $4.00 / MTok  | $20.00 / MTok | $5.00 / MTok   | $0.20 / MTok  |
+| **Opus 5.5 fast**                 | $8.00 / MTok  | $40.00 / MTok | $10.00 / MTok  | $0.40 / MTok  |
+| **Opus 5 / Opus 4.5–4.8**         | $5.00 / MTok  | $25.00 / MTok | $6.25 / MTok   | $0.50 / MTok  |
+| **Opus 5 / Opus 4.8 fast**        | $10.00 / MTok | $50.00 / MTok | $12.50 / MTok  | $1.00 / MTok  |
+| **Opus** (legacy 3/4)             | $15.00 / MTok | $75.00 / MTok | $18.75 / MTok  | $1.50 / MTok  |
+| **Sonnet 5.5**                    | $2.00 / MTok  | $10.00 / MTok | $2.50 / MTok   | $0.10 / MTok  |
+| **Sonnet 5**                      | $2.00 / MTok  | $10.00 / MTok | $2.50 / MTok   | $0.20 / MTok  |
+| **Sonnet 4.x / legacy default**   | $3.00 / MTok  | $15.00 / MTok | $3.75 / MTok   | $0.30 / MTok  |
+| **Haiku 5.5** (up to 100K prompt) | $0.10 / MTok  | $0.50 / MTok  | $0.125 / MTok  | $0.01 / MTok  |
+| **Haiku 4.5**                     | $1.00 / MTok  | $5.00 / MTok  | $1.25 / MTok   | $0.10 / MTok  |
+| **Haiku 3.5** (legacy)            | $0.80 / MTok  | $4.00 / MTok  | $1.00 / MTok   | $0.08 / MTok  |
+| **Haiku 3**                       | $0.25 / MTok  | $1.25 / MTok  | $0.3125 / MTok | $0.025 / MTok |
 
 (MTok = million tokens. These are Anthropic's published rates.)
 
@@ -34,6 +40,12 @@ transcripts do not distinguish five-minute from one-hour cache creation. See Ant
 [model pricing](https://platform.claude.com/docs/en/about-claude/pricing) and
 [model overview](https://platform.claude.com/docs/en/about-claude/models/overview).
 
+Haiku 5.5 requests above 100K prompt tokens cost $0.50 input, $2.50 output,
+$0.625 five-minute cache write, and $0.05 cache read per MTok. Claudex uses
+the short-context estimate: session totals do not retain request boundaries
+reliably enough to choose a band. A million-token session can contain many
+short requests. Provider-reported costs remain authoritative when available.
+
 ## OpenAI (`gpt-*`) tiers
 
 OpenAI models carry many sub-tiers. claudex matches the **most specific** name
@@ -41,44 +53,76 @@ first, falling back to a base `gpt-5` / `gpt-4o` rate. Claudex currently uses
 the **Standard short-context** schedule because provider transcripts do not
 record the billing context-length band. For OpenAI models the
 **cache-read** rate is the posted "cached input" rate. For GPT-5.6 and later,
-cache writes cost 1.25x uncached input; earlier OpenAI rows use the input rate.
+cache writes cost 1.25x uncached input (except Rosalind); earlier OpenAI rows
+use the input rate.
 The GPT-5.6 rates and cache policy come from OpenAI's
 [current model pages](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
 and [pricing table](https://developers.openai.com/api/docs/pricing). The Sol
 rate is promotional at least through November 21, 2026; review it after that date.
 
-| Model match                                 | Input         | Output         | Cache write    | Cache read    |
-| ------------------------------------------- | ------------- | -------------- | -------------- | ------------- |
-| `gpt-6-astra`                               | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
-| `gpt-6-sol`                                 | $2.00 / MTok  | $10.00 / MTok  | $2.50 / MTok   | $0.20 / MTok  |
-| `gpt-6-luna`                                | $0.10 / MTok  | $0.50 / MTok   | $0.125 / MTok  | $0.01 / MTok  |
-| `gpt-5.6-sol`, `gpt-5.6` alias              | $4.00 / MTok  | $20.00 / MTok  | $5.00 / MTok   | $0.40 / MTok  |
-| `gpt-5.6-terra`                             | $2.00 / MTok  | $12.00 / MTok  | $2.50 / MTok   | $0.20 / MTok  |
-| `gpt-5.6-luna`                              | $0.20 / MTok  | $1.20 / MTok   | $0.25 / MTok   | $0.02 / MTok  |
-| `gpt-5.6-cyber`                             | $12.50 / MTok | $75.00 / MTok  | $15.625 / MTok | $1.25 / MTok  |
-| `gpt-5.5-pro`, `gpt-5.4-pro`                | $30.00 / MTok | $180.00 / MTok | $30.00 / MTok  | $30.00 / MTok |
-| `gpt-5-pro`                                 | $15.00 / MTok | $120.00 / MTok | $15.00 / MTok  | $15.00 / MTok |
-| `gpt-5.5`                                   | $5.00 / MTok  | $30.00 / MTok  | $5.00 / MTok   | $0.50 / MTok  |
-| `gpt-5.4`                                   | $2.50 / MTok  | $15.00 / MTok  | $2.50 / MTok   | $0.25 / MTok  |
-| `gpt-5.4-mini`                              | $0.75 / MTok  | $4.50 / MTok   | $0.75 / MTok   | $0.075 / MTok |
-| `gpt-5.4-nano`                              | $0.20 / MTok  | $1.25 / MTok   | $0.20 / MTok   | $0.02 / MTok  |
-| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2` | $1.75 / MTok  | $14.00 / MTok  | $1.75 / MTok   | $0.175 / MTok |
-| `gpt-5` (base / other `gpt-5*`)             | $1.25 / MTok  | $10.00 / MTok  | $1.25 / MTok   | $0.125 / MTok |
-| `gpt-4.1`                                   | $2.00 / MTok  | $8.00 / MTok   | $2.00 / MTok   | $0.50 / MTok  |
-| `gpt-4.1-mini`                              | $0.40 / MTok  | $1.60 / MTok   | $0.40 / MTok   | $0.10 / MTok  |
-| `gpt-4.1-nano`                              | $0.10 / MTok  | $0.40 / MTok   | $0.10 / MTok   | $0.025 / MTok |
-| `gpt-4.5-preview`                           | $75.00 / MTok | $150.00 / MTok | $75.00 / MTok  | $37.50 / MTok |
-| `gpt-4o-mini`                               | $0.15 / MTok  | $0.60 / MTok   | $0.15 / MTok   | $0.075 / MTok |
-| `gpt-4o-2024-05-13`                         | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok   | $5.00 / MTok  |
-| `gpt-4-turbo`, `gpt-4-1106`, `gpt-4-0125`   | $10.00 / MTok | $30.00 / MTok  | $10.00 / MTok  | $10.00 / MTok |
-| `gpt-4-32k`                                 | $60.00 / MTok | $120.00 / MTok | $60.00 / MTok  | $60.00 / MTok |
-| `gpt-4` (classic 8k / 0613)                 | $30.00 / MTok | $60.00 / MTok  | $30.00 / MTok  | $30.00 / MTok |
-| `gpt-4o` (base / other `gpt-4*`)            | $2.50 / MTok  | $10.00 / MTok  | $2.50 / MTok   | $1.25 / MTok  |
+| Model match                                       | Input         | Output         | Cache write    | Cache read    |
+| ------------------------------------------------- | ------------- | -------------- | -------------- | ------------- |
+| `gpt-6-astra`                                     | $10.00 / MTok | $50.00 / MTok  | $12.50 / MTok  | $1.00 / MTok  |
+| `gpt-6.1-sol`                                     | $2.00 / MTok  | $10.00 / MTok  | $2.50 / MTok   | $0.10 / MTok  |
+| `gpt-6-sol`                                       | $2.00 / MTok  | $10.00 / MTok  | $2.50 / MTok   | $0.20 / MTok  |
+| `gpt-6-luna`                                      | $0.10 / MTok  | $0.50 / MTok   | $0.125 / MTok  | $0.01 / MTok  |
+| `gpt-5.6-sol`, `gpt-5.6` alias                    | $4.00 / MTok  | $20.00 / MTok  | $5.00 / MTok   | $0.40 / MTok  |
+| `gpt-5.6-terra`                                   | $2.00 / MTok  | $12.00 / MTok  | $2.50 / MTok   | $0.20 / MTok  |
+| `gpt-5.6-luna`                                    | $0.20 / MTok  | $1.20 / MTok   | $0.25 / MTok   | $0.02 / MTok  |
+| `gpt-daybreak-blue-latest`                        | $4.00 / MTok  | $20.00 / MTok  | $5.00 / MTok   | $0.40 / MTok  |
+| `gpt-rosalind-research`, `gpt-rosalind-discovery` | $5.00 / MTok  | $25.00 / MTok  | $5.00 / MTok   | $0.50 / MTok  |
+| `gpt-5.6-cyber`                                   | $12.50 / MTok | $75.00 / MTok  | $15.625 / MTok | $1.25 / MTok  |
+| `gpt-5.5-pro`, `gpt-5.4-pro`                      | $30.00 / MTok | $180.00 / MTok | $30.00 / MTok  | $30.00 / MTok |
+| `gpt-5-pro`                                       | $15.00 / MTok | $120.00 / MTok | $15.00 / MTok  | $15.00 / MTok |
+| `gpt-5.5`                                         | $5.00 / MTok  | $30.00 / MTok  | $5.00 / MTok   | $0.50 / MTok  |
+| `gpt-5.4`                                         | $2.50 / MTok  | $15.00 / MTok  | $2.50 / MTok   | $0.25 / MTok  |
+| `gpt-5.4-mini`                                    | $0.75 / MTok  | $4.50 / MTok   | $0.75 / MTok   | $0.075 / MTok |
+| `gpt-5.4-nano`                                    | $0.20 / MTok  | $1.25 / MTok   | $0.20 / MTok   | $0.02 / MTok  |
+| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2`       | $1.75 / MTok  | $14.00 / MTok  | $1.75 / MTok   | $0.175 / MTok |
+| `gpt-5` (base / other `gpt-5*`)                   | $1.25 / MTok  | $10.00 / MTok  | $1.25 / MTok   | $0.125 / MTok |
+| `gpt-4.1`                                         | $2.00 / MTok  | $8.00 / MTok   | $2.00 / MTok   | $0.50 / MTok  |
+| `gpt-4.1-mini`                                    | $0.40 / MTok  | $1.60 / MTok   | $0.40 / MTok   | $0.10 / MTok  |
+| `gpt-4.1-nano`                                    | $0.10 / MTok  | $0.40 / MTok   | $0.10 / MTok   | $0.025 / MTok |
+| `gpt-4.5-preview`                                 | $75.00 / MTok | $150.00 / MTok | $75.00 / MTok  | $37.50 / MTok |
+| `gpt-4o-mini`                                     | $0.15 / MTok  | $0.60 / MTok   | $0.15 / MTok   | $0.075 / MTok |
+| `gpt-4o-2024-05-13`                               | $5.00 / MTok  | $15.00 / MTok  | $5.00 / MTok   | $5.00 / MTok  |
+| `gpt-4-turbo`, `gpt-4-1106`, `gpt-4-0125`         | $10.00 / MTok | $30.00 / MTok  | $10.00 / MTok  | $10.00 / MTok |
+| `gpt-4-32k`                                       | $60.00 / MTok | $120.00 / MTok | $60.00 / MTok  | $60.00 / MTok |
+| `gpt-4` (classic 8k / 0613)                       | $30.00 / MTok | $60.00 / MTok  | $30.00 / MTok  | $30.00 / MTok |
+| `gpt-4o` (base / other `gpt-4*`)                  | $2.50 / MTok  | $10.00 / MTok  | $2.50 / MTok   | $1.25 / MTok  |
+
+Additional Standard text tiers from the same official rate card:
+
+| Model                                  | Input / MTok | Output / MTok | Cached input / MTok |
+| -------------------------------------- | ------------ | ------------- | ------------------- |
+| `gpt-5-mini`                           | $0.25        | $2.00         | $0.025              |
+| `gpt-5-nano`                           | $0.05        | $0.40         | $0.005              |
+| `gpt-5.2-pro`                          | $21.00       | $168.00       | unavailable         |
+| `gpt-5.5-cyber`                        | $12.50       | $75.00        | $1.25               |
+| `o1`                                   | $15.00       | $60.00        | $7.50               |
+| `o1-pro`                               | $150.00      | $600.00       | unavailable         |
+| `o3`                                   | $2.00        | $8.00         | $0.50               |
+| `o3-pro`                               | $20.00       | $80.00        | unavailable         |
+| `o3-mini`                              | $1.10        | $4.40         | $0.55               |
+| `o4-mini`                              | $1.10        | $4.40         | $0.275              |
+| `gpt-3.5-turbo` / `gpt-3.5-turbo-0125` | $0.50        | $1.50         | unavailable         |
+
+These tiers have no separate cache-write fee; recorded cache creation is
+estimated at ordinary input price. Models without prompt caching also use
+ordinary input price for any cached tokens reported by a transcript.
+Dated `o1`/`o3`/`o4-mini` snapshots use their base model's card.
+
+GPT-6.1 Sol's cache reads cost 5% of input; its predecessor GPT-6 Sol retains
+10%. See the [GPT-6.1 Sol model card](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+The deprecated [Daybreak Blue alias](https://developers.openai.com/api/docs/models/gpt-daybreak-blue-latest)
+currently resolves to GPT-5.6 Sol, so it uses that card. Rosalind rates are in
+the official pricing table; separate cache-write pricing does not apply, so
+recorded cache creation is estimated at ordinary input price.
 
 GPT-6 rates are from the [official pricing table](https://developers.openai.com/api/docs/pricing).
 For GPT-6 requests above 272K input tokens, OpenAI doubles input and cache
 rates and multiplies output rates by 1.5. Batch and Flex cost 50% of Standard;
-Fast mode costs 2x the applicable rates. Claudex uses Standard short-context
+Fast mode costs 2x the applicable rates; GPT-6.1 Sol Ultrafast costs 6x. Claudex uses Standard short-context
 estimates because its aggregated usage does not reliably retain these billing
 conditions; it does not apply a request threshold to session totals.
 
@@ -87,6 +131,7 @@ OpenAI also publishes these higher **Standard long-context** rates:
 | Model match     | Input         | Output        | Cache write   | Cache read   |
 | --------------- | ------------- | ------------- | ------------- | ------------ |
 | `gpt-6-astra`   | $20.00 / MTok | $75.00 / MTok | $25.00 / MTok | $2.00 / MTok |
+| `gpt-6.1-sol`   | $4.00 / MTok  | $15.00 / MTok | $5.00 / MTok  | $0.20 / MTok |
 | `gpt-6-sol`     | $4.00 / MTok  | $15.00 / MTok | $5.00 / MTok  | $0.40 / MTok |
 | `gpt-6-luna`    | $0.20 / MTok  | $0.75 / MTok  | $0.25 / MTok  | $0.02 / MTok |
 | `gpt-5.6-sol`   | $8.00 / MTok  | $30.00 / MTok | $10.00 / MTok | $0.80 / MTok |
@@ -138,11 +183,13 @@ The tier is chosen by substring-matching the model name, **most specific first**
   ($10/$50).
 - `opus-5` or `opus-4-5`/`4.6`/`4.7`/`4.8` → current Opus rates; any other
   `opus` → legacy Opus.
+- `sonnet-5-5` / `sonnet-5.5` → Sonnet 5.5, including cheaper cache reads.
+- `haiku-5-5` / `haiku-5.5` → Haiku 5.5 short-context card.
 - `sonnet-5` → the permanent Sonnet 5 card;
   other `sonnet` ids and missing/empty legacy model ids → standard Sonnet.
 - `haiku-4-5` → Haiku 4.5; `3-haiku` (but not `3-5-haiku`) → the cheapest
   Claude 3 Haiku tier; any other `haiku` → Haiku 3.5 legacy.
-- `gpt-6-astra` / `sol` / `luna` → dedicated rates and family labels.
+- `gpt-6-astra` / `gpt-6.1-sol` / `gpt-6-sol` / `gpt-6-luna` → dedicated rates and family labels.
 - `gpt-5.6` alias / `gpt-5.6-sol` / `terra` / `luna` → dedicated rates and family labels;
   `gpt-5.6-cyber` → its specialized rate card and `Cyber` label. Unknown
   `gpt-5.6-*` suffixes stay unpriced until their rates are verified.

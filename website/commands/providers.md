@@ -9,7 +9,8 @@ claudex providers [--json] [--deep] [filters]
 Shows each enabled provider root, discovered transcript count, indexed rows,
 live vs retained history, archived rows, and last sync time. `--deep` also
 parses every discovered transcript and counts failures; it can be slower on
-large histories.
+large histories. JSON output includes `root_dirs` for the standard root and
+configured extra directories; `root_dir` remains the primary root for compatibility.
 
 Examples:
 
