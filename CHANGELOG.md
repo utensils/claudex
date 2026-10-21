@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases are managed by [release-plz](https://release-plz.dev/),
 which prepends each new version below from the Conventional Commits landed on `main`.
 
+## [0.15.0](https://github.com/utensils/claudex/compare/v0.14.1...v0.15.0) - 2026-10-21
+
+### Added
+
+- expand harness indexing and refresh model pricing ([#100](https://github.com/utensils/claudex/pull/100))
+
 ## [0.14.1](https://github.com/utensils/claudex/compare/v0.14.0...v0.14.1) - 2026-09-23
 
 ### Fixed
