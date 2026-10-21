@@ -420,7 +420,7 @@ fn file_model_json((model, stats): &(String, ModelSessionStats)) -> serde_json::
         "output_tokens": stats.usage.output_tokens,
         "cache_creation_tokens": stats.usage.cache_creation_tokens,
         "cache_read_tokens": stats.usage.cache_read_tokens,
-        "cost_usd": stats.usage.cost_for_model(Some(model)),
+        "cost_usd": stats.usage.cost_with_fast_usage(Some(model), &stats.fast_usage),
         "inference_geos": stats.inference_geos.iter().cloned().collect::<Vec<_>>(),
         "service_tiers": stats.service_tiers.iter().cloned().collect::<Vec<_>>(),
         "avg_speed": stats.avg_speed(),
@@ -451,8 +451,8 @@ fn model_stats_rows(stats: &SessionStats) -> Vec<(String, ModelSessionStats)> {
         .collect::<Vec<_>>();
     rows.sort_by(|a, b| {
         b.1.usage
-            .cost_for_model(Some(&b.0))
-            .partial_cmp(&a.1.usage.cost_for_model(Some(&a.0)))
+            .cost_with_fast_usage(Some(&b.0), &b.1.fast_usage)
+            .partial_cmp(&a.1.usage.cost_with_fast_usage(Some(&a.0), &a.1.fast_usage))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     rows
@@ -569,7 +569,10 @@ fn print_models_file(rows: &std::collections::BTreeMap<String, ModelSessionStats
             ui::cell_count(row.usage.input_tokens),
             ui::cell_count(row.usage.output_tokens),
             ui::cell_count(row.usage.cache_read_tokens),
-            ui::cell_cost(row.usage.cost_for_model(Some(&model))),
+            ui::cell_cost(
+                row.usage
+                    .cost_with_fast_usage(Some(&model), &row.fast_usage),
+            ),
         ]);
     }
     println!("{table}");

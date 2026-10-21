@@ -64,15 +64,17 @@ fn collect_jsonl(dir: &Path, archived: bool, out: &mut Vec<DiscoveredFile>) -> R
         let path = entry.path();
         if path.is_dir() {
             collect_jsonl(&path, archived, out)?;
-        } else if path.extension().is_some_and(|e| e == "jsonl") {
+        } else if path.to_string_lossy().ends_with(".jsonl")
+            || path.to_string_lossy().ends_with(".jsonl.zst")
+        {
             out.push(DiscoveredFile {
-                path,
+                path: path.clone(),
                 // Codex records its cwd inside the transcript; `parse` fills the
                 // real project, this is only a fallback for malformed files.
                 project_display: String::new(),
                 parent_session_id: None,
                 archived,
-                source_key: None,
+                source_key: rollout_uuid(&path),
             });
         }
     }
@@ -81,11 +83,28 @@ fn collect_jsonl(dir: &Path, archived: bool, out: &mut Vec<DiscoveredFile>) -> R
 
 /// Recover the session UUID from a `rollout-<ts>-<uuid>.jsonl` filename.
 pub fn session_id_from_path(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_string_lossy();
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_suffix(".zst").unwrap_or(name);
+    let stem = stem.strip_suffix(".jsonl").unwrap_or(stem);
     if stem.starts_with("rollout-") && stem.len() >= 36 {
-        return Some(stem[stem.len() - 36..].to_string());
+        return stem.get(stem.len() - 36..).map(str::to_string);
     }
     stem.rsplit_once('-').map(|(_, id)| id.to_string())
+}
+
+/// Only standard rollout UUIDs are authoritative over copied session metadata.
+/// Older forks can contain their parent's session_meta later in the file.
+pub(crate) fn rollout_uuid(path: &Path) -> Option<String> {
+    let id = session_id_from_path(path)?;
+    (id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        }))
+    .then_some(id)
 }
 
 fn parse_ts(ts: &str) -> Option<DateTime<Utc>> {
@@ -218,11 +237,14 @@ fn parse_codex_session(path: &Path) -> Result<ProviderRecord> {
         true
     })?;
 
-    if entry.session_id.is_none() {
+    if let Some(id) = rollout_uuid(path) {
+        entry.session_id = Some(id);
+    } else if entry.session_id.is_none() {
         entry.session_id = session_id_from_path(path);
     }
     entry.project_display = cwd.clone().unwrap_or_else(|| "unknown".to_string());
     entry.parent_session_id = forked_from_id.clone();
+    entry.source_key = entry.session_id.clone();
 
     // Modern Codex transcripts expose `last_token_usage`, the per-turn delta.
     // Summing those values keeps resumed/forked rollout files additive. Falling

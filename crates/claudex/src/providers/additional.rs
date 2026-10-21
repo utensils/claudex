@@ -93,6 +93,7 @@ fn collect(
             }
         } else if path.is_file()
             && (path.extension().is_some_and(|ext| ext == "jsonl")
+                || (id == "codex" && path.to_string_lossy().ends_with(".jsonl.zst"))
                 || (id == "copilot-vscode" && path.extension().is_some_and(|ext| ext == "json")))
         {
             if id == "copilot" && path.file_name().is_none_or(|name| name != "events.jsonl") {
@@ -108,11 +109,15 @@ fn collect(
                 None
             };
             out.push(DiscoveredFile {
-                path,
+                path: path.clone(),
                 project_display: String::new(),
                 parent_session_id,
                 archived: false,
-                source_key: None,
+                source_key: if id == "codex" {
+                    super::codex::rollout_uuid(&path)
+                } else {
+                    None
+                },
             });
         }
     }

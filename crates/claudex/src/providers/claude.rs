@@ -145,6 +145,14 @@ pub fn parse_claude_session(path: &Path) -> Result<ProviderRecord> {
                 model_stats.usage.output_tokens += output_tokens;
                 model_stats.usage.cache_creation_tokens += cache_creation_tokens;
                 model_stats.usage.cache_read_tokens += cache_read_tokens;
+                if usage["speed"].as_str() == Some("fast") {
+                    model_stats.fast_usage.add(&crate::types::TokenUsage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_tokens,
+                        cache_read_tokens,
+                    });
+                }
                 model_stats.assistant_message_count += 1;
                 if let Some(geo) = usage["inference_geo"].as_str()
                     && !geo.is_empty()

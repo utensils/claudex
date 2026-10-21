@@ -211,12 +211,61 @@ unrecognized names are not charged. Note that the display
 `Fable`/`Mythos`/`Opus`/`Haiku`/`Sonnet`/`GPT-5`/`GPT-4`/etc. — it does not distinguish latest from legacy
 (or fast from standard), but the **cost** does.
 
+## Recorded speed and service tiers
+
+Research verified October 21, 2026. A requested speed, current configuration,
+subscription allowance, and the tier actually used are different evidence.
+Claudex never applies today's speed setting to historical requests.
+
+| Harness / record                    | What can be recovered                                                                                                                                   | Claudex calculation                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Codex CLI and desktop rollout JSONL | Token counts and model; sampled desktop `turn_context` and `token_count` records have no service tier. The upstream request to persist it remains open. | Standard API-equivalent estimate; no inferred fast/ultrafast surcharge.                                                              |
+| Claude Code                         | Assistant `message.usage.speed` records `fast` or `standard`; `service_tier` is a separate field.                                                       | Explicit fast-token subsets use the supported Opus fast rate, including mixed-speed sessions. Missing speed stays at standard rates. |
+| Pi / OMP                            | Assistant `usage.cost.total` when recorded.                                                                                                             | Preserve the harness-supplied cost, including zero. A harness estimate does not prove the server billed that tier.                   |
+| OpenCode                            | Assistant message `cost` when recorded.                                                                                                                 | Preserve the supplied cost.                                                                                                          |
+| Cline / Roo Code                    | Per-request cost or task `totalCost`, depending on source format.                                                                                       | Preserve the supplied cost; no independent speed inference.                                                                          |
+| OpenClaw                            | Trajectory cost and optional service-tier metadata; session-state `fastMode` may also exist.                                                            | Preserve supplied cost. A session-level `fastMode` flag is not per-request billing evidence.                                         |
+| Copilot CLI / VS Code               | CLI premium-request metadata; VS Code transcripts lack token usage.                                                                                     | CLI USD is an API-equivalent estimate; VS Code is unpriced. Speed is not reconstructed.                                              |
+| Gemini CLI                          | Token usage; no normalized per-request speed billing evidence in the supported record shape.                                                            | Standard rate-card estimate.                                                                                                         |
+
+OpenAI's [Fast mode API documentation](https://developers.openai.com/api/docs/guides/fast-mode)
+identifies the **response** `service_tier` as evidence of the tier used; the
+request can specify `fast` or its `priority` alias. Codex's
+[upstream logging issue](https://github.com/openai/codex/issues/20311) describes
+the missing rollout field. Local state database schemas inspected for this
+investigation did not provide an authoritative historical tier either.
+Debug logs may expose it temporarily, but are not a stable source for backfilling
+requests. Neither current `config.toml` nor model names establish past speed.
+
+Anthropic explicitly documents
+[`usage.speed`](https://platform.claude.com/docs/en/build-with-claude/fast-mode#checking-which-speed-was-used)
+as the actual speed. Claudex stores the fast-token subset alongside computed
+costs, so automatic repricing preserves mixed-speed estimates even after the
+source transcript is deleted. Existing readable Claude transcripts are reparsed
+on upgrade; retained rows without a stored speed breakdown remain standard
+estimates because the missing evidence cannot be recovered.
+
+For future custom harness integrations, persist the response ID, model,
+request timestamp, per-request token buckets, actual response tier/speed,
+and provider cost when available. Keep response tier separate from requested
+speed, numerical throughput, and reasoning effort. OpenAI tier metadata absent
+from the supported Codex rollout shape is currently not consumed by claudex;
+adding a tier to a custom log alone does not enable tier-aware OpenAI pricing.
+
+The [Codex pricing documentation](https://learn.chatgpt.com/docs/pricing)
+lists different multipliers for different accounting units: Fast consumes
+included subscription usage at **2.5x**, but purchased credits and Enterprise
+pay-as-you-go usage at **2x**. Supported Astra/Sol Ultrafast modes use **8x**
+included usage and **6x** purchased-credit/pay-as-you-go usage. These are not
+multipliers on raw recorded token counts. Claudex's USD estimate does not
+represent subscription dollars spent or a percentage of an account allowance.
+
 ## Provider-supplied cost
 
 Pi computes a cost for every assistant message (and reports `$0` for local
 Ollama models), and OpenClaw records a running total per trajectory. claudex
 **trusts those figures** rather than re-deriving them from the tier table — so
-a Pi or OpenClaw session's cost reflects exactly what the provider billed,
+a Pi or OpenClaw session's cost reflects the figure the harness recorded,
 including free local inference. Internally this is `ModelSessionStats::embedded_cost`,
 which the index uses in place of `cost_for_model` when present.
 
@@ -257,14 +306,23 @@ cost = (input  × input_per_mtok
       + cache_read  × cache_read_per_mtok) / 1_000_000
 ```
 
-For Codex, `input`/`cache_read` come from the last cumulative `token_count`
-record (the cached portion of the prompt is billed as a cache read). Sessions
-that switched models accumulate multiple rows; totals sum across them.
+For Codex, `last_token_usage` values are summed when available, with the last
+cumulative `total_token_usage` as a legacy fallback. Cached input is billed as
+a cache read. Each rollout UUID contributes once; independently billed forked
+children are additive. Archive moves and `.jsonl.zst` compression preserve
+rollout identity, and compressed sources can be indexed directly. Legacy copies
+remain in the physical tables with `superseded_by` set; reports exclude these
+aliases. Unfiltered raw SQL sums over physical rows still include copies. Alias
+messages and other derived rows remain recoverable through raw SQLite queries
+or the library's `query_session_detail` with the exact physical path; normal
+search and session listings use the canonical copy. The current
+Codex parser uses the first recorded model for the rollout; model switches
+within one rollout remain an estimation limitation.
 
 ## Why it's approximate
 
-- **No volume discounts.** Priority throughput, batch pricing, etc. aren't
-  reflected.
+- **Incomplete billing conditions.** OpenAI speed tiers, long-context bands,
+  regional surcharges, batch pricing, and discounts are not reconstructed.
 - **No historical pricing.** If tiers change, old sessions are priced at
   _current_ rates. Claudex doesn't store a rate card.
 - **No free tier / promo credits.** These are invoicing concerns; they don't
