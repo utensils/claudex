@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -533,6 +533,23 @@ impl TokenUsage {
             + self.output_tokens as f64 * p.output_per_mtok
             + self.cache_read_tokens as f64 * p.cache_read_per_mtok)
             / 1_000_000.0
+    }
+
+    /// Apply verified Claude fast rates only to the explicitly tagged subset.
+    /// Unknown/unsupported fast models keep their standard estimate.
+    pub fn cost_with_fast_usage(&self, model: Option<&str>, fast: &TokenUsage) -> f64 {
+        let standard = self.cost_for_model(model);
+        let Some(model) = model else {
+            return standard;
+        };
+        let lower = model.to_ascii_lowercase();
+        if lower.contains("fast")
+            || !(is_claude_opus_5_5(&lower) || has_any(&lower, &["opus-5", "opus-4-8", "opus-4.8"]))
+        {
+            return standard;
+        }
+        standard + fast.cost_for_model(Some(&format!("{model}-fast")))
+            - fast.cost_for_model(Some(model))
     }
 
     pub fn total_tokens(&self) -> u64 {

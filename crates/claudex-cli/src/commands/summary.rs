@@ -323,7 +323,9 @@ fn run_from_files(json: bool, plan: Plan, filter: &ResolvedFilter) -> Result<()>
             let family = ModelPricing::name(Some(model)).to_string();
             session_families.insert(family.clone());
             let entry = model_distribution.entry(family).or_insert((0, 0.0));
-            entry.1 += usage.usage.cost_for_model(Some(model));
+            entry.1 += usage
+                .usage
+                .cost_with_fast_usage(Some(model), &usage.fast_usage);
         }
         if session_families.is_empty()
             && let Some(model) = &stats.model

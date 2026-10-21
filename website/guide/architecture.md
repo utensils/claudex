@@ -16,7 +16,7 @@ VS Code workspaceStorage/**    (VS Code Copilot)    │
         ▼
 providers::{claude,codex,copilot,copilot_vscode,pi,openclaw} — SessionProvider: enumerate + parse → ProviderRecord
         ▼
-index::IndexStore             — rusqlite, bundled, schema_version = 7, additive/retentive
+index::IndexStore             — rusqlite, bundled, schema_version = 8, additive/retentive
         ▼
 api::Claudex                  — typed library facade for embedding
         │   or

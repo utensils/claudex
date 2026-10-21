@@ -132,7 +132,7 @@ impl ResolvedFilter {
     /// Build the additional `AND ...` SQL predicates for a `sessions` row
     /// aliased `alias`, plus the parameters to bind, in order.
     pub fn sql_predicates(&self, alias: &str) -> (String, Vec<SqlValue>) {
-        let mut sql = String::new();
+        let mut sql = format!(" AND {alias}.superseded_by IS NULL");
         let mut params: Vec<SqlValue> = Vec::new();
 
         if !self.providers.is_empty() {

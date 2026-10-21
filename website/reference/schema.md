@@ -1,6 +1,6 @@
 # Index schema
 
-The SQLite index at `~/.claudex/index.db`. **Schema version: 7.**
+The SQLite index at `~/.claudex/index.db`. **Schema version: 8.**
 
 ::: warning Not a stable surface
 Table and column names may change between releases. Use `claudex <cmd> --json`
@@ -23,7 +23,12 @@ Single-row key/value scratchpad.
 
 ## `sessions`
 
-One row per transcript file, across every provider.
+One row per transcript file, across every provider. Codex uses its own rollout
+UUID as `source_key`; archive/compression moves update the existing row.
+Legacy copies retain all physical rows and derived data. `superseded_by` points
+to the most complete indexed token snapshot; standard reports exclude aliases.
+For direct SQL totals, add `sessions.superseded_by IS NULL` when joining usage.
+Fork ancestry does not merge Codex billing identities.
 
 | Column              | Type        | Notes                                                                                                              |
 | ------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -67,6 +72,9 @@ multiple rows.
 | `speed`                                                                       | Average tokens/sec for the session-model row, if reported.                                                                                  |
 | `service_tier`                                                                | Distinct reported service tiers for the row, joined with ASCII Unit Separator (`\u001f`) in the raw DB value.                               |
 | `iterations`                                                                  | Count of messages contributing to the row.                                                                                                  |
+
+`fast_usage` is nullable JSON containing the four token counters explicitly
+recorded as Claude fast usage. Repricing uses it to preserve mixed-speed costs.
 
 Index: `idx_token_usage_session`.
 

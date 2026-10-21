@@ -12,6 +12,8 @@ use crate::types::TokenUsage;
 #[derive(Debug, Clone, Default)]
 pub struct ModelSessionStats {
     pub usage: TokenUsage,
+    /// Subset explicitly recorded as speed="fast"; preserved for repricing.
+    pub fast_usage: TokenUsage,
     pub assistant_message_count: u64,
     pub inference_geos: BTreeSet<String>,
     pub service_tiers: BTreeSet<String>,
@@ -73,7 +75,7 @@ impl SessionStats {
                 } else {
                     Some(model.as_str())
                 };
-                stats.usage.cost_for_model(model)
+                stats.usage.cost_with_fast_usage(model, &stats.fast_usage)
             })
             .sum()
     }
@@ -145,6 +147,7 @@ impl SessionStats {
             entry.assistant_message_count += stats.assistant_message_count;
             entry.inference_geos.extend(stats.inference_geos);
             entry.service_tiers.extend(stats.service_tiers);
+            entry.fast_usage.add(&stats.fast_usage);
             entry.speed_sum += stats.speed_sum;
             entry.speed_samples += stats.speed_samples;
             entry.iterations += stats.iterations;
@@ -218,6 +221,14 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
                 model_stats.usage.output_tokens += output_tokens;
                 model_stats.usage.cache_creation_tokens += cache_creation_tokens;
                 model_stats.usage.cache_read_tokens += cache_read_tokens;
+                if usage["speed"].as_str() == Some("fast") {
+                    model_stats.fast_usage.add(&TokenUsage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_tokens,
+                        cache_read_tokens,
+                    });
+                }
                 model_stats.assistant_message_count += 1;
                 if let Some(geo) = usage["inference_geo"].as_str()
                     && !geo.is_empty()
@@ -317,14 +328,25 @@ pub fn parse_session(path: &Path) -> Result<SessionStats> {
     Ok(stats)
 }
 
+/// Shared decoder for normal parsing and targeted metadata/PR backfills.
+pub(crate) fn transcript_reader(path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = File::open(path)?;
+    if path.extension().is_some_and(|ext| ext == "zst") {
+        Ok(Box::new(BufReader::new(zstd::stream::read::Decoder::new(
+            file,
+        )?)))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
 /// Stream records from a JSONL file, calling `callback` for each parsed JSON
 /// object.  Return `false` from the callback to stop early.
 pub fn stream_records<F>(path: &Path, mut callback: F) -> Result<()>
 where
     F: FnMut(&Value) -> bool,
 {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+    let reader = transcript_reader(path)?;
     for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {

@@ -34,7 +34,7 @@ fn looks_like_session_id_prefix(selector: &str) -> bool {
 }
 
 const STALE_SECS: u64 = 300;
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// Pricing-table revision. Bump this in any change that alters
 /// `ModelPricing::for_model`; on the next open, every `cost_source = 'computed'`
@@ -42,7 +42,7 @@ const SCHEMA_VERSION: i64 = 7;
 /// `SCHEMA_VERSION`, which tracks table shape rather than cost values.
 /// Review promotional rates after 2026-11-21 (GPT-5.6 Sol) and 2026-12-31
 /// (Gemini 3.6–3.8 Flash); any changed published rate needs another bump.
-pub const PRICING_REVISION: i64 = 8;
+pub const PRICING_REVISION: i64 = 9;
 
 /// Revision for provider-derived PR links. Bump when Codex/Pi PR extraction
 /// changes; `claudex prs` then performs a targeted, line-prefiltered backfill
@@ -55,24 +55,22 @@ const CODEX_FORK_MODEL_REVISION: i64 = 1;
 
 /// Revision for Codex token derivation. A bump reparses every Codex transcript
 /// in place so retained indexes pick up changes to cumulative/delta handling.
-const CODEX_TOKEN_USAGE_REVISION: i64 = 1;
+const CODEX_TOKEN_USAGE_REVISION: i64 = 2;
 
 /// Revision for Claude project-path derivation. Claude's encoded storage keys
 /// are lossy (`-` can mean a slash or a literal hyphen), so current parsing
 /// prefers the authoritative `cwd` embedded in each transcript.
-const CLAUDE_PROJECT_PATH_REVISION: i64 = 5;
+const CLAUDE_PROJECT_PATH_REVISION: i64 = 6;
 
-/// Rank physical transcript files inside each logical session. Codex resume and
-/// fork files can contain copied token history, so aggregate usage must take one
-/// complete representative rather than sum every physical snapshot. Other
-/// providers emit additive child transcripts and always retain rank 1.
+/// Rank copies of the same Codex rollout, never its independently billed forks.
+/// Parent IDs express ancestry, not billing identity.
 const LOGICAL_USAGE_CTE: &str = r#"
 WITH ranked_usage_sessions AS (
     SELECT s.*,
            CASE WHEN s.provider = 'codex' THEN
                ROW_NUMBER() OVER (
                    PARTITION BY s.provider, s.project_name,
-                                COALESCE(s.parent_session_id, s.session_id, s.file_path)
+                                COALESCE(s.source_key, s.session_id, s.file_path)
                    ORDER BY COALESCE((
                                 SELECT SUM(tu.input_tokens + tu.output_tokens
                                            + tu.cache_creation_tokens + tu.cache_read_tokens)
@@ -82,7 +80,7 @@ WITH ranked_usage_sessions AS (
                             s.id DESC
                )
            ELSE 1 END AS usage_rank
-    FROM sessions s
+    FROM sessions s WHERE s.superseded_by IS NULL
 )
 "#;
 
@@ -91,7 +89,7 @@ UPDATE sessions
 SET model = (
     SELECT MIN(c.model)
     FROM sessions c
-    WHERE c.provider = 'codex'
+    WHERE c.provider = 'codex' AND c.superseded_by IS NULL
       AND c.parent_session_id = sessions.session_id
       AND c.model IS NOT NULL
 )
@@ -101,7 +99,7 @@ WHERE provider = 'codex'
   AND (
       SELECT COUNT(DISTINCT c.model)
       FROM sessions c
-      WHERE c.provider = 'codex'
+      WHERE c.provider = 'codex' AND c.superseded_by IS NULL
         AND c.parent_session_id = sessions.session_id
         AND c.model IS NOT NULL
   ) = 1
@@ -138,15 +136,34 @@ fn delete_session_derived(tx: &rusqlite::Transaction, session_id: i64) -> Result
     Ok(())
 }
 
+/// Keep every physical snapshot and its derived history. Only the most complete
+/// copy of each rollout contributes to reports; aliases remain recoverable.
+fn reconcile_codex_copies(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch("WITH copies AS (
+        SELECT s.id, FIRST_VALUE(s.id) OVER (
+            PARTITION BY s.session_id
+            ORDER BY COALESCE((SELECT SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)
+                FROM token_usage WHERE session_id = s.id), 0) DESC,
+                s.present_on_disk DESC, s.last_timestamp DESC, s.id ASC
+        ) AS canonical_id
+        FROM sessions s WHERE s.provider = 'codex' AND s.session_id IS NOT NULL
+    )
+    UPDATE sessions SET superseded_by = (
+        SELECT CASE WHEN copies.id != copies.canonical_id THEN copies.canonical_id END
+        FROM copies WHERE copies.id = sessions.id
+    ) WHERE provider = 'codex';")?;
+    Ok(())
+}
+
 fn inherit_codex_exec_wrapper_models_tx(tx: &rusqlite::Transaction<'_>) -> Result<usize> {
     Ok(tx.execute(CODEX_INHERIT_WRAPPER_MODEL_SQL, [])?)
 }
 
 fn codex_forked_from_id_from_file(path: &Path) -> Result<Option<String>> {
-    let Ok(file) = std::fs::File::open(path) else {
+    if !path.exists() {
         return Ok(None);
-    };
-    let reader = std::io::BufReader::new(file);
+    }
+    let reader = crate::parser::transcript_reader(path)?;
 
     for line in reader.lines() {
         let line = line?;
@@ -176,8 +193,7 @@ fn now_unix_secs() -> u64 {
 }
 
 fn backfill_codex_pr_links(path: &Path) -> Result<Vec<(i64, String, String, String)>> {
-    let file = std::fs::File::open(path)?;
-    let reader = std::io::BufReader::new(file);
+    let reader = crate::parser::transcript_reader(path)?;
     let mut gh_pr_call_ids = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut links = Vec::new();
@@ -832,6 +848,7 @@ impl IndexStore {
                 archived_at     INTEGER,
                 last_seen       INTEGER,
                 extras          TEXT,
+                superseded_by   INTEGER,
                 source_key      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_project   ON sessions(project_name);
@@ -850,7 +867,8 @@ impl IndexStore {
                 speed                 REAL,
                 service_tier          TEXT,
                 iterations            INTEGER NOT NULL DEFAULT 0,
-                cost_source           TEXT    NOT NULL DEFAULT 'computed'
+                cost_source           TEXT    NOT NULL DEFAULT 'computed',
+                fast_usage            TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
             CREATE TABLE IF NOT EXISTS tool_calls (
@@ -929,8 +947,37 @@ impl IndexStore {
         // after the v6 migration has populated `cost_source`, so provider costs
         // are already protected. No-op for a fresh DB (no rows yet).
         self.maybe_reprice()?;
+        self.reconcile_codex_identities()?;
         self.ensure_codex_fork_models_fresh()?;
 
+        Ok(())
+    }
+
+    fn reconcile_codex_identities(&self) -> Result<()> {
+        if self.meta_get("codex_identity_revision").as_deref() == Some("1") {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let rows: Vec<(i64, String, Option<String>)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, file_path, session_id FROM sessions WHERE provider = 'codex'",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        for (id, path, session_id) in rows {
+            let identity = crate::providers::codex::rollout_uuid(Path::new(&path)).or(session_id);
+            tx.execute(
+                "UPDATE sessions SET session_id = ?, source_key = ? WHERE id = ?",
+                params![identity, identity, id],
+            )?;
+        }
+        reconcile_codex_copies(&tx)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_identity_revision', '1')",
+            [],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -959,6 +1006,10 @@ impl IndexStore {
     /// step is additive and idempotent so retained data is never lost. `from`
     /// is `None` for a brand-new DB (every column already exists → all no-ops).
     fn migrate_schema(&self, from: Option<i64>) -> Result<()> {
+        if from.unwrap_or(0) < 8 {
+            self.add_column_if_missing("token_usage", "fast_usage", "TEXT")?;
+            self.add_column_if_missing("sessions", "superseded_by", "INTEGER")?;
+        }
         // v4 → v5: provider awareness + additive retention metadata.
         if from.unwrap_or(0) < 5 {
             self.add_column_if_missing("sessions", "provider", "TEXT NOT NULL DEFAULT 'claude'")?;
@@ -1238,10 +1289,11 @@ impl IndexStore {
     /// gone). Returns the number of rows updated.
     fn reprice_computed_costs(&self) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
-        let rows: Vec<(i64, Option<String>, i64, i64, i64, i64)> = {
+        type RepriceRow = (i64, Option<String>, i64, i64, i64, i64, Option<String>);
+        let rows: Vec<RepriceRow> = {
             let mut stmt = tx.prepare(
                 "SELECT rowid, model, input_tokens, output_tokens,
-                        cache_creation_tokens, cache_read_tokens
+                        cache_creation_tokens, cache_read_tokens, fast_usage
                  FROM token_usage WHERE cost_source = 'computed'",
             )?;
             let mapped = stmt.query_map([], |r| {
@@ -1252,6 +1304,7 @@ impl IndexStore {
                     r.get::<_, i64>(3)?,
                     r.get::<_, i64>(4)?,
                     r.get::<_, i64>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             })?;
             mapped.collect::<std::result::Result<Vec<_>, _>>()?
@@ -1259,14 +1312,19 @@ impl IndexStore {
         let mut updated = 0usize;
         {
             let mut upd = tx.prepare("UPDATE token_usage SET cost_usd = ? WHERE rowid = ?")?;
-            for (rowid, model, input, output, cache_w, cache_r) in &rows {
+            for (rowid, model, input, output, cache_w, cache_r, fast_json) in &rows {
                 let usage = crate::types::TokenUsage {
                     input_tokens: *input as u64,
                     output_tokens: *output as u64,
                     cache_creation_tokens: *cache_w as u64,
                     cache_read_tokens: *cache_r as u64,
                 };
-                let cost = usage.cost_for_model(model.as_deref());
+                let fast = fast_json
+                    .as_deref()
+                    .map(serde_json::from_str::<crate::types::TokenUsage>)
+                    .transpose()?
+                    .unwrap_or_default();
+                let cost = usage.cost_with_fast_usage(model.as_deref(), &fast);
                 upd.execute(params![cost, rowid])?;
                 updated += 1;
             }
@@ -1330,7 +1388,7 @@ impl IndexStore {
         {
             let mut stmt = self.conn.prepare(
                 "SELECT file_path, id, file_size, file_mtime, present_on_disk, source_key
-                 FROM sessions WHERE provider = ?",
+                 FROM sessions WHERE provider = ? ORDER BY superseded_by IS NULL",
             )?;
             let rows = stmt.query_map(params![provider_id], |row| {
                 let file_path = row.get::<_, String>(0)?;
@@ -1356,9 +1414,14 @@ impl IndexStore {
         }
 
         let files = provider.enumerate()?;
+        let discovered_paths: HashSet<String> = files
+            .iter()
+            .map(|f| f.path.to_string_lossy().into_owned())
+            .collect();
         let mut seen: HashSet<String> = HashSet::new();
         let now_secs = now_unix_secs() as i64;
         let mut indexed_count = 0usize;
+        let mut reused_source_rows = HashSet::new();
 
         let tx = self.conn.transaction()?;
 
@@ -1374,7 +1437,7 @@ impl IndexStore {
 
             let discovered_source_key = discovered.source_key.clone();
             let prior = known.get(&path_str);
-            let reuse_id = match prior {
+            let mut reuse_id = match prior {
                 Some(k) if k.size == size && k.mtime == mtime && !rederive_provider_data => {
                     // Unchanged on disk. If it was previously archived (file had
                     // disappeared and came back byte-identical), un-archive it.
@@ -1391,17 +1454,14 @@ impl IndexStore {
                 // Changed: rebuild this session's derived rows in place, keeping
                 // the stable `sessions` rowid (and any retained metadata).
                 Some(k) => Some(k.id),
-                None => {
-                    if let Some(k) = discovered_source_key
-                        .as_ref()
-                        .and_then(|source_key| known_by_source.get(source_key))
-                    {
-                        seen.insert(k.file_path.clone());
-                        Some(k.id)
-                    } else {
-                        None
-                    }
-                }
+                None => discovered_source_key
+                    .as_ref()
+                    .and_then(|key| known_by_source.get(key))
+                    .filter(|k| {
+                        !discovered_paths.contains(&k.file_path)
+                            && !reused_source_rows.contains(&k.id)
+                    })
+                    .map(|k| k.id),
             };
 
             let discovered_parent_session_id = discovered.parent_session_id.clone();
@@ -1410,9 +1470,40 @@ impl IndexStore {
                 Err(_) => continue,
             };
 
+            if provider_id == "codex"
+                && prior.is_none()
+                && let Some(row_id) = reuse_id
+            {
+                let retained_tokens: i64 = tx.query_row(
+                    "SELECT COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+                     FROM token_usage WHERE session_id = ?", [row_id], |r| r.get(0))?;
+                let parsed_tokens = if entry.model_usage.is_empty() {
+                    entry.usage.total_tokens()
+                } else {
+                    entry
+                        .model_usage
+                        .values()
+                        .map(|m| m.usage.total_tokens())
+                        .sum()
+                };
+                if parsed_tokens < retained_tokens as u64 {
+                    // A stale/partial import is another physical snapshot, not
+                    // a replacement for the more complete retained rollout.
+                    reuse_id = None;
+                }
+            }
+
             // Mutable transcripts can be temporarily incomplete while the harness
             // writes them. Keep previously indexed rows until parsing succeeds.
             if let Some(row_id) = reuse_id {
+                if prior.is_none()
+                    && let Some(k) = discovered_source_key
+                        .as_ref()
+                        .and_then(|key| known_by_source.get(key))
+                {
+                    seen.insert(k.file_path.clone());
+                }
+                reused_source_rows.insert(row_id);
                 delete_session_derived(&tx, row_id)?;
             }
 
@@ -1567,14 +1658,19 @@ impl IndexStore {
                     };
                     let (cost, cost_source) = match usage.embedded_cost {
                         Some(c) => (c, "provider"),
-                        None => (usage.usage.cost_for_model(model_opt), "computed"),
+                        None => (
+                            usage
+                                .usage
+                                .cost_with_fast_usage(model_opt, &usage.fast_usage),
+                            "computed",
+                        ),
                     };
                     tx.execute(
                         r#"INSERT INTO token_usage
                            (session_id, model, assistant_message_count, input_tokens, output_tokens,
                             cache_creation_tokens, cache_read_tokens, cost_usd,
-                            inference_geo, speed, service_tier, iterations, cost_source)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                            inference_geo, speed, service_tier, iterations, cost_source, fast_usage)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                         params![
                             row_id,
                             model_opt,
@@ -1589,6 +1685,7 @@ impl IndexStore {
                             join_strings(&usage.service_tiers),
                             usage.iterations as i64,
                             cost_source,
+                            serde_json::to_string(&usage.fast_usage)?,
                         ],
                     )?;
                 }
@@ -1690,6 +1787,7 @@ impl IndexStore {
         }
 
         if provider_id == "codex" {
+            reconcile_codex_copies(&tx)?;
             inherit_codex_exec_wrapper_models_tx(&tx)?;
             tx.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('codex_token_usage_revision', ?)",
@@ -1791,7 +1889,7 @@ impl IndexStore {
             r#"SELECT id, provider, project_name, session_id, file_path, first_timestamp,
                       last_timestamp, message_count, duration_ms, model, extras,
                       present_on_disk, archived_at
-               FROM sessions
+               FROM sessions WHERE superseded_by IS NULL
                ORDER BY first_timestamp DESC, file_path ASC"#,
         )?;
         let rows = stmt
@@ -1860,7 +1958,7 @@ impl IndexStore {
         let sql = format!(
             r#"{LOGICAL_USAGE_CTE}
                SELECT s.project_name,
-                      COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+                      COUNT(DISTINCT s.provider || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
                       COALESCE(SUM(t.cache_creation_tokens), 0),
@@ -1922,7 +2020,7 @@ impl IndexStore {
         let sql = format!(
             r#"{LOGICAL_USAGE_CTE}
                SELECT s.provider, s.project_name,
-                      COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
+                      COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
                       GROUP_CONCAT(DISTINCT t.model),
                       COALESCE(SUM(t.input_tokens), 0),
@@ -1935,7 +2033,7 @@ impl IndexStore {
                WHERE (t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens) > 0
                  AND s.usage_rank = 1
                  AND (? IS NULL OR s.project_name LIKE ? OR s.file_path LIKE ?){pred}
-               GROUP BY s.project_name, s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)
+               GROUP BY s.project_name, s.provider || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)
                ORDER BY SUM(t.cost_usd) DESC
                LIMIT ?"#
         );
@@ -1975,8 +2073,7 @@ impl IndexStore {
     ) -> Result<CostSummary> {
         let fp = opt_like(project_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
-        let session_key =
-            "s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)";
+        let session_key = "s.provider || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)";
         let sql = format!(
             r#"{LOGICAL_USAGE_CTE}
                SELECT COUNT(DISTINCT {session_key}),
@@ -2050,9 +2147,9 @@ impl IndexStore {
         let fp = opt_like(project_filter);
         let (pred, pred_params) = filter.sql_predicates("s");
         let sql = format!(
-            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path) AS group_key,
+            r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path) AS group_key,
                       s.project_name,
-                      COALESCE(s.parent_session_id, s.session_id, s.file_path) AS display_session_id,
+                      COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path) AS display_session_id,
                       MIN(s.first_timestamp),
                       tc.tool_name,
                       SUM(tc.count)
@@ -2382,7 +2479,7 @@ impl IndexStore {
         let sql = format!(
             r#"{LOGICAL_USAGE_CTE}
                SELECT t.model,
-                      s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path),
+                      s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path),
                       COALESCE(t.input_tokens, 0),
                       COALESCE(t.output_tokens, 0),
                       COALESCE(t.cache_creation_tokens, 0),
@@ -2554,7 +2651,7 @@ impl IndexStore {
             && let Some(parent) = session_id.as_deref()
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, file_path FROM sessions WHERE parent_session_id = ? ORDER BY first_timestamp, file_path",
+                "SELECT id, file_path FROM sessions WHERE parent_session_id = ? AND superseded_by IS NULL ORDER BY first_timestamp, file_path",
             )?;
             let child_rows = stmt
                 .query_map(params![parent], |row| {
@@ -2837,7 +2934,7 @@ impl IndexStore {
             i64,
         ) = self.conn.query_row(
             &format!(
-                r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)),
+                r#"SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)),
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),
@@ -2863,7 +2960,7 @@ impl IndexStore {
         let mut today_binds = vec![SqlValue::Integer(today_start_ms)];
         today_binds.extend(pred_params.clone());
         let sessions_today: i64 = self.conn.query_row(
-            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
+            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
             params_from_iter(today_binds),
             |row| row.get(0),
         )?;
@@ -2871,7 +2968,7 @@ impl IndexStore {
         let mut week_binds = vec![SqlValue::Integer(week_start_ms)];
         week_binds.extend(pred_params.clone());
         let sessions_this_week: i64 = self.conn.query_row(
-            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
+            &format!("SELECT COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)) FROM sessions s WHERE COALESCE(s.last_timestamp, s.first_timestamp) >= ?{pred}"),
             params_from_iter(week_binds),
             |row| row.get(0),
         )?;
@@ -2889,7 +2986,7 @@ impl IndexStore {
         )?;
 
         let mut top_stmt = self.conn.prepare(
-            &format!(r#"SELECT s.project_name, COUNT(DISTINCT s.provider || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) AS cnt
+            &format!(r#"SELECT s.project_name, COUNT(DISTINCT s.provider || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)) AS cnt
                FROM sessions s
                WHERE 1 = 1 {pred}
                GROUP BY s.project_name
@@ -2999,7 +3096,7 @@ impl IndexStore {
             .unwrap_or(0);
 
         let mut mdist_stmt = self.conn.prepare(
-            &format!(r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
+            &format!(r#"SELECT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path), t.model, COALESCE(t.cost_usd, 0)
                FROM token_usage t
                JOIN sessions s ON s.id = t.session_id
                WHERE 1 = 1 {pred}"#),
@@ -3149,6 +3246,9 @@ impl IndexStore {
     ) -> Result<usize> {
         let cutoff = now_unix_secs() as i64 - older_than_secs;
         let (pred, pred_params) = filter.sql_predicates("s");
+        // Pruning is explicitly destructive and must include retained physical
+        // aliases, otherwise pruning a canonical copy would resurrect an old one.
+        let pred = pred.replace(" AND s.superseded_by IS NULL", "");
         let sql = format!(
             r#"SELECT s.id FROM sessions s
                WHERE s.present_on_disk = 0
@@ -3167,6 +3267,8 @@ impl IndexStore {
             delete_session_derived(&tx, *id)?;
             tx.execute("DELETE FROM sessions WHERE id = ?", params![id])?;
         }
+        tx.execute("UPDATE sessions SET superseded_by = NULL WHERE superseded_by NOT IN (SELECT id FROM sessions)", [])?;
+        reconcile_codex_copies(&tx)?;
         tx.commit()?;
         Ok(ids.len())
     }
@@ -3213,7 +3315,7 @@ impl IndexStore {
                    FROM turn_durations GROUP BY session_rowid
                )
                SELECT {bucket_expr} AS bucket,
-                      COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(s.parent_session_id, s.session_id, s.file_path)) AS sessions,
+                      COUNT(DISTINCT s.provider || char(31) || s.project_name || char(31) || COALESCE(CASE WHEN s.provider <> 'codex' THEN s.parent_session_id END, s.session_id, s.file_path)) AS sessions,
                       COALESCE(SUM(t.cost_usd), 0),
                       COALESCE(SUM(t.input_tokens), 0),
                       COALESCE(SUM(t.output_tokens), 0),

@@ -594,7 +594,7 @@ fn codex_token_revision_reindexes_unchanged_cumulative_transcripts() {
 }
 
 #[test]
-fn codex_cost_queries_count_one_snapshot_per_logical_session() {
+fn codex_cost_queries_sum_independent_forks() {
     let tmp = TempDir::new().unwrap();
     let codex = tmp.path().join(".codex");
     for (name, id, parent, input, cached, output) in [
@@ -629,15 +629,15 @@ fn codex_cost_queries_count_one_snapshot_per_logical_session() {
         .query_cost_by_project(None, &all(), 10)
         .unwrap()
         .remove(0);
-    assert_eq!(project.session_count, 1);
-    assert_eq!(project.input_tokens, 500);
-    assert_eq!(project.output_tokens, 100);
-    assert_eq!(project.cache_read_tokens, 1500);
+    assert_eq!(project.session_count, 2);
+    assert_eq!(project.input_tokens, 700);
+    assert_eq!(project.output_tokens, 150);
+    assert_eq!(project.cache_read_tokens, 2300);
 
     let summary = idx.query_cost_summary(None, &all()).unwrap();
-    assert_eq!(summary.input_tokens, 500);
-    assert_eq!(summary.output_tokens, 100);
-    assert_eq!(summary.cache_read_tokens, 1500);
+    assert_eq!(summary.input_tokens, 700);
+    assert_eq!(summary.output_tokens, 150);
+    assert_eq!(summary.cache_read_tokens, 2300);
     let model_cost: f64 = idx
         .query_model_usage(None, &all())
         .unwrap()

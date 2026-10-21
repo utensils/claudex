@@ -7,7 +7,7 @@ directly — it's an implementation detail — but a few things are worth knowin
 
 ```
 ~/.claudex/
-├── index.db          # SQLite, schema_version = 7
+├── index.db          # SQLite, schema_version = 8
 └── debug/            # only when you use `claudex watch`
     └── latest.log
 ```
