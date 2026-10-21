@@ -75,6 +75,43 @@ fn claude(path: &Path, id: &str) {
     );
 }
 
+fn cline_and_roo(root: &Path) {
+    write(
+        &root.join("cline/sdk-task/sdk-task.messages.json"),
+        &json!({
+            "sessionId":"cline-extra", "updated_at":"2026-10-20T10:02:00Z", "messages":[
+                {"role":"user","ts":1792490400000i64,"content":"additional harness searchable marker"},
+                {"role":"assistant","ts":1792490460000i64,"modelInfo":{"provider":"anthropic","id":"claude-sonnet-5-5"},"content":[{"type":"text","text":"Cline completed custom root proof"}],"metrics":{"inputTokens":1200,"outputTokens":120,"cacheReadTokens":40,"cacheWriteTokens":30,"cost":0.25}}
+            ]
+        }),
+    );
+    write(
+        &root.join("cline/sdk-task/sdk-task.json"),
+        &json!({"cwd":"/projects/example","started_at":"2026-10-20T10:00:00Z"}),
+    );
+    write(
+        &root.join("roo/tasks/roo-extra/api_conversation_history.json"),
+        &json!([
+            {"role":"user","ts":1792490400000i64,"content":"additional harness searchable marker"},
+            {"role":"assistant","ts":1792490460000i64,"content":[{"type":"text","text":"Roo completed custom root proof"}]}
+        ]),
+    );
+    write(
+        &root.join("roo/tasks/roo-extra/ui_messages.json"),
+        &json!([
+            {"type":"say","say":"api_req_started","ts":1792490400000i64,"text":json!({"tokensIn":2300,"tokensOut":230,"cacheReads":50,"cacheWrites":60,"cost":0.45}).to_string()}
+        ]),
+    );
+    write(
+        &root.join("roo/tasks/roo-extra/task_metadata.json"),
+        &json!({"model_usage":[{"ts":1792490400000i64,"model_provider_id":"openai","model_id":"gpt-6.1-sol"}]}),
+    );
+    write(
+        &root.join("roo/state/taskHistory.json"),
+        &json!([{"id":"roo-extra","cwdOnTaskInitialization":"/projects/example"}]),
+    );
+}
+
 fn indexed(home: &Path) -> Connection {
     Connection::open(home.join(".claudex/index.db")).unwrap()
 }
@@ -258,6 +295,7 @@ fn cli_config_indexes_additional_directories_for_every_provider() {
         &root.join("opencode/storage/part/msg/text.json"),
         &json!({"id":"text","type":"text","text":"distinct discovery marker"}),
     );
+    cline_and_roo(&root);
     let providers = [
         "claude",
         "codex",
@@ -268,6 +306,8 @@ fn cli_config_indexes_additional_directories_for_every_provider() {
         "omp",
         "gemini",
         "opencode",
+        "cline",
+        "roo",
     ];
     let config: serde_json::Map<String, Value> = providers
         .iter()
@@ -297,7 +337,7 @@ fn cli_config_indexes_additional_directories_for_every_provider() {
     assert!((cost - 0.42).abs() < 1e-9);
     // Reindexing the identical roots must retain one row per source.
     success(run(home.path(), &["--config", "all.json", "index"]));
-    assert_eq!(ids(&indexed(home.path())).len(), 9);
+    assert_eq!(ids(&indexed(home.path())).len(), 11);
 }
 
 #[test]
@@ -395,4 +435,145 @@ fn cli_extra_only_root_disappearance_retains_and_marks_session_off_disk() {
             .unwrap(),
         1
     );
+}
+
+#[test]
+fn cli_cline_roo_custom_sources_support_reports_export_and_retention() {
+    let home = TempDir::new().unwrap();
+    cline_and_roo(&home.path().join("sources"));
+    let config = home.path().join("config.json");
+    write(
+        &config,
+        &json!({"providers":{"cline":{"session_dirs":["sources/cline"]},"roo":{"session_dirs":["sources/roo"]}}}),
+    );
+    success(run(home.path(), &["--config", "config.json", "index"]));
+    for (provider, id, model, input, expected_cost) in [
+        ("cline", "cline-extra", "claude-sonnet-5-5", 1200, 0.25),
+        ("roo", "roo-extra", "gpt-6.1-sol", 2300, 0.45),
+    ] {
+        let output = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "sessions",
+                "--provider",
+                provider,
+                "--json",
+            ],
+        ));
+        let sessions: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(sessions.as_array().unwrap().len(), 1);
+        assert_eq!(sessions[0]["provider"], provider);
+        assert_eq!(sessions[0]["session_id"], id);
+        let output = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "search",
+                "additional harness searchable marker",
+                "--provider",
+                provider,
+                "--json",
+            ],
+        ));
+        let results: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(!results.as_array().unwrap().is_empty());
+        assert!(
+            results
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["provider"] == provider)
+        );
+        let output = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "models",
+                "--provider",
+                provider,
+                "--json",
+            ],
+        ));
+        assert!(String::from_utf8_lossy(&output.stdout).contains(model));
+        let output = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "cost",
+                "--provider",
+                provider,
+                "--json",
+            ],
+        ));
+        let cost: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            cost.to_string().contains(&expected_cost.to_string()),
+            "cost report: {cost}"
+        );
+        let output = success(run(
+            home.path(),
+            &["--config", "config.json", "session", id, "--json"],
+        ));
+        let details: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(details["provider"], provider);
+        assert_eq!(details["project"], "/projects/example");
+        assert_eq!(details["input_tokens"], input);
+        assert!((details["cost_usd"].as_f64().unwrap() - expected_cost).abs() < 1e-9);
+        let output = success(run(
+            home.path(),
+            &["--config", "config.json", "export", id, "--format", "json"],
+        ));
+        let export: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(export["provider"], provider);
+        let markdown = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "export",
+                id,
+                "--format",
+                "markdown",
+            ],
+        ));
+        assert!(
+            String::from_utf8_lossy(&markdown.stdout)
+                .contains("additional harness searchable marker")
+        );
+        assert!(
+            export
+                .to_string()
+                .contains("additional harness searchable marker")
+        );
+    }
+    fs::remove_dir_all(home.path().join("sources")).unwrap();
+    success(run(home.path(), &["--config", "config.json", "index"]));
+    for id in ["cline-extra", "roo-extra"] {
+        let output = success(run(
+            home.path(),
+            &["--config", "config.json", "session", id, "--json"],
+        ));
+        let details: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(details["present_on_disk"], false);
+        assert!(details["input_tokens"].as_i64().unwrap() > 0);
+        let output = success(run(
+            home.path(),
+            &[
+                "--config",
+                "config.json",
+                "search",
+                "additional harness searchable marker",
+                "--provider",
+                details["provider"].as_str().unwrap(),
+                "--json",
+            ],
+        ));
+        let retained_search: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(!retained_search.as_array().unwrap().is_empty());
+    }
 }

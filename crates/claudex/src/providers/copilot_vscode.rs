@@ -72,6 +72,10 @@ impl SessionProvider for CopilotVscodeProvider {
             .unwrap_or(&self.user_dirs[0])
     }
 
+    fn root_dirs(&self) -> Vec<PathBuf> {
+        self.user_dirs.clone()
+    }
+
     fn enabled(&self) -> bool {
         self.user_dirs.iter().any(|d| d.exists())
     }

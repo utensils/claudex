@@ -66,7 +66,7 @@ Force a full rebuild: `claudex index --force`
 
 ### Providers are first-class; filtering happens at query time
 
-All nine providers flow through the same `IndexStore` pipeline. `ensure_fresh`
+All eleven providers flow through the same `IndexStore` pipeline. `ensure_fresh`
 / `sync` / `force_rebuild` take `&[Provider]`, and reports span every provider
 whose data root exists. `--provider` narrows at query time — the index always
 holds everything available, so switching providers never re-syncs.

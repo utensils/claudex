@@ -32,7 +32,7 @@ Key types:
 - `Claudex` — owns an index handle and the configured providers.
 - `ClaudexConfig` — optional state directory and provider list.
 - `QueryFilter` / `Filter` — provider, model, date, and on-disk filters.
-- `ProviderKind` / `Provider` — Claude, Codex, Copilot (CLI and VS Code), Pi, OMP, Gemini CLI, OpenCode, and OpenClaw selectors.
+- `ProviderKind` / `Provider` — Claude, Codex, Copilot (CLI and VS Code), Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw selectors.
 
 ## Additional sources
 

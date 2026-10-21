@@ -36,6 +36,10 @@ impl SessionProvider for AdditionalProvider {
         for dir in &self.directories {
             if self.id() == "opencode" {
                 files.extend(super::opencode::OpenCodeProvider::at(dir.clone()).enumerate()?);
+            } else if self.id() == "cline" {
+                files.extend(super::cline::ClineProvider::at(dir.clone()).enumerate()?);
+            } else if self.id() == "roo" {
+                files.extend(super::cline::RooProvider::at(dir.clone()).enumerate()?);
             } else if self.id() == "gemini" {
                 files.extend(super::gemini::GeminiProvider::at(dir.clone()).enumerate()?);
             } else {

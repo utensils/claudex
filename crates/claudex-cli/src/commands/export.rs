@@ -143,7 +143,10 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
     }
     buf.push_str("\n---\n\n");
 
-    if matches!(row.provider.as_str(), "gemini" | "opencode") {
+    if matches!(
+        row.provider.as_str(),
+        "gemini" | "opencode" | "cline" | "roo"
+    ) {
         for message in normalized_record(row)?.messages {
             buf.push_str(&format!(
                 "## {}\n\n{}\n\n---\n\n",
@@ -190,7 +193,10 @@ fn build_indexed_markdown(row: &IndexedSession) -> Result<String> {
 fn build_indexed_json_value(row: &IndexedSession) -> Result<Value> {
     let mut records = Vec::new();
     let mut messages = Vec::new();
-    if matches!(row.provider.as_str(), "gemini" | "opencode") {
+    if matches!(
+        row.provider.as_str(),
+        "gemini" | "opencode" | "cline" | "roo"
+    ) {
         for message in normalized_record(row)?.messages {
             messages.push(serde_json::json!({"role": message.msg_type, "text": message.content,
                 "timestamp": message.timestamp_ms.and_then(DateTime::from_timestamp_millis).map(|d| d.to_rfc3339())}));
@@ -489,6 +495,8 @@ fn normalized_record(row: &IndexedSession) -> Result<claudex::providers::Provide
     match row.provider.as_str() {
         "gemini" => claudex::providers::GeminiProvider::new()?.parse(&file),
         "opencode" => claudex::providers::OpenCodeProvider::new()?.parse(&file),
+        "cline" => claudex::providers::ClineProvider::new()?.parse(&file),
+        "roo" => claudex::providers::RooProvider::new()?.parse(&file),
         _ => anyhow::bail!("unsupported normalized provider"),
     }
 }

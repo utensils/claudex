@@ -18,6 +18,7 @@ use crate::types::TokenUsage;
 
 mod additional;
 pub mod claude;
+pub mod cline;
 pub mod codex;
 pub mod copilot;
 pub mod copilot_vscode;
@@ -29,6 +30,7 @@ pub mod pi;
 pub(crate) mod pr;
 
 pub use claude::ClaudeProvider;
+pub use cline::{ClineProvider, RooProvider};
 pub use codex::CodexProvider;
 pub use copilot::CopilotProvider;
 pub use copilot_vscode::CopilotVscodeProvider;
@@ -124,6 +126,10 @@ pub trait SessionProvider {
     fn id(&self) -> &'static str;
     /// Root directory the provider reads transcripts from.
     fn root_dir(&self) -> &Path;
+    /// Every standard discovery root, including alternate editor installations.
+    fn root_dirs(&self) -> Vec<PathBuf> {
+        vec![self.root_dir().to_path_buf()]
+    }
     /// Whether the provider has data to index (its root exists).
     fn enabled(&self) -> bool {
         self.root_dir().exists()
@@ -156,6 +162,8 @@ pub enum Provider {
     Omp(OmpProvider),
     Gemini(GeminiProvider),
     OpenCode(OpenCodeProvider),
+    Cline(ClineProvider),
+    Roo(RooProvider),
     Additional(Box<additional::AdditionalProvider>),
 }
 
@@ -171,6 +179,8 @@ impl Provider {
             Provider::Omp(p) => p,
             Provider::Gemini(p) => p,
             Provider::OpenCode(p) => p,
+            Provider::Cline(p) => p,
+            Provider::Roo(p) => p,
             Provider::Additional(p) => p.as_ref(),
         }
     }
@@ -219,7 +229,7 @@ impl Provider {
                 roots.extend(provider.directories.clone());
                 roots
             }
-            _ => vec![self.root_dir().to_path_buf()],
+            _ => self.inner().root_dirs(),
         };
         roots.sort();
         roots.dedup();
@@ -268,6 +278,8 @@ pub fn all_configured(config: &crate::config::SourceConfig) -> Result<Vec<Provid
         Provider::Omp(OmpProvider::new()?),
         Provider::Gemini(GeminiProvider::new()?),
         Provider::OpenCode(OpenCodeProvider::new()?),
+        Provider::Cline(ClineProvider::new()?),
+        Provider::Roo(RooProvider::new()?),
     ];
     Ok(candidates
         .into_iter()

@@ -4,9 +4,9 @@
 [![Deploy Docs](https://github.com/utensils/claudex/actions/workflows/pages.yml/badge.svg)](https://github.com/utensils/claudex/actions/workflows/pages.yml)
 [![codecov](https://codecov.io/gh/utensils/claudex/graph/badge.svg)](https://codecov.io/gh/utensils/claudex)
 
-**Query, search, and analyze your Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, and OpenClaw sessions from the command line.**
+**Query, search, and analyze your Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw sessions from the command line.**
 
-claudex reads the local transcripts of nine coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), GitHub Copilot CLI (`~/.copilot/session-state/`), VS Code Copilot Chat (VS Code `workspaceStorage`), Pi (`~/.pi/agent/`), OMP (`~/.omp/agent/sessions/`), Gemini CLI (`~/.gemini/tmp/`), OpenCode (`~/.local/share/opencode/`), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all nine providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
+claudex reads the local transcripts of eleven coding agents — Claude Code (`~/.claude/projects/`), OpenAI Codex (`~/.codex/`), GitHub Copilot CLI (`~/.copilot/session-state/`), VS Code Copilot Chat (VS Code `workspaceStorage`), Pi (`~/.pi/agent/`), OMP (`~/.omp/agent/sessions/`), Gemini CLI (`~/.gemini/tmp/`), OpenCode (`~/.local/share/opencode/`), Cline (SDK and VS Code tasks), Roo Code (VS Code tasks), and OpenClaw (`${OPENCLAW_STATE_DIR:-~/.openclaw}`) — indexes them into a single SQLite database at `~/.claudex/index.db`, and exposes reports as subcommands. Every report spans all eleven providers by default; narrow with `--provider` and the shared `--since`/`--until`/`--model` filters. The index is **additive**: sessions you archive or delete from disk stay in your history. Every read command supports `--json` (with a `provider` key per row); Claude reports also support `--no-index`.
 
 ![demo](assets/demo.gif)
 

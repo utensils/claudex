@@ -25,6 +25,8 @@ pub enum ProviderArg {
     Gemini,
     #[value(name = "opencode")]
     OpenCode,
+    Cline,
+    Roo,
 }
 
 impl From<ProviderArg> for ProviderKind {
@@ -39,6 +41,8 @@ impl From<ProviderArg> for ProviderKind {
             ProviderArg::Omp => ProviderKind::Omp,
             ProviderArg::Gemini => ProviderKind::Gemini,
             ProviderArg::OpenCode => ProviderKind::OpenCode,
+            ProviderArg::Cline => ProviderKind::Cline,
+            ProviderArg::Roo => ProviderKind::Roo,
         }
     }
 }

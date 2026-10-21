@@ -1,6 +1,6 @@
 # Providers & filtering
 
-claudex indexes nine coding agents into one database and reports across all of
+claudex indexes eleven coding agents into one database and reports across all of
 them. Every reporting command spans every provider by default; a shared set of
 filter flags narrows the view.
 
@@ -18,6 +18,9 @@ filter flags narrows the view.
 | **OMP** (`omp`) | `~/.omp/agent/sessions/**` | Oh My Pi: recursive session/subagent discovery, assistant usage and separate `model_usage` records. Honors OMP profiles and agent-directory settings. |
 | **Gemini CLI** (`gemini`) | `~/.gemini/tmp/**/chats/session-*` | Reads JSON sessions and JSONL updates, including tools and token usage. |
 | **OpenCode** (`opencode`) | `~/.local/share/opencode/opencode.db` or legacy `storage/` | Read-only SQLite access and legacy JSON sessions. Honors `XDG_DATA_HOME`; includes WAL changes when checking freshness. |
+
+| **Cline** (`cline`) | `~/.cline/data/sessions/` and editor `globalStorage/saoudrizwan.claude-dev/tasks/` | SDK artifacts and legacy VS Code task history, UI-recorded usage/costs, tools, and text. |
+| **Roo Code** (`roo`) | Editor `globalStorage/rooveterinaryinc.roo-cline/tasks/` | API conversation history, UI usage/costs, and model metadata. |
 
 A provider is indexed only if its data directory exists, so you never need to
 opt in — install Codex, Copilot, Pi, or OpenClaw and claudex picks them up on the next sync.
@@ -61,7 +64,9 @@ Extra directories contain transcripts recursively, without requiring a provider'
 usual parent-directory layout. Copilot CLI discovers `events.jsonl`; VS Code
 Copilot accepts `.json` and `.jsonl` sessions. OpenCode directories contain
 `opencode.db` or legacy `storage/` (a direct database path is also accepted).
-Gemini accepts its data root or a directory containing sessions. Set the provider
+Gemini accepts its data root or a directory containing sessions. Cline and Roo accept
+individual task directories, task trees, or their data parent; Cline also reads SDK
+session artifact trees. VS Code, Insiders, and VSCodium default locations are included. Set the provider
 correctly: claudex uses that provider's parser rather than guessing file formats.
 Extra directories apply to indexed commands; Claude `--no-index` continues to scan
 its standard transcript storage.
@@ -84,15 +89,15 @@ just what's live on disk right now.
 Every reporting command (`sessions`, `cost`, `search`, `tools`, `models`,
 `turns`, `prs`, `files`) accepts the same cross-cutting filters:
 
-| Flag                                                                                       | Effect                                                                          |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|omp\|gemini\|opencode\|openclaw>` | Restrict to one or more providers. Repeatable or comma-separated. Default: all. |
-| `--project <substr>`                                                                       | Filter by project path substring.                                               |
-| `--model <substr>`                                                                         | Filter by model (e.g. `opus`, `gpt-5`).                                         |
-| `--since <when>`                                                                           | Only sessions at/after this time.                                               |
-| `--until <when>`                                                                           | Only sessions at/before this time.                                              |
-| `--on-disk-only`                                                                           | Exclude retained sessions whose file was archived or deleted.                   |
-| `--json`                                                                                   | Machine-readable output; always includes a `provider` key per row.              |
+| Flag                                                                                                   | Effect                                                                          |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|omp\|gemini\|opencode\|cline\|roo\|openclaw>` | Restrict to one or more providers. Repeatable or comma-separated. Default: all. |
+| `--project <substr>`                                                                                   | Filter by project path substring.                                               |
+| `--model <substr>`                                                                                     | Filter by model (e.g. `opus`, `gpt-5`).                                         |
+| `--since <when>`                                                                                       | Only sessions at/after this time.                                               |
+| `--until <when>`                                                                                       | Only sessions at/before this time.                                              |
+| `--on-disk-only`                                                                                       | Exclude retained sessions whose file was archived or deleted.                   |
+| `--json`                                                                                               | Machine-readable output; always includes a `provider` key per row.              |
 
 ### Time values
 
@@ -145,3 +150,9 @@ claudex cost --per-session --json | jq 'group_by(.provider) | map({provider: .[0
 The `--no-index` fallback scans Claude Code transcripts directly (no database).
 It honors `--since`/`--until`/`--model` in memory, but is Claude-only — use the
 default indexed path for other providers. Additional directories apply to indexed commands.
+
+## Other harnesses
+
+Cursor, Amp, Windsurf, and Aider are not automatically indexed. Their exported,
+cloud-backed, optional-hook, or Markdown histories need separate format adapters;
+pointing their files at another provider does not make them compatible.

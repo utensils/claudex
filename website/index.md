@@ -6,7 +6,7 @@ hero:
   text: Query your AI coding sessions
   tagline:
     A Rust CLI that indexes the local transcripts of Claude Code, OpenAI Codex,
-    GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, and OpenClaw into one SQLite database and turns them into reports —
+    GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw into one SQLite database and turns them into reports —
     cost, tools, turns, PRs, full-text search, and more, across every provider.
   actions:
     - theme: brand
@@ -99,7 +99,7 @@ shell-completion setup.
 
 ## Why claudex?
 
-Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, and OpenClaw each persist every conversation as local
+Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw each persist every conversation as local
 transcripts — every user turn, every assistant message, every tool call, every
 token-usage block, every file modification — but those files are flat logs in
 several different formats, not a queryable store.

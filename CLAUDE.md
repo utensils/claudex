@@ -243,7 +243,7 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 - `crates/claudex/src/filter.rs` — shared provider/model/date/on-disk filter
   logic. CLI clap types convert into these library filters instead of
   duplicating business rules.
-- `crates/claudex/src/providers/{mod,claude,codex,copilot,copilot_vscode,openclaw,pi,omp,gemini,opencode,additional}.rs`
+- `crates/claudex/src/providers/{mod,claude,codex,copilot,copilot_vscode,openclaw,pi,omp,gemini,opencode,cline,additional}.rs`
   — provider abstraction. `SessionProvider` + `Provider` enum discover each agent's
   transcripts and normalize them to `ProviderRecord`. `providers/pr.rs` is the
   crate-internal GitHub PR link extractor that populates
@@ -285,7 +285,7 @@ claudex-cli::commands::<name>::run(&ResolvedFilter)  →  stdout (tables + palet
 ### Key invariants
 
 - **Providers are first-class and additive.** Claude, Codex, Copilot (CLI and
-  VS Code), Pi, OMP, Gemini CLI, OpenCode, and OpenClaw flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
+  VS Code), Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw flow through the same `IndexStore` pipeline. `ensure_fresh` / `sync_now` /
   `force_rebuild` take provider lists; default reporting spans every provider
   whose root exists (`providers::enabled_default()`). Filtering happens at
   query time (`--provider`), never at sync time — the index always holds

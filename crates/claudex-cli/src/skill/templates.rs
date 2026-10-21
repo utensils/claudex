@@ -29,7 +29,7 @@ pub enum Flavor {
 
 /// One-line skill description, reused by every frontmatter generator.
 pub fn description() -> &'static str {
-    "Query, search, and analyze Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, and OpenClaw sessions using the claudex CLI. \
+    "Query, search, and analyze Claude Code, OpenAI Codex, GitHub Copilot, Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw sessions using the claudex CLI. \
 Use when asked about session history, token costs, tool usage, search past conversations, export \
 sessions, or inspect agent activity across providers and projects."
 }
@@ -57,7 +57,7 @@ fn body(command_list: &str) -> String {
     format!(
         r#"# claudex — multi-provider agent session analytics
 
-claudex indexes the local session transcripts of nine coding agents into a
+claudex indexes the local session transcripts of eleven coding agents into a
 SQLite database at `~/.claudex/index.db` and reports across all of them:
 
 - **Claude Code** — `~/.claude/projects/**.jsonl`
@@ -68,9 +68,11 @@ SQLite database at `~/.claudex/index.db` and reports across all of them:
 - **OMP** — `~/.omp/agent/sessions/**` (including nested subagents and model-usage records)
 - **Gemini CLI** — `~/.gemini/tmp/**/chats/session-*`
 - **OpenCode** — `~/.local/share/opencode/opencode.db` or legacy `storage/`
+- **Cline** — `~/.cline/data/sessions/` and VS Code extension tasks
+- **Roo Code** — VS Code extension tasks (`roo`)
 - **OpenClaw** — `${{OPENCLAW_STATE_DIR:-~/.openclaw}}/agents/*/sessions/`
 
-Every reporting command spans all nine providers by default. The index is
+Every reporting command spans all eleven providers by default. The index is
 **additive**: sessions archived or deleted from disk are retained, so historical
 usage never disappears.
 
@@ -84,7 +86,7 @@ Run `claudex <command> --help` for full flags.
 
 | Flag | Effect |
 | --- | --- |
-| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|omp\|gemini\|opencode\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
+| `--provider <claude\|codex\|copilot\|copilot-vscode\|pi\|omp\|gemini\|opencode\|cline\|roo\|openclaw>` | Restrict indexed reports to provider(s); repeatable or comma-separated. Default: all. |
 | `--model <substr>` | Filter indexed reports by model (e.g. `opus`, `gpt-5`). |
 | `--since <when>` / `--until <when>` | Date range. Accepts `YYYY-MM-DD`, RFC3339, or a relative span (`7d`, `12h`, `2w`). |
 | `--on-disk-only` | Exclude retained sessions whose file was archived/deleted. |
@@ -106,7 +108,7 @@ Or use `~/.claudex/config.json` (`$CLAUDEX_DIR/config.json` when overridden),
 `{{"providers":{{"omp":{{"session_dirs":["/path/to/sessions"]}}}}}}`.
 Relative config paths resolve beside the config file; CLI paths resolve from
 cwd; `~` expands. All providers accept extra roots. OpenCode roots contain
-`opencode.db` or legacy `storage/`; other roots contain transcripts recursively.
+`opencode.db` or legacy `storage/`; Cline/Roo roots contain task or session trees; other roots contain transcripts recursively.
 `claudex providers --json` reports `root_dirs`; `claudex index` syncs immediately.
 Extra directories affect indexed commands; `--no-index` scans only default Claude storage.
 
@@ -166,11 +168,11 @@ pub fn agents_block(command_list: &str) -> String {
 ## claudex — agent session analytics
 
 Use the `claudex` CLI to query and analyze local Claude Code, OpenAI Codex,
-GitHub Copilot (CLI + VS Code), Pi, OMP, Gemini CLI, OpenCode, and OpenClaw session transcripts: token
+GitHub Copilot (CLI + VS Code), Pi, OMP, Gemini CLI, OpenCode, Cline, Roo Code, and OpenClaw session transcripts: token
 cost, tool usage, full-text search, per-session drill-down, and exports —
-across all nine providers from one index.
+across all eleven providers from one index.
 
-- **Spans providers by default;** narrow with `--provider claude|codex|copilot|copilot-vscode|pi|omp|gemini|opencode|openclaw`.
+- **Spans providers by default;** narrow with `--provider claude|codex|copilot|copilot-vscode|pi|omp|gemini|opencode|cline|roo|openclaw`.
 - **Filter** with `--project`, `--model`, `--since`/`--until` (`7d`/`2w`/dates).
 - **JSON for agents:** add `--json`; every row carries a `provider` key.
 - The index is additive — archived/deleted sessions are retained.

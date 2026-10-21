@@ -19,7 +19,10 @@ pub enum ProviderKind {
     Pi,
     Omp,
     Gemini,
+    #[serde(rename = "opencode")]
     OpenCode,
+    Cline,
+    Roo,
 }
 
 impl ProviderKind {
@@ -33,6 +36,8 @@ impl ProviderKind {
         Self::Omp,
         Self::Gemini,
         Self::OpenCode,
+        Self::Cline,
+        Self::Roo,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -45,6 +50,8 @@ impl ProviderKind {
             ProviderKind::Omp => "omp",
             ProviderKind::Gemini => "gemini",
             ProviderKind::OpenCode => "opencode",
+            ProviderKind::Cline => "cline",
+            ProviderKind::Roo => "roo",
         }
     }
 }
