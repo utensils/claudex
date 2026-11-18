@@ -28,6 +28,23 @@ impl ModelPricing {
         let m = model.unwrap_or("").to_lowercase();
         if m.trim().is_empty() {
             sonnet_pricing()
+        } else if is_claude_fable_5_2(&m) && m.contains("fast") {
+            // Fable/Mythos 5.2 fast mode: $16/$80, with the 1.25x write and
+            // 0.025x read multipliers stacking on the fast input rate.
+            Self {
+                input_per_mtok: 16.0,
+                output_per_mtok: 80.0,
+                cache_write_per_mtok: 20.0,
+                cache_read_per_mtok: 0.40,
+            }
+        } else if is_claude_fable_5_2(&m) {
+            // Verified 2026-11-18: Fable/Mythos 5.2 cut the 5.1 card by 20%.
+            Self {
+                input_per_mtok: 8.0,
+                output_per_mtok: 40.0,
+                cache_write_per_mtok: 10.0,
+                cache_read_per_mtok: 0.20,
+            }
         } else if is_claude_fable_5_1(&m) {
             // Fable/Mythos 5.1 keep the $10/$50 base rate, but cache reads
             // are $0.25/MTok instead of the older generation's $1/MTok.
@@ -131,6 +148,25 @@ impl ModelPricing {
             }
         } else if m.contains("sonnet") {
             sonnet_pricing()
+        } else if matches_model_id(&m, "gpt-6.2-astra") || matches_model_id(&m, "gpt-6.2-astra-law")
+        {
+            // Verified 2026-11-18 against the official pricing table. Like
+            // GPT-6.1 Sol, GPT-6.2 cache reads are 5% of input. The Law
+            // variant's rate is promotional at least through 2026-12-31.
+            openai_6x_pricing(8.0, 40.0)
+        } else if matches_model_id(&m, "gpt-6.2-sol") {
+            openai_6x_pricing(2.0, 10.0)
+        } else if matches_model_id(&m, "gpt-6.1-terra") {
+            openai_6x_pricing(1.0, 5.0)
+        } else if matches_model_id(&m, "gpt-6-cyber") {
+            openai_56_pricing(20.0, 100.0)
+        } else if matches_model_id(&m, "gpt-6-rosalind") {
+            // Promotional at least through 2026-12-31.
+            openai_56_pricing(10.0, 50.0)
+        } else if matches_model_id(&m, "gpt-6-astra-law") {
+            // No separate cache-write fee is published; estimate any recorded
+            // cache creation at the ordinary input rate.
+            openai_pricing(10.0, 1.0, 50.0)
         } else if matches_model_id(&m, "gpt-6-astra") {
             // Standard short-context rates, verified 2026-09-10:
             // https://developers.openai.com/api/docs/models/gpt-6-astra
@@ -138,12 +174,7 @@ impl ModelPricing {
         } else if matches_model_id(&m, "gpt-6.1-sol") {
             // Verified 2026-10-21 against the official GPT-6.1 Sol model card:
             // cache reads are 5% of input, versus 10% for GPT-6 Sol.
-            Self {
-                input_per_mtok: 2.0,
-                output_per_mtok: 10.0,
-                cache_write_per_mtok: 2.50,
-                cache_read_per_mtok: 0.10,
-            }
+            openai_6x_pricing(2.0, 10.0)
         } else if matches_model_id(&m, "gpt-6-sol") {
             openai_56_pricing(2.0, 10.0)
         } else if matches_model_id(&m, "gpt-6-luna") {
@@ -248,13 +279,54 @@ impl ModelPricing {
             // 2026-12-31. Cache creation is estimated at input price because
             // transcript usage lacks Google's cache storage duration.
             openai_pricing(0.75, 0.075, 3.75)
+        } else if matches_model_id(&m, "gemini-4-carbon") || matches_model_id(&m, "gemini-4-argon")
+        {
+            // Promotional through 2026-11-30; $4/$20 with $0.20 cache reads
+            // from 2026-12-01. Review and bump PRICING_REVISION then.
+            openai_pricing(2.0, 0.10, 10.0)
+        } else if matches_model_id(&m, "gemini-4-neon") {
+            openai_pricing(3.0, 0.15, 15.0)
+        } else if matches_model_id(&m, "gemini-4-hydrogen") {
+            openai_pricing(1.50, 0.075, 7.50)
         } else if matches_model_id(&m, "gemini-3.5-flash-lite") {
             openai_pricing(0.30, 0.03, 2.50)
         } else if matches_model_id(&m, "gemini-3.5-flash") {
+            // No longer on Google's rate card; kept for retained sessions.
             openai_pricing(1.50, 0.15, 9.0)
-        } else if matches_model_id(&m, "grok-4.7") {
+        } else if matches_model_id(&m, "gemini-3.1-pro-preview")
+            || matches_model_id(&m, "gemini-3.1-pro-preview-customtools")
+        {
+            // <=200K prompt card; the >200K band is not inferred.
+            openai_pricing(2.0, 0.20, 12.0)
+        } else if matches_model_id(&m, "gemini-3.1-flash-lite") {
+            openai_pricing(0.25, 0.025, 1.50)
+        } else if matches_model_id(&m, "gemini-3-flash-preview") {
+            openai_pricing(0.50, 0.05, 3.0)
+        } else if matches_model_id(&m, "gemini-2.5-pro") {
+            // <=200K prompt card. Requests route to Gemini 3.8 Flash from
+            // 2026-12-01, but historical 2.5 Pro sessions keep this card.
+            openai_pricing(1.25, 0.125, 10.0)
+        } else if matches_model_id(&m, "gemini-2.5-flash-lite") {
+            openai_pricing(0.10, 0.01, 0.40)
+        } else if matches_model_id(&m, "gemini-2.5-flash") {
+            openai_pricing(0.30, 0.03, 2.50)
+        } else if matches_model_id(&m, "grok-4.7") || matches_model_id(&m, "grok-4.6") {
             // xAI Standard global rates below the 200K prompt threshold.
             openai_pricing(2.0, 0.50, 6.0)
+        } else if matches_model_id(&m, "grok-4.5") {
+            openai_pricing(2.0, 0.30, 6.0)
+        } else if [
+            "grok-4.3",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-0309-non-reasoning",
+            "grok-4.20-multi-agent-0309",
+        ]
+        .iter()
+        .any(|id| matches_model_id(&m, id))
+        {
+            openai_pricing(1.25, 0.20, 2.50)
+        } else if matches_model_id(&m, "grok-build-0.1") {
+            openai_pricing(1.0, 0.20, 2.0)
         } else {
             free_pricing()
         }
@@ -275,10 +347,27 @@ impl ModelPricing {
             "Haiku"
         } else if m.contains("sonnet") {
             "Sonnet"
-        } else if matches_model_id(&m, "gpt-6-astra") {
+        } else if [
+            "gpt-6-astra",
+            "gpt-6.2-astra",
+            "gpt-6-astra-law",
+            "gpt-6.2-astra-law",
+        ]
+        .iter()
+        .any(|id| matches_model_id(&m, id))
+        {
             "Astra"
-        } else if matches_model_id(&m, "gpt-6-sol") || matches_model_id(&m, "gpt-6.1-sol") {
+        } else if ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol"]
+            .iter()
+            .any(|id| matches_model_id(&m, id))
+        {
             "Sol"
+        } else if matches_model_id(&m, "gpt-6.1-terra") {
+            "Terra"
+        } else if matches_model_id(&m, "gpt-6-cyber") {
+            "Cyber"
+        } else if matches_model_id(&m, "gpt-6-rosalind") {
+            "Rosalind"
         } else if matches_model_id(&m, "gpt-6-luna") {
             "Luna"
         } else if matches_model_id(&m, "gpt-5.6-cyber") || matches_model_id(&m, "gpt-5.5-cyber") {
@@ -395,6 +484,16 @@ fn is_gpt5(m: &str) -> bool {
     m.contains("gpt-5") || m.contains("gpt5")
 }
 
+/// GPT-6.1+ card: cache writes at 1.25x uncached input, reads at 0.05x.
+fn openai_6x_pricing(input_per_mtok: f64, output_per_mtok: f64) -> ModelPricing {
+    ModelPricing {
+        input_per_mtok,
+        output_per_mtok,
+        cache_write_per_mtok: input_per_mtok * 1.25,
+        cache_read_per_mtok: input_per_mtok * 0.05,
+    }
+}
+
 fn openai_56_pricing(input_per_mtok: f64, output_per_mtok: f64) -> ModelPricing {
     ModelPricing {
         input_per_mtok,
@@ -420,6 +519,10 @@ fn is_claude_opus_5_5(m: &str) -> bool {
 
 fn is_claude_5_5(m: &str, family: &str) -> bool {
     m.contains(&format!("{family}-5-5")) || m.contains(&format!("{family}-5.5"))
+}
+
+fn is_claude_fable_5_2(m: &str) -> bool {
+    has_any(m, &["fable-5-2", "fable-5.2", "mythos-5-2", "mythos-5.2"])
 }
 
 fn is_claude_fable_5_1(m: &str) -> bool {
@@ -544,7 +647,9 @@ impl TokenUsage {
         };
         let lower = model.to_ascii_lowercase();
         if lower.contains("fast")
-            || !(is_claude_opus_5_5(&lower) || has_any(&lower, &["opus-5", "opus-4-8", "opus-4.8"]))
+            || !(is_claude_fable_5_2(&lower)
+                || is_claude_opus_5_5(&lower)
+                || has_any(&lower, &["opus-5", "opus-4-8", "opus-4.8"]))
         {
             return standard;
         }
@@ -1062,6 +1167,119 @@ mod tests {
     }
 
     #[test]
+    fn fable_and_mythos_5_2_standard_and_fast_rates() {
+        for model in [
+            "claude-fable-5-2",
+            "claude-fable-5.2",
+            "claude-mythos-5-2",
+            "claude-mythos-5.2",
+        ] {
+            let p = ModelPricing::for_model(Some(model));
+            assert_eq!(p.input_per_mtok, 8.0, "{model}");
+            assert_eq!(p.output_per_mtok, 40.0, "{model}");
+            assert_eq!(p.cache_write_per_mtok, 10.0, "{model}");
+            assert_eq!(p.cache_read_per_mtok, 0.20, "{model}");
+        }
+        assert_eq!(ModelPricing::name(Some("claude-fable-5-2")), "Fable");
+        assert_eq!(ModelPricing::name(Some("claude-mythos-5-2")), "Mythos");
+        let fast = ModelPricing::for_model(Some("claude-fable-5-2-fast"));
+        assert_eq!(fast.input_per_mtok, 16.0);
+        assert_eq!(fast.output_per_mtok, 80.0);
+        assert_eq!(fast.cache_write_per_mtok, 20.0);
+        assert_eq!(fast.cache_read_per_mtok, 0.40);
+        // 5.1 keeps its own card.
+        assert_eq!(
+            ModelPricing::for_model(Some("claude-fable-5-1")).input_per_mtok,
+            10.0
+        );
+    }
+
+    #[test]
+    fn fable_5_2_fast_usage_is_priced_at_fast_rates() {
+        let all = TokenUsage {
+            input_tokens: 2_000_000,
+            output_tokens: 2_000_000,
+            ..Default::default()
+        };
+        let fast = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // Standard half: $8 + $40; fast half: $16 + $80.
+        let cost = all.cost_with_fast_usage(Some("claude-fable-5-2"), &fast);
+        assert!((cost - 144.0).abs() < 1e-9, "{cost}");
+        // Fable 5.1 has no fast tier, so tagged tokens stay standard.
+        let cost = all.cost_with_fast_usage(Some("claude-fable-5-1"), &fast);
+        assert!((cost - 120.0).abs() < 1e-9, "{cost}");
+    }
+
+    #[test]
+    fn gpt6_x_rates_and_labels() {
+        for (model, input, output, write, read, family) in [
+            ("gpt-6.2-astra", 8.0, 40.0, 10.0, 0.40, "Astra"),
+            ("openai/gpt-6.2-astra", 8.0, 40.0, 10.0, 0.40, "Astra"),
+            ("gpt-6.2-astra-law", 8.0, 40.0, 10.0, 0.40, "Astra"),
+            ("gpt-6-astra-law", 10.0, 50.0, 10.0, 1.0, "Astra"),
+            ("gpt-6.2-sol", 2.0, 10.0, 2.50, 0.10, "Sol"),
+            ("gpt-6.1-terra", 1.0, 5.0, 1.25, 0.05, "Terra"),
+            ("gpt-6-cyber", 20.0, 100.0, 25.0, 2.0, "Cyber"),
+            ("gpt-6-rosalind", 10.0, 50.0, 12.50, 1.0, "Rosalind"),
+        ] {
+            let p = ModelPricing::for_model(Some(model));
+            assert!((p.input_per_mtok - input).abs() < 1e-9, "{model}");
+            assert!((p.output_per_mtok - output).abs() < 1e-9, "{model}");
+            assert!((p.cache_write_per_mtok - write).abs() < 1e-9, "{model}");
+            assert!((p.cache_read_per_mtok - read).abs() < 1e-9, "{model}");
+            assert_eq!(ModelPricing::name(Some(model)), family, "{model}");
+        }
+    }
+
+    #[test]
+    fn gemini_4_and_legacy_gemini_rates() {
+        for (model, input, output, read) in [
+            ("gemini-4-carbon", 2.0, 10.0, 0.10),
+            ("gemini-4-argon", 2.0, 10.0, 0.10),
+            ("gemini-4-neon", 3.0, 15.0, 0.15),
+            ("google/gemini-4-hydrogen", 1.50, 7.50, 0.075),
+            ("gemini-3.1-pro-preview", 2.0, 12.0, 0.20),
+            ("gemini-3.1-pro-preview-customtools", 2.0, 12.0, 0.20),
+            ("gemini-3.1-flash-lite", 0.25, 1.50, 0.025),
+            ("gemini-3-flash-preview", 0.50, 3.0, 0.05),
+            ("gemini-2.5-pro", 1.25, 10.0, 0.125),
+            ("gemini-2.5-flash", 0.30, 2.50, 0.03),
+            ("gemini-2.5-flash-lite", 0.10, 0.40, 0.01),
+        ] {
+            let p = ModelPricing::for_model(Some(model));
+            assert_eq!(p.input_per_mtok, input, "{model}");
+            assert_eq!(p.output_per_mtok, output, "{model}");
+            assert_eq!(p.cache_write_per_mtok, input, "{model}");
+            assert_eq!(p.cache_read_per_mtok, read, "{model}");
+            assert_eq!(ModelPricing::name(Some(model)), "Gemini");
+        }
+    }
+
+    #[test]
+    fn grok_4_x_short_context_rates() {
+        for (model, input, read, output) in [
+            ("grok-4.6", 2.0, 0.50, 6.0),
+            ("grok-4.5", 2.0, 0.30, 6.0),
+            ("xai/grok-4.3", 1.25, 0.20, 2.50),
+            ("grok-4.20-0309-reasoning", 1.25, 0.20, 2.50),
+            ("grok-4.20-0309-non-reasoning", 1.25, 0.20, 2.50),
+            ("grok-4.20-multi-agent-0309", 1.25, 0.20, 2.50),
+            ("grok-build-0.1", 1.0, 0.20, 2.0),
+        ] {
+            let p = ModelPricing::for_model(Some(model));
+            assert_eq!(p.input_per_mtok, input, "{model}");
+            assert_eq!(p.output_per_mtok, output, "{model}");
+            assert_eq!(p.cache_write_per_mtok, input, "{model}");
+            assert_eq!(p.cache_read_per_mtok, read, "{model}");
+            assert_eq!(ModelPricing::name(Some(model)), "Grok");
+        }
+    }
+
+    #[test]
     fn unknown_suffixed_models_do_not_inherit_new_rates() {
         for model in [
             "gemini-3.8-flash-lite",
@@ -1072,6 +1290,11 @@ mod tests {
             "gpt-6-sol-mini",
             "gpt-6.1-sol-mini",
             "gpt-6-astra-mini",
+            "gpt-6.2-sol-mini",
+            "gpt-6.2-astra-mini",
+            "gpt-6.2-luna",
+            "gemini-4-hydrogen-lite",
+            "grok-4.6-fast",
             "gpt-rosalind-research-mini",
         ] {
             assert_eq!(
