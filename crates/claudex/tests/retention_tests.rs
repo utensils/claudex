@@ -655,6 +655,58 @@ fn reprice_revision_8_updates_retained_new_model_rates_without_touching_provider
 }
 
 #[test]
+fn reprice_revision_10_applies_november_2026_rates_to_retained_rows() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("index.db");
+    seed_v5_db(
+        &db,
+        &[
+            // Fable 5.2 previously fell through to the $10 Fable 5 card.
+            ("fable52", "claude", "claude-fable-5-2", 1_000_000, 0, 10.0),
+            ("astra62", "codex", "gpt-6.2-astra", 1_000_000, 0, 0.0),
+            ("sol62", "codex", "gpt-6.2-sol", 1_000_000, 0, 0.0),
+            ("terra61", "codex", "gpt-6.1-terra", 1_000_000, 0, 0.0),
+            ("hydrogen", "gemini", "gemini-4-hydrogen", 1_000_000, 0, 0.0),
+            ("grok43", "copilot", "grok-4.3", 1_000_000, 0, 0.0),
+            ("embedded", "pi", "openai/gpt-6.2-sol", 1_000_000, 0, 0.42),
+        ],
+    );
+    drop(IndexStore::open_at(&db).unwrap());
+    let conn = Connection::open(&db).unwrap();
+    conn.execute(
+        "UPDATE token_usage SET cost_usd = 99 WHERE cost_source = 'computed'",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE sessions SET present_on_disk = 0", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '9' WHERE key = 'pricing_revision'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    drop(IndexStore::open_at(&db).unwrap());
+    for (session, expected) in [
+        ("fable52", 8.0),
+        ("astra62", 8.0),
+        ("sol62", 2.0),
+        ("terra61", 1.0),
+        ("hydrogen", 1.50),
+        ("grok43", 1.25),
+    ] {
+        let (cost, source) = token_cost(&db, session);
+        assert_eq!(source, "computed");
+        assert!((cost - expected).abs() < 1e-9, "{session}: {cost}");
+    }
+    assert_eq!(token_cost(&db, "embedded"), (0.42, "provider".to_string()));
+    assert_eq!(
+        meta_val(&db, "pricing_revision"),
+        Some(claudex::index::PRICING_REVISION.to_string())
+    );
+}
+
+#[test]
 fn reprice_applies_astra_rates_to_retained_rows() {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("index.db");
