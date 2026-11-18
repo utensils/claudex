@@ -100,8 +100,9 @@ To **re-build/re-publish an existing tag** (e.g. a flaked runner), use the
 workflow's `workflow_dispatch` with the `tag` input (`vX.Y.Z`). That path
 rebuilds assets, refreshes the GitHub Release, and idempotently resumes
 crates.io publishing for any workspace crates that are still missing for that
-version. Already-published crates are skipped. It deliberately **does not
-republish to the AUR**.
+version. Already-published crates are skipped. It republishes to the AUR
+only when the tag is the current latest GitHub release, so historical
+rebuilds can never downgrade the AUR packages.
 
 ### Version bump — where it lands (all automatic)
 
@@ -134,8 +135,8 @@ remain idempotent and cannot downgrade AUR packages.
 
 Build matrix targets (4):
 
-- `aarch64-apple-darwin` on `macos-14`
-- `x86_64-apple-darwin`  on `macos-14` (cross-compile from Apple Silicon)
+- `aarch64-apple-darwin` on `macos-15`
+- `x86_64-apple-darwin`  on `macos-15` (cross-compile from Apple Silicon)
 - `x86_64-unknown-linux-gnu`  on `ubuntu-22.04`
 - `aarch64-unknown-linux-gnu` on `ubuntu-22.04-arm`
 
