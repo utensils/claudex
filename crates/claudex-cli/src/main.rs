@@ -397,7 +397,25 @@ impl CompletionShell {
     }
 }
 
+/// Restore the default SIGPIPE disposition so `claudex … | head` exits quietly
+/// like other Unix tools. Rust ignores SIGPIPE at startup, which turns a closed
+/// pipe into a `println!` panic ("failed printing to stdout: Broken pipe").
+/// Safe here: network I/O goes through `curl` subprocesses, and claudex never
+/// writes to sockets or child stdin pipes in-process.
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // SAFETY: called first thing in `main`, before any threads exist, with a
+    // valid signal number and disposition.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
+
 fn main() {
+    restore_default_sigpipe();
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     // Peek at argv for `--color` before clap parses: clap prints `--help`,
     // `--version`, and argument errors during parsing, and it uses its own

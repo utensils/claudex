@@ -1896,6 +1896,35 @@ fn summary_text_has_sections() {
 }
 
 #[test]
+fn closed_stdout_pipe_exits_quietly_instead_of_panicking() {
+    // `claudex summary | head -1` closes the read end early. Rust ignores
+    // SIGPIPE by default, so without restoring it `println!` panics with
+    // "failed printing to stdout: Broken pipe" and exits 101.
+    let home = fixture_home();
+    let mut child = Command::new(BIN)
+        .env("HOME", home.path())
+        .env("NO_COLOR", "1")
+        .env_remove("OPENCLAW_STATE_DIR")
+        .env_remove("OPENCLAW_TRAJECTORY_DIR")
+        .env_remove("CLAUDEX_COPILOT_DIR")
+        .env_remove("CLAUDEX_VSCODE_USER_DIR")
+        .env_remove("XDG_CONFIG_HOME")
+        .arg("summary")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn claudex");
+    drop(child.stdout.take());
+    let out = child.wait_with_output().expect("wait for claudex");
+    let stderr = stderr_of(&out);
+    assert!(
+        !stderr.contains("panicked"),
+        "panicked on closed pipe: {stderr}"
+    );
+    assert_ne!(out.status.code(), Some(101), "stderr: {stderr}");
+}
+
+#[test]
 fn summary_json_plan_api_is_byte_compatible_with_default() {
     // Explicitly passing `--plan api` must not change the JSON shape — that's
     // the backward-compat contract for users who never set the flag.
