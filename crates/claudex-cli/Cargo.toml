@@ -29,6 +29,9 @@ sha2.workspace = true
 tar.workspace = true
 terminal_size.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [[bin]]
 name = "claudex"
 path = "src/main.rs"
